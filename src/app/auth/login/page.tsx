@@ -2,25 +2,29 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Please enter a valid email"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z.string().min(1, "Password is required"),
   rememberMe: z.boolean().optional(),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
   const {
     register,
@@ -31,10 +35,45 @@ export default function LoginPage() {
     defaultValues: { email: "", password: "", rememberMe: false },
   });
 
-  const onSubmit = async (data: LoginFormData) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    console.log(data);
+  const onSubmit = async () => {
+    setLoginError("");
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    setIsSuccess(true);
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 800);
   };
+
+  if (isSuccess) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center px-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="glass rounded-2xl p-12 text-center max-w-sm w-full"
+        >
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.2, type: "spring" }}
+            className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto mb-6"
+          >
+            <Check className="w-8 h-8 text-emerald-400" />
+          </motion.div>
+          <h2 className="text-2xl font-medium text-white mb-2">Welcome Back!</h2>
+          <p className="text-white/50 font-light mb-6">Redirecting to your dashboard...</p>
+          <div className="w-full h-1 bg-white/[0.06] rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-blue-500 rounded-full"
+              initial={{ width: "0%" }}
+              animate={{ width: "100%" }}
+              transition={{ duration: 0.8 }}
+            />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center px-4 relative">
@@ -42,9 +81,7 @@ export default function LoginPage() {
         <div className="absolute inset-0 grid-pattern opacity-40" />
         <div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full"
-          style={{
-            background: "radial-gradient(circle at center, rgba(59,130,246,0.04) 0%, transparent 60%)",
-          }}
+          style={{ background: "radial-gradient(circle at center, rgba(59,130,246,0.04) 0%, transparent 60%)" }}
         />
       </div>
 
@@ -56,9 +93,7 @@ export default function LoginPage() {
       >
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2">
-            <span className="text-2xl font-semibold tracking-tight text-white">
-              DataBuks
-            </span>
+            <span className="text-2xl font-semibold tracking-tight text-white">DataBuks</span>
           </Link>
         </div>
 
@@ -70,25 +105,23 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-            <div className="space-y-2">
+          {loginError && (
+            <div className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <p className="text-sm text-red-400 font-medium text-center">{loginError}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <div className="space-y-1.5">
               <Label htmlFor="email" className="text-sm font-light text-white/60">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@company.com"
-                  className="pl-10"
-                  {...register("email")}
-                />
+                <Input id="email" type="email" placeholder="you@company.com" className="pl-10" {...register("email")} />
               </div>
-              {errors.email && (
-                <p className="text-xs text-red-400 font-light mt-1">{errors.email.message}</p>
-              )}
+              {errors.email && <p className="text-xs text-red-400 font-medium mt-1">{errors.email.message}</p>}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="password" className="text-sm font-light text-white/60">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
@@ -108,27 +141,33 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {errors.password && (
-                <p className="text-xs text-red-400 font-light mt-1">{errors.password.message}</p>
-              )}
+              {errors.password && <p className="text-xs text-red-400 font-medium mt-1">{errors.password.message}</p>}
             </div>
 
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 rounded border-white/20 bg-white/[0.03] accent-blue-500 cursor-pointer"
-                  {...register("rememberMe")}
-                />
+                <input type="checkbox" className="w-4 h-4 rounded border-white/20 bg-white/[0.03] accent-blue-500 cursor-pointer" {...register("rememberMe")} />
                 <span className="text-sm font-light text-white/40">Remember me</span>
               </label>
-              <Link href="/auth/forgot-password" className="text-sm font-light text-blue-400 hover:text-blue-300 transition-colors">
+              <span className="text-sm font-light text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">
                 Forgot password?
-              </Link>
+              </span>
             </div>
 
-            <Button type="submit" variant="primary" className="w-full h-11" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in..." : "Sign In"}
+            <Button
+              type="submit"
+              variant="primary"
+              className="w-full h-11 text-sm font-medium"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Signing in...
+                </span>
+              ) : (
+                "Sign In"
+              )}
             </Button>
           </form>
 

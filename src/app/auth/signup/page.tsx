@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, User, Mail, Lock } from "lucide-react";
+import { Eye, EyeOff, User, Mail, Lock, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,8 +17,10 @@ const signupSchema = z
     name: z.string().min(2, "Name must be at least 2 characters"),
     email: z.string().min(1, "Email is required").email("Please enter a valid email"),
     password: z.string().min(8, "Password must be at least 8 characters"),
-    confirmPassword: z.string(),
-    agreeTerms: z.boolean().refine((val) => val === true, "You must agree to the terms"),
+    confirmPassword: z.string().min(1, "Please confirm your password"),
+    agreeTerms: z.literal(true, {
+      errorMap: () => ({ message: "You must agree to the terms" }),
+    }),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords do not match",
@@ -27,8 +30,10 @@ const signupSchema = z
 type SignupFormData = z.infer<typeof signupSchema>;
 
 export default function SignupPage() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   const {
     register,
@@ -41,14 +46,48 @@ export default function SignupPage() {
       email: "",
       password: "",
       confirmPassword: "",
-      agreeTerms: false,
+      agreeTerms: false as unknown as true,
     },
   });
 
-  const onSubmit = async (data: SignupFormData) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    console.log(data);
+  const onSubmit = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    setIsSuccess(true);
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 800);
   };
+
+  if (isSuccess) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center px-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="glass rounded-2xl p-12 text-center max-w-sm w-full"
+        >
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.2, type: "spring" }}
+            className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto mb-6"
+          >
+            <Check className="w-8 h-8 text-emerald-400" />
+          </motion.div>
+          <h2 className="text-2xl font-medium text-white mb-2">Account Created!</h2>
+          <p className="text-white/50 font-light mb-6">Redirecting to your dashboard...</p>
+          <div className="w-full h-1 bg-white/[0.06] rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-blue-500 rounded-full"
+              initial={{ width: "0%" }}
+              animate={{ width: "100%" }}
+              transition={{ duration: 0.8 }}
+            />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center px-4 relative">
@@ -81,25 +120,25 @@ export default function SignupPage() {
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="name" className="text-sm font-light text-white/60">Full Name</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
                 <Input id="name" type="text" placeholder="Marcus Johnson" className="pl-10" {...register("name")} />
               </div>
-              {errors.name && <p className="text-xs text-red-400 font-light mt-1">{errors.name.message}</p>}
+              {errors.name && <p className="text-xs text-red-400 font-medium mt-1">{errors.name.message}</p>}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="email" className="text-sm font-light text-white/60">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
                 <Input id="email" type="email" placeholder="you@company.com" className="pl-10" {...register("email")} />
               </div>
-              {errors.email && <p className="text-xs text-red-400 font-light mt-1">{errors.email.message}</p>}
+              {errors.email && <p className="text-xs text-red-400 font-medium mt-1">{errors.email.message}</p>}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="password" className="text-sm font-light text-white/60">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
@@ -119,10 +158,10 @@ export default function SignupPage() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {errors.password && <p className="text-xs text-red-400 font-light mt-1">{errors.password.message}</p>}
+              {errors.password && <p className="text-xs text-red-400 font-medium mt-1">{errors.password.message}</p>}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="confirmPassword" className="text-sm font-light text-white/60">Confirm Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
@@ -143,7 +182,7 @@ export default function SignupPage() {
                 </button>
               </div>
               {errors.confirmPassword && (
-                <p className="text-xs text-red-400 font-light mt-1">{errors.confirmPassword.message}</p>
+                <p className="text-xs text-red-400 font-medium mt-1">{errors.confirmPassword.message}</p>
               )}
             </div>
 
@@ -155,17 +194,29 @@ export default function SignupPage() {
               />
               <span className="text-sm font-light text-white/40 leading-relaxed">
                 I agree to the{" "}
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">Terms of Service</a>{" "}
+                <span className="text-blue-400 cursor-pointer hover:text-blue-300 transition-colors">Terms of Service</span>{" "}
                 and{" "}
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">Privacy Policy</a>
+                <span className="text-blue-400 cursor-pointer hover:text-blue-300 transition-colors">Privacy Policy</span>
               </span>
             </label>
             {errors.agreeTerms && (
-              <p className="text-xs text-red-400 font-light -mt-2">{errors.agreeTerms.message}</p>
+              <p className="text-xs text-red-400 font-medium -mt-2">{errors.agreeTerms.message}</p>
             )}
 
-            <Button type="submit" variant="primary" className="w-full h-11" disabled={isSubmitting}>
-              {isSubmitting ? "Creating account..." : "Create Account"}
+            <Button
+              type="submit"
+              variant="primary"
+              className="w-full h-11 text-sm font-medium"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Creating account...
+                </span>
+              ) : (
+                "Create Account"
+              )}
             </Button>
           </form>
 
