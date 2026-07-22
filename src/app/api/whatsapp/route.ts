@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === "qr") {
-      const currentQr = getActiveQrCode();
+      const currentQr = await getActiveQrCode(userId);
       if (currentQr) {
         return NextResponse.json({ qrCode: currentQr });
       }
