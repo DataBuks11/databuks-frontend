@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 
+export const dynamic = "force-dynamic";
+
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Please enter a valid email"),
   password: z.string().min(1, "Password is required"),
