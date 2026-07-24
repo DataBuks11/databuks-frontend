@@ -23,6 +23,7 @@ import {
   MapPin,
   Monitor,
   Check,
+  Loader2,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { settingsData } from "@/lib/data";
+import { useSettings, useSettingsMutations } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
 import type { ApiKey as ApiKeyType, SettingsData } from "@/types";
 
@@ -97,8 +99,35 @@ const envVariant: Record<ApiKeyType["environment"], "success" | "info" | "warnin
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("business-profile");
 
+  const { settings: workspaceSettings, loading: settingsLoading } = useSettings();
+  const { updateSettings, loading: saveSettingsLoading } = useSettingsMutations();
+
   const [profile, setProfile] = useState(settingsData.businessProfile);
+  const [profileInitialized, setProfileInitialized] = useState(false);
+
+  if (workspaceSettings && !profileInitialized) {
+    setProfile((prev) => ({
+      ...prev,
+      name: workspaceSettings.business_name || prev.name,
+    }));
+    setProfileInitialized(true);
+  }
+
   const [notifications, setNotifications] = useState(settingsData.notifications);
+  const [notificationsInitialized, setNotificationsInitialized] = useState(false);
+
+  if (workspaceSettings?.notifications && !notificationsInitialized) {
+    const n = workspaceSettings.notifications;
+    setNotifications({
+      emailAlerts: n.emailAlerts ?? settingsData.notifications.emailAlerts,
+      pushNotifications: n.pushNotifications ?? settingsData.notifications.pushNotifications,
+      leadNotifications: n.leadNotifications ?? settingsData.notifications.leadNotifications,
+      contentNotifications: n.contentNotifications ?? settingsData.notifications.contentNotifications,
+      weeklyReport: n.weeklyReport ?? settingsData.notifications.weeklyReport,
+    });
+    setNotificationsInitialized(true);
+  }
+
   const [apiKeys] = useState(settingsData.apiKeys);
   const [security] = useState(settingsData.security);
   const [integrations] = useState(settingsData.integrations);
@@ -106,6 +135,24 @@ export default function SettingsPage() {
   const [twoFactor, setTwoFactor] = useState(security.twoFactorEnabled);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [businessProfileSaved, setBusinessProfileSaved] = useState(false);
+  const [notificationsSaved, setNotificationsSaved] = useState(false);
+
+  const handleSaveBusinessProfile = async () => {
+    try {
+      await updateSettings({ business_name: profile.name });
+      setBusinessProfileSaved(true);
+      setTimeout(() => setBusinessProfileSaved(false), 3000);
+    } catch {}
+  };
+
+  const handleSaveNotifications = async () => {
+    try {
+      await updateSettings({ notifications });
+      setNotificationsSaved(true);
+      setTimeout(() => setNotificationsSaved(false), 3000);
+    } catch {}
+  };
 
   const handleCopyKey = useCallback((key: string, id: string) => {
     navigator.clipboard.writeText(key);
@@ -260,8 +307,19 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="mt-6 pt-6 border-t border-white/[0.08]">
-                    <Button>Save Changes</Button>
+                  <div className="mt-6 pt-6 border-t border-white/[0.08] flex items-center gap-3">
+                    <Button onClick={handleSaveBusinessProfile} disabled={saveSettingsLoading}>
+                      {saveSettingsLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      Save Changes
+                    </Button>
+                    {businessProfileSaved && (
+                      <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Saved
+                      </span>
+                    )}
                   </div>
                 </Card>
               )}
@@ -317,6 +375,21 @@ export default function SettingsPage() {
                         />
                       </div>
                     ))}
+                  </div>
+
+                  <div className="mt-6 pt-6 border-t border-white/[0.08] flex items-center gap-3">
+                    <Button onClick={handleSaveNotifications} disabled={saveSettingsLoading}>
+                      {saveSettingsLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      Save Notifications
+                    </Button>
+                    {notificationsSaved && (
+                      <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Saved
+                      </span>
+                    )}
                   </div>
                 </Card>
               )}

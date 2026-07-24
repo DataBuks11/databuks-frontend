@@ -8,6 +8,7 @@ import {
   Plus,
   Crown,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { billingData } from "@/lib/data";
+import { useBilling } from "@/hooks/use-billing";
 import { formatCurrency, cn } from "@/lib/utils";
 
 const usageItems = [
@@ -62,7 +63,25 @@ const cardBrands: Record<string, { label: string; emoji: string }> = {
 };
 
 export default function BillingPage() {
-  const { plan, invoices, paymentMethods } = billingData;
+  const { data, loading, error } = useBilling();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-white/40" />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-white/50">
+        Failed to load billing data
+      </div>
+    );
+  }
+
+  const { plan, usage, invoices, paymentMethods } = data;
 
   return (
     <div className="space-y-6">
@@ -143,8 +162,8 @@ export default function BillingPage() {
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {usageItems.map((item) => {
-                const usage = plan.usage[item.key];
-                const pct = (usage.used / usage.limit) * 100;
+                const usageItem = usage[item.key];
+                const pct = (usageItem.used / usageItem.limit) * 100;
                 return (
                   <div
                     key={item.key}
@@ -153,7 +172,7 @@ export default function BillingPage() {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-white/60">{item.label}</span>
                       <span className={`text-sm font-medium ${item.textColor}`}>
-                        {item.format(usage.used)} / {item.format(usage.limit)}
+                        {item.format(usageItem.used)} / {item.format(usageItem.limit)}
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-white/5 overflow-hidden">

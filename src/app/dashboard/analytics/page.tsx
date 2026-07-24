@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Eye,
@@ -18,9 +18,10 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ChartArea } from "@/components/charts/area-chart";
 import { ChartLine } from "@/components/charts/line-chart";
-import { analyticsData } from "@/lib/data";
+import { useAnalytics } from "@/hooks/use-analytics";
 import { cn, formatNumber } from "@/lib/utils";
 
 const dateRanges = ["7d", "30d", "90d", "12m"] as const;
@@ -57,37 +58,6 @@ const statCards = [
   },
 ];
 
-const miniCards = [
-  {
-    title: "Followers",
-    value: formatNumber(analyticsData.followers),
-    icon: Users,
-    color: "text-blue-400",
-    bg: "bg-blue-400/10",
-  },
-  {
-    title: "Replies",
-    value: formatNumber(analyticsData.replies),
-    icon: MessageSquare,
-    color: "text-violet-400",
-    bg: "bg-violet-400/10",
-  },
-  {
-    title: "Qualified Leads",
-    value: formatNumber(analyticsData.qualifiedLeads),
-    icon: Target,
-    color: "text-emerald-400",
-    bg: "bg-emerald-400/10",
-  },
-  {
-    title: "Meetings",
-    value: analyticsData.meetings,
-    icon: Calendar,
-    color: "text-amber-400",
-    bg: "bg-amber-400/10",
-  },
-];
-
 const channelPerformance = [
   { platform: "Instagram", value: 38, color: "bg-blue-500" },
   { platform: "LinkedIn", value: 27, color: "bg-sky-400" },
@@ -96,8 +66,61 @@ const channelPerformance = [
   { platform: "Telegram", value: 5, color: "bg-cyan-400" },
 ];
 
+function ChartSkeleton() {
+  return (
+    <Card className="glass-card rounded-2xl border-white/[0.08]">
+      <CardHeader>
+        <Skeleton className="h-5 w-32" />
+        <Skeleton className="h-3.5 w-48 mt-1" />
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-[260px] w-full rounded-xl" />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState<DateRange>("30d");
+  const rangeParam = dateRange === "12m" ? "90d" : dateRange;
+  const { data: analyticsData, loading, error, refetch } = useAnalytics(rangeParam);
+
+  const miniCards = useMemo(() => {
+    const followers = analyticsData?.followers ?? 0;
+    const replies = analyticsData?.replies ?? 0;
+    const qualifiedLeads = analyticsData?.qualifiedLeads ?? 0;
+    const meetings = analyticsData?.meetings ?? 0;
+    return [
+      {
+        title: "Followers",
+        value: formatNumber(followers),
+        icon: Users,
+        color: "text-blue-400",
+        bg: "bg-blue-400/10",
+      },
+      {
+        title: "Replies",
+        value: formatNumber(replies),
+        icon: MessageSquare,
+        color: "text-violet-400",
+        bg: "bg-violet-400/10",
+      },
+      {
+        title: "Qualified Leads",
+        value: formatNumber(qualifiedLeads),
+        icon: Target,
+        color: "text-emerald-400",
+        bg: "bg-emerald-400/10",
+      },
+      {
+        title: "Meetings",
+        value: meetings,
+        icon: Calendar,
+        color: "text-amber-400",
+        bg: "bg-amber-400/10",
+      },
+    ];
+  }, [analyticsData]);
 
   return (
     <div className="space-y-8">
@@ -183,107 +206,133 @@ export default function AnalyticsPage() {
 
       {/* Charts - Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <Card className="glass-card rounded-2xl border-white/[0.08]">
-            <CardHeader>
-              <CardTitle>Reach Growth</CardTitle>
-              <p className="text-sm text-white/40 mt-1">
-                Daily reach across all platforms
-              </p>
-            </CardHeader>
-            <CardContent>
-              <ChartArea
-                data={analyticsData.reachChart}
-                dataKey="value"
-                xKey="date"
-                color="#3b82f6"
-                gradientId="reach-growth-gradient"
-                height={260}
-              />
-            </CardContent>
-          </Card>
-        </motion.div>
+        {loading ? (
+          <>
+            <ChartSkeleton />
+            <ChartSkeleton />
+          </>
+        ) : error ? (
+          <div className="lg:col-span-2 glass-card rounded-2xl border border-white/[0.08] flex flex-col items-center justify-center py-16 text-white/30">
+            <Activity className="h-10 w-10 mb-3" />
+            <p className="text-sm text-red-400/60">Failed to load analytics</p>
+            <Button variant="ghost" size="sm" className="mt-2 text-white/50" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+            >
+              <Card className="glass-card rounded-2xl border-white/[0.08]">
+                <CardHeader>
+                  <CardTitle>Reach Growth</CardTitle>
+                  <p className="text-sm text-white/40 mt-1">
+                    Daily reach across all platforms
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <ChartArea
+                    data={analyticsData?.reachChart ?? []}
+                    dataKey="value"
+                    xKey="date"
+                    color="#3b82f6"
+                    gradientId="reach-growth-gradient"
+                    height={260}
+                  />
+                </CardContent>
+              </Card>
+            </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-        >
-          <Card className="glass-card rounded-2xl border-white/[0.08]">
-            <CardHeader>
-              <CardTitle>Impressions</CardTitle>
-              <p className="text-sm text-white/40 mt-1">
-                Daily impression trends
-              </p>
-            </CardHeader>
-            <CardContent>
-              <ChartArea
-                data={analyticsData.impressionsChart}
-                dataKey="value"
-                xKey="date"
-                color="#8b5cf6"
-                gradientId="impressions-gradient"
-                height={260}
-              />
-            </CardContent>
-          </Card>
-        </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+            >
+              <Card className="glass-card rounded-2xl border-white/[0.08]">
+                <CardHeader>
+                  <CardTitle>Impressions</CardTitle>
+                  <p className="text-sm text-white/40 mt-1">
+                    Daily impression trends
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <ChartArea
+                    data={analyticsData?.impressionsChart ?? []}
+                    dataKey="value"
+                    xKey="date"
+                    color="#8b5cf6"
+                    gradientId="impressions-gradient"
+                    height={260}
+                  />
+                </CardContent>
+              </Card>
+            </motion.div>
+          </>
+        )}
       </div>
 
       {/* Charts - Row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.35 }}
-        >
-          <Card className="glass-card rounded-2xl border-white/[0.08]">
-            <CardHeader>
-              <CardTitle>Follower Growth</CardTitle>
-              <p className="text-sm text-white/40 mt-1">
-                Daily follower count
-              </p>
-            </CardHeader>
-            <CardContent>
-              <ChartArea
-                data={analyticsData.followersChart}
-                dataKey="value"
-                xKey="date"
-                color="#10b981"
-                gradientId="followers-gradient"
-                height={260}
-              />
-            </CardContent>
-          </Card>
-        </motion.div>
+        {loading ? (
+          <>
+            <ChartSkeleton />
+            <ChartSkeleton />
+          </>
+        ) : !error ? (
+          <>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.35 }}
+            >
+              <Card className="glass-card rounded-2xl border-white/[0.08]">
+                <CardHeader>
+                  <CardTitle>Follower Growth</CardTitle>
+                  <p className="text-sm text-white/40 mt-1">
+                    Daily follower count
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <ChartArea
+                    data={analyticsData?.followersChart ?? []}
+                    dataKey="value"
+                    xKey="date"
+                    color="#10b981"
+                    gradientId="followers-gradient"
+                    height={260}
+                  />
+                </CardContent>
+              </Card>
+            </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
-        >
-          <Card className="glass-card rounded-2xl border-white/[0.08]">
-            <CardHeader>
-              <CardTitle>Engagement Rate</CardTitle>
-              <p className="text-sm text-white/40 mt-1">
-                Daily engagement rate %
-              </p>
-            </CardHeader>
-            <CardContent>
-              <ChartLine
-                data={analyticsData.engagementChart}
-                dataKey="value"
-                xKey="date"
-                color="#f59e0b"
-                height={260}
-              />
-            </CardContent>
-          </Card>
-        </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.4 }}
+            >
+              <Card className="glass-card rounded-2xl border-white/[0.08]">
+                <CardHeader>
+                  <CardTitle>Engagement Rate</CardTitle>
+                  <p className="text-sm text-white/40 mt-1">
+                    Daily engagement rate %
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <ChartLine
+                    data={analyticsData?.engagementChart ?? []}
+                    dataKey="value"
+                    xKey="date"
+                    color="#f59e0b"
+                    height={260}
+                  />
+                </CardContent>
+              </Card>
+            </motion.div>
+          </>
+        ) : null}
       </div>
 
       {/* Channel Performance */}
@@ -331,35 +380,49 @@ export default function AnalyticsPage() {
 
       {/* Mini Cards Row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {miniCards.map((card, index) => (
-          <motion.div
-            key={card.title}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.6 + index * 0.08 }}
-          >
-            <Card className="glass-card p-4 rounded-2xl border-white/[0.08]">
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="glass-card p-4 rounded-2xl border-white/[0.08]">
               <div className="flex items-center gap-3">
-                <div
-                  className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center",
-                    card.bg
-                  )}
-                >
-                  <card.icon className={cn("w-5 h-5", card.color)} />
-                </div>
-                <div>
-                  <p className="text-xs text-white/50 font-medium">
-                    {card.title}
-                  </p>
-                  <p className="text-xl font-bold text-white tabular-nums">
-                    {card.value}
-                  </p>
+                <Skeleton className="w-10 h-10 rounded-xl" />
+                <div className="space-y-1.5 flex-1">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-5 w-20" />
                 </div>
               </div>
             </Card>
-          </motion.div>
-        ))}
+          ))
+        ) : (
+          miniCards.map((card, index) => (
+            <motion.div
+              key={card.title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.6 + index * 0.08 }}
+            >
+              <Card className="glass-card p-4 rounded-2xl border-white/[0.08]">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={cn(
+                      "w-10 h-10 rounded-xl flex items-center justify-center",
+                      card.bg
+                    )}
+                  >
+                    <card.icon className={cn("w-5 h-5", card.color)} />
+                  </div>
+                  <div>
+                    <p className="text-xs text-white/50 font-medium">
+                      {card.title}
+                    </p>
+                    <p className="text-xl font-bold text-white tabular-nums">
+                      {card.value}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            </motion.div>
+          ))
+        )}
       </div>
     </div>
   );

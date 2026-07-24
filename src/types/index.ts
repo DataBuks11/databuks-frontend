@@ -204,12 +204,12 @@ export interface BillingData {
     price: number;
     billingCycle: "monthly" | "annual";
     features: string[];
-    usage: {
-      leads: { used: number; limit: number };
-      content: { used: number; limit: number };
-      automations: { used: number; limit: number };
-      storage: { used: number; limit: number; unit: string };
-    };
+  };
+  usage: {
+    leads: { used: number; limit: number };
+    content: { used: number; limit: number };
+    automations: { used: number; limit: number };
+    storage: { used: number; limit: number; unit: string };
   };
   invoices: Invoice[];
   paymentMethods: {

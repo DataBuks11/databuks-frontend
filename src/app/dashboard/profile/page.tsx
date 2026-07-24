@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   MapPin,
@@ -17,7 +17,10 @@ import {
   Trash2,
   ExternalLink,
   AlertTriangle,
+  CheckCircle2,
+  Loader2,
 } from "lucide-react";
+import { useProfile, useProfileMutations } from "@/hooks/use-profile";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,17 +60,40 @@ const dateFormats = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
 const emailFrequencies = ["Daily digest", "Weekly digest", "Monthly digest", "Never"];
 
 export default function ProfilePage() {
+  const { profile, loading: profileLoading } = useProfile();
+  const { updateProfile, loading: saveLoading } = useProfileMutations();
+
   const [formData, setFormData] = useState({
-    firstName: "Marcus",
-    lastName: "Johnson",
-    displayName: "Marcus Johnson",
-    email: "marcus@databuks.com",
-    phone: "+1 (415) 555-0192",
-    location: "San Francisco, CA",
-    bio: "Head of Growth at DataBuks. Passionate about AI-driven marketing and building scalable outreach systems.",
-    website: "https://marcusjohnson.io",
+    firstName: "",
+    lastName: "",
+    displayName: "",
+    email: "",
+    phone: "",
+    location: "",
+    bio: "",
+    website: "",
     timezone: "Pacific Time (UTC-8)",
   });
+
+  const [initialized, setInitialized] = useState(false);
+
+  if (profile && !initialized) {
+    const parts = (profile.full_name || "").split(" ");
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ") || "";
+    setFormData({
+      firstName,
+      lastName,
+      displayName: profile.full_name || "",
+      email: profile.email || "",
+      phone: profile.phone || "",
+      location: "",
+      bio: profile.role || "",
+      website: profile.website || "",
+      timezone: "Pacific Time (UTC-8)",
+    });
+    setInitialized(true);
+  }
 
   const [preferences, setPreferences] = useState({
     theme: "dark",
@@ -78,9 +104,52 @@ export default function ProfilePage() {
     emailDigest: true,
   });
 
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const handleSavePersonal = () => {};
+  const handleChangePhoto = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setAvatarUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/storage/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload failed");
+
+      await updateProfile({ avatar_url: json.url });
+      window.location.reload();
+    } catch (err) {
+      console.error("Avatar upload failed:", err);
+    } finally {
+      setAvatarUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleSavePersonal = async () => {
+    try {
+      await updateProfile({
+        full_name: formData.displayName || `${formData.firstName} ${formData.lastName}`.trim(),
+        phone: formData.phone || null,
+        website: formData.website || null,
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch {}
+  };
 
   const handleSavePreferences = () => {};
 
@@ -96,31 +165,63 @@ export default function ProfilePage() {
           <div className="px-6 sm:px-8 pb-8">
             <div className="flex flex-col sm:flex-row gap-6">
               <div className="flex flex-col items-center -mt-12 shrink-0">
-                <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold ring-4 ring-background shadow-xl">
-                  MJ
+                <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold ring-4 ring-background shadow-xl overflow-hidden">
+                  {profileLoading || avatarUploading ? (
+                    <Loader2 className="h-8 w-8 animate-spin text-white/60" />
+                  ) : profile?.avatar_url ? (
+                    <img
+                      src={profile.avatar_url}
+                      alt="Avatar"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    (profile?.full_name || "U").split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
+                  )}
                 </div>
-                <Button variant="outline" size="sm" className="mt-3 gap-2 text-xs">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3 gap-2 text-xs"
+                  onClick={handleChangePhoto}
+                  disabled={avatarUploading}
+                >
                   <Upload className="h-3.5 w-3.5" />
-                  Change Photo
+                  {avatarUploading ? "Uploading..." : "Change Photo"}
                 </Button>
               </div>
               <div className="flex-1 text-center sm:text-left pt-2">
-                <h1 className="text-2xl font-semibold">Marcus Johnson</h1>
-                <p className="text-white/60 mt-1">Head of Growth at DataBuks</p>
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3">
-                  <div className="flex items-center gap-1.5 text-sm text-white/50">
-                    <MapPin className="h-3.5 w-3.5 text-white/40" />
-                    San Francisco, CA
+                {profileLoading ? (
+                  <div className="space-y-2">
+                    <div className="h-7 w-48 bg-white/[0.05] rounded-lg animate-pulse" />
+                    <div className="h-4 w-36 bg-white/[0.05] rounded-lg animate-pulse" />
                   </div>
-                  <div className="flex items-center gap-1.5 text-sm text-white/50">
-                    <Calendar className="h-3.5 w-3.5 text-white/40" />
-                    Joined March 2023
-                  </div>
-                  <Badge variant="purple" className="gap-1">
-                    <Shield className="h-3 w-3" />
-                    Team Lead
-                  </Badge>
-                </div>
+                ) : (
+                  <>
+                    <h1 className="text-2xl font-semibold">{profile?.full_name || "User"}</h1>
+                    <p className="text-white/60 mt-1">{profile?.role || "Team Member"}</p>
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3">
+                      <div className="flex items-center gap-1.5 text-sm text-white/50">
+                        <MapPin className="h-3.5 w-3.5 text-white/40" />
+                        {profile?.company_name || "San Francisco, CA"}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-sm text-white/50">
+                        <Calendar className="h-3.5 w-3.5 text-white/40" />
+                        Joined {profile?.created_at ? new Date(profile.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : ""}
+                      </div>
+                      <Badge variant="purple" className="gap-1">
+                        <Shield className="h-3 w-3" />
+                        {profile?.role || "Team Member"}
+                      </Badge>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -259,11 +360,21 @@ export default function ProfilePage() {
                     </Select>
                   </div>
                 </div>
-                <div className="mt-6">
-                  <Button onClick={handleSavePersonal} className="gap-2">
-                    <Save className="h-4 w-4" />
-                    Save Changes
+                <div className="mt-6 flex items-center gap-3">
+                  <Button onClick={handleSavePersonal} className="gap-2" disabled={saveLoading}>
+                    {saveLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {saveLoading ? "Saving..." : "Save Changes"}
                   </Button>
+                  {saveSuccess && (
+                    <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Saved
+                    </span>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -283,7 +394,7 @@ export default function ProfilePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Email</p>
-                      <p className="text-sm text-white/50">marcus@databuks.com</p>
+                      <p className="text-sm text-white/50">{profile?.email || "Loading..."}</p>
                     </div>
                   </div>
                   <Button variant="outline" size="sm">

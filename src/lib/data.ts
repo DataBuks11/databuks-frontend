@@ -899,12 +899,12 @@ export const billingData: BillingData = {
       "Priority support",
       "API access",
     ],
-    usage: {
-      leads: { used: 2483, limit: 10000 },
-      content: { used: 847, limit: 5000 },
-      automations: { used: 12, limit: 25 },
-      storage: { used: 8.4, limit: 50, unit: "GB" },
-    },
+  },
+  usage: {
+    leads: { used: 2483, limit: 10000 },
+    content: { used: 847, limit: 5000 },
+    automations: { used: 12, limit: 25 },
+    storage: { used: 8.4, limit: 50, unit: "GB" },
   },
   invoices: [
     {
