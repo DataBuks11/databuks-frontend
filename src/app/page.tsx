@@ -189,6 +189,8 @@ function ParticleField() {
   );
 }
 
+export const dynamic = "force-dynamic";
+
 export default function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isClient, setIsClient] = useState(false);
