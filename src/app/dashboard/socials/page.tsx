@@ -184,18 +184,18 @@ export default function SocialsPage() {
     setConnecting(platform);
     setError("");
     try {
-      const uid = userId || "default";
+      if (!userId) { setError("You must be logged in to connect accounts"); setConnecting(null); return; }
+      const redirectUri = `${window.location.origin}/dashboard/socials?platform=${platform}`;
       const res = await fetch("/api/composio/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appName: platform, entityId: uid }),
+        body: JSON.stringify({ appName: platform, entityId: userId, redirectUri }),
       });
       const data = await res.json();
-      if (data.error) { setError(data.error); return; }
+      if (data.error) { setError(data.error); setConnecting(null); return; }
       if (data.redirectUrl) { window.location.href = data.redirectUrl; }
-      else { await loadConnections(); }
-    } catch { setError("Failed to initiate connection"); }
-    finally { setConnecting(null); }
+      else { await loadConnections(); setConnecting(null); }
+    } catch { setError("Failed to initiate connection"); setConnecting(null); }
   }
 
   // ---- Disconnect handlers ----
