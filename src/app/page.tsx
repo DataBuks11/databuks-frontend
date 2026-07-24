@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { motion, useInView, AnimatePresence } from "framer-motion";
 import {
@@ -151,12 +151,12 @@ function FadeInWhenVisible({
 function ParticleField() {
   const particles = useMemo(() => Array.from({ length: 30 }, (_, i) => ({
     id: i,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 2 + 1,
-    duration: Math.random() * 15 + 10,
-    delay: Math.random() * 10,
-    opacity: Math.random() * 0.2 + 0.05,
+    x: ((i * 37 + 13) % 100),
+    y: ((i * 53 + 7) % 100),
+    size: ((i % 3) + 1),
+    duration: 10 + (i % 10),
+    delay: i % 8,
+    opacity: 0.05 + (i % 5) * 0.04,
   })), []);
 
   return (
@@ -191,6 +191,9 @@ function ParticleField() {
 
 export default function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => { setIsClient(true); }, []);
 
   const navLinks = [
     { label: "Home", href: "#home" },
@@ -200,7 +203,7 @@ export default function LandingPage() {
   ];
 
   return (
-    <div className="relative min-h-screen bg-black text-white font-sans selection:bg-blue-500/30">
+    <div className="relative min-h-screen bg-black text-white font-sans selection:bg-blue-500/30" suppressHydrationWarning>
       {/* Animated Background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute inset-0 bg-black/70 z-10" />
@@ -276,8 +279,8 @@ export default function LandingPage() {
           transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
         />
 
-        {/* Floating particles */}
-        <ParticleField />
+        {/* Floating particles — client-only to prevent hydration mismatch */}
+        {isClient && <ParticleField />}
       </div>
 
       {/* NAVIGATION */}
