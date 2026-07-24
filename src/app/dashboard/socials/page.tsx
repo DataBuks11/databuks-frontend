@@ -50,6 +50,7 @@ interface ComposioItem { id: string; appName: string; app_name?: string; integra
 
 export default function SocialsPage() {
   const [connections, setConnections] = useState<ComposioItem[]>([]);
+  const [supabaseConnections, setSupabaseConnections] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -114,9 +115,47 @@ export default function SocialsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
       if (!uid) return;
-      const res = await fetch(`/api/composio/connections?userId=${uid}`);
-      const data = await res.json();
-      if (data.connections) setConnections(data.connections);
+
+      const [composioRes, supabaseRes] = await Promise.all([
+        fetch(`/api/composio/connections?userId=${uid}`),
+        fetch(`/api/social-connections`),
+      ]);
+
+      const composioData = await composioRes.json();
+      const supabaseData = await supabaseRes.json();
+
+      if (composioData.connections) setConnections(composioData.connections);
+      if (supabaseData.connections) setSupabaseConnections(supabaseData.connections);
+
+      if (composioData.connections) {
+        for (const conn of composioData.connections) {
+          if (conn.status === "ACTIVE" && conn.id) {
+            const platform = conn.appName || conn.app_name || conn.integration_id;
+            if (platform) {
+              const alreadySaved = supabaseData.connections?.some(
+                (c: any) => c.platform === platform.toLowerCase() && c.status === "connected"
+              );
+              if (!alreadySaved) {
+                try {
+                  await fetch("/api/social-connections", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      platform: platform.toLowerCase(),
+                      connection_id: conn.id,
+                      display_name: conn.appName || conn.app_name,
+                      status: "connected",
+                    }),
+                  });
+                  const refresh = await fetch("/api/social-connections");
+                  const refreshData = await refresh.json();
+                  if (refreshData.connections) setSupabaseConnections(refreshData.connections);
+                } catch {}
+              }
+            }
+          }
+        }
+      }
     } catch { } finally { setLoading(false); }
   }
 
@@ -278,6 +317,10 @@ export default function SocialsPage() {
   function isConnected(platform: string) {
     if (platform === "whatsapp") return whatsAppStatus;
     if (platform === "telegram") return tgStatus;
+    const supabaseConn = supabaseConnections.find(
+      (c) => c.platform === platform && c.status === "connected"
+    );
+    if (supabaseConn) return true;
     const conn = getConnectionForPlatform(platform);
     if (!conn) return false;
     return conn.status === "ACTIVE" || conn.status === "INITIATED";
@@ -286,6 +329,10 @@ export default function SocialsPage() {
   function getConnectionStatus(platform: string): string {
     if (platform === "whatsapp") return whatsAppStatus ? "ACTIVE" : "";
     if (platform === "telegram") return tgStatus ? "ACTIVE" : "";
+    const supabaseConn = supabaseConnections.find(
+      (c) => c.platform === platform && c.status === "connected"
+    );
+    if (supabaseConn) return "ACTIVE";
     const conn = connections.find(c => {
       const name = ((c.appName || c.app_name || c.integration_id) ?? "").toLowerCase();
       return name === (platform ?? "").toLowerCase();
