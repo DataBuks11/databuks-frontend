@@ -31,6 +31,9 @@ export interface ContentItem {
     shares: number;
   };
   author: string;
+  created_at?: string;
+  scheduled_date?: string;
+  updated_at?: string;
 }
 
 export interface Approval {
