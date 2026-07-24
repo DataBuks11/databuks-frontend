@@ -1,10 +1,6 @@
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY!;
 const COMPOSIO_BASE = "https://backend.composio.dev";
 
-if (!process.env.COMPOSIO_API_KEY) {
-  console.warn("[DataBuks] COMPOSIO_API_KEY is not set");
-}
-
 const AUTH_CONFIGS: Record<string, string> = {
   instagram: process.env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID || "",
   facebook: process.env.COMPOSIO_FACEBOOK_AUTH_CONFIG_ID || "",
@@ -24,27 +20,25 @@ export async function initiateConnection(
   userId: string,
   redirectUri?: string
 ): Promise<{ connectionId: string; redirectUrl: string | null }> {
-  if (!userId || userId === "default") {
-    throw new Error("A valid authenticated user ID is required");
-  }
+  if (!userId) throw new Error("A valid authenticated user ID is required");
 
   const authConfigId = AUTH_CONFIGS[appName.toLowerCase()];
   if (!authConfigId) {
     throw new Error(
-      `Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID environment variable. Add your ${appName} auth config ID from the Composio dashboard.`
+      `Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID. Add it from Composio Dashboard → Settings → Auth Configs.`
     );
   }
 
-  const callbackUrl = redirectUri || getDefaultRedirectUri(appName);
-
-  const body: Record<string, any> = {
-    auth_config: { id: authConfigId },
-    connection: {},
+  const body = {
+    auth_config_id: authConfigId,
     user_id: userId,
-    redirect_url: callbackUrl,
   };
 
-  const response = await fetch(`${COMPOSIO_BASE}/api/v3.1/connected_accounts`, {
+  if (redirectUri) {
+    (body as any).redirect_url = redirectUri;
+  }
+
+  const response = await fetch(`${COMPOSIO_BASE}/api/v3/connected_accounts/link`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -55,31 +49,23 @@ export async function initiateConnection(
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Composio initiate failed (${response.status}): ${err}`);
+    throw new Error(`Composio link failed (${response.status}): ${err}`);
   }
 
   const data = await response.json();
 
-  const redirectUrl =
-    data.redirect_url ||
-    data.redirectUrl ||
-    (data.connectionData?.authScheme === "OAUTH2" && data.connectionData?.val?.redirectUrl) ||
-    null;
+  const redirectUrl = data.redirect_url || data.redirectUrl || data.url || null;
 
   return {
-    connectionId: data.id,
+    connectionId: data.id || data.connected_account_id || "",
     redirectUrl,
   };
 }
 
-export async function getConnections(
-  userId: string
-): Promise<ComposioConnection[]> {
+export async function getConnections(userId: string): Promise<ComposioConnection[]> {
   const response = await fetch(
     `${COMPOSIO_BASE}/api/v3.1/connected_accounts?user_id=${userId}&status=ACTIVE`,
-    {
-      headers: { "x-api-key": COMPOSIO_API_KEY },
-    }
+    { headers: { "x-api-key": COMPOSIO_API_KEY } }
   );
 
   if (!response.ok) {
@@ -91,14 +77,10 @@ export async function getConnections(
   return data.data ?? data.items ?? [];
 }
 
-export async function getConnectionById(
-  connectionId: string
-): Promise<ComposioConnection | null> {
+export async function getConnectionById(connectionId: string): Promise<ComposioConnection | null> {
   const response = await fetch(
     `${COMPOSIO_BASE}/api/v3.1/connected_accounts/${connectionId}`,
-    {
-      headers: { "x-api-key": COMPOSIO_API_KEY },
-    }
+    { headers: { "x-api-key": COMPOSIO_API_KEY } }
   );
 
   if (!response.ok) {
@@ -125,16 +107,8 @@ export async function disconnectConnection(connectionId: string): Promise<void> 
   }
 }
 
-export async function getConnectionStatus(
-  connectionId: string
-): Promise<ComposioConnection> {
+export async function getConnectionStatus(connectionId: string): Promise<ComposioConnection> {
   const connection = await getConnectionById(connectionId);
-  if (!connection) {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
+  if (!connection) throw new Error(`Connection ${connectionId} not found`);
   return connection;
-}
-
-function getDefaultRedirectUri(platform: string): string {
-  return `https://databuks-frontend.vercel.app/dashboard/socials?platform=${platform}`;
 }
