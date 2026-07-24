@@ -72,21 +72,30 @@ export default function SocialsPage() {
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUserId(user?.id ?? "");
-      await loadConnections();
-      await checkWhatsAppStatus();
-      await checkTelegramStatus();
+      try {
+        const { data } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        if (cancelled) return;
+        setUserId(data?.user?.id ?? "");
+        await loadConnections();
+        await checkWhatsAppStatus();
+        await checkTelegramStatus();
 
-      const params = new URLSearchParams(window.location.search);
-      const platform = params.get("platform");
-      if (platform) {
-        startOAuthPolling(platform);
+        const params = new URLSearchParams(window.location.search);
+        const platform = params.get("platform");
+        if (platform) {
+          startOAuthPolling(platform);
+        }
+      } catch (e) {
+        console.warn("Socials init error:", e);
       }
     }
     init();
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    return () => {
+      cancelled = true;
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
   }, []);
 
   function startOAuthPolling(platform: string) {
