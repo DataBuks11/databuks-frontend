@@ -13,25 +13,27 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own profile" ON public.profiles
-  FOR SELECT USING (auth.uid() = id);
+DO $$ BEGIN
+  CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Users can update own profile" ON public.profiles
-  FOR UPDATE USING (auth.uid() = id);
+DO $$ BEGIN
+  CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Users can insert own profile" ON public.profiles
-  FOR INSERT WITH CHECK (auth.uid() = id);
+DO $$ BEGIN
+  CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- TRIGGER to create profile on signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO public.profiles (id, full_name, avatar_url)
-  VALUES (
-    NEW.id,
-    NEW.raw_user_meta_data->>'full_name',
-    NEW.raw_user_meta_data->>'avatar_url'
-  );
+  VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'avatar_url');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -60,17 +62,10 @@ CREATE TABLE IF NOT EXISTS public.leads (
 
 ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own leads" ON public.leads
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can insert own leads" ON public.leads
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own leads" ON public.leads
-  FOR UPDATE USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete own leads" ON public.leads
-  FOR DELETE USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own leads" ON public.leads FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can insert own leads" ON public.leads FOR INSERT WITH CHECK (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can update own leads" ON public.leads FOR UPDATE USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can delete own leads" ON public.leads FOR DELETE USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- CONTENT TABLE
 CREATE TABLE IF NOT EXISTS public.content (
@@ -88,11 +83,8 @@ CREATE TABLE IF NOT EXISTS public.content (
 
 ALTER TABLE public.content ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own content" ON public.content
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own content" ON public.content
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own content" ON public.content FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own content" ON public.content FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- SOCIAL CONNECTIONS TABLE
 CREATE TABLE IF NOT EXISTS public.social_connections (
@@ -108,11 +100,8 @@ CREATE TABLE IF NOT EXISTS public.social_connections (
 
 ALTER TABLE public.social_connections ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own connections" ON public.social_connections
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own connections" ON public.social_connections
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own connections" ON public.social_connections FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own connections" ON public.social_connections FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- AUTOMATION TASKS TABLE
 CREATE TABLE IF NOT EXISTS public.automation_tasks (
@@ -129,11 +118,8 @@ CREATE TABLE IF NOT EXISTS public.automation_tasks (
 
 ALTER TABLE public.automation_tasks ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own tasks" ON public.automation_tasks
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own tasks" ON public.automation_tasks
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own tasks" ON public.automation_tasks FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own tasks" ON public.automation_tasks FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- WORKSPACE SETTINGS TABLE
 CREATE TABLE IF NOT EXISTS public.workspace_settings (
@@ -149,13 +135,10 @@ CREATE TABLE IF NOT EXISTS public.workspace_settings (
 
 ALTER TABLE public.workspace_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own settings" ON public.workspace_settings
-  FOR SELECT USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own settings" ON public.workspace_settings FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own settings" ON public.workspace_settings FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE POLICY "Users can manage own settings" ON public.workspace_settings
-  FOR ALL USING (auth.uid() = user_id);
-
--- WHATSAPP SESSIONS TABLE (stores Baileys auth state)
+-- WHATSAPP SESSIONS TABLE
 CREATE TABLE IF NOT EXISTS public.whatsapp_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
@@ -168,11 +151,8 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_sessions (
 
 ALTER TABLE public.whatsapp_sessions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own whatsapp session" ON public.whatsapp_sessions
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own whatsapp session" ON public.whatsapp_sessions
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own whatsapp session" ON public.whatsapp_sessions FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own whatsapp session" ON public.whatsapp_sessions FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- TELEGRAM BOTS TABLE
 CREATE TABLE IF NOT EXISTS public.telegram_bots (
@@ -189,11 +169,8 @@ CREATE TABLE IF NOT EXISTS public.telegram_bots (
 
 ALTER TABLE public.telegram_bots ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own telegram bot" ON public.telegram_bots
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own telegram bot" ON public.telegram_bots
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own telegram bot" ON public.telegram_bots FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can manage own telegram bot" ON public.telegram_bots FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- CONVERSATIONS TABLE
 CREATE TABLE IF NOT EXISTS public.conversations (
@@ -210,8 +187,7 @@ CREATE TABLE IF NOT EXISTS public.conversations (
 
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can manage own conversations" ON public.conversations
-  FOR ALL USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can manage own conversations" ON public.conversations FOR ALL USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- MESSAGES TABLE
 CREATE TABLE IF NOT EXISTS public.messages (
@@ -225,12 +201,10 @@ CREATE TABLE IF NOT EXISTS public.messages (
 
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own messages" ON public.messages
-  FOR SELECT USING (auth.uid() = user_id);
+DO $$ BEGIN CREATE POLICY "Users can view own messages" ON public.messages FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Users can insert own messages" ON public.messages FOR INSERT WITH CHECK (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE POLICY "Users can insert own messages" ON public.messages
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
+-- SUBSCRIPTIONS TABLE
 CREATE TABLE IF NOT EXISTS public.subscriptions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
@@ -241,9 +215,12 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
-ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can view own subscription" ON public.subscriptions FOR SELECT USING (auth.uid() = user_id);
 
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN CREATE POLICY "Users can view own subscription" ON public.subscriptions FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- INVOICES TABLE
 CREATE TABLE IF NOT EXISTS public.invoices (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -253,16 +230,15 @@ CREATE TABLE IF NOT EXISTS public.invoices (
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
-ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can view own invoices" ON public.invoices FOR SELECT USING (auth.uid() = user_id);
 
+ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN CREATE POLICY "Users can view own invoices" ON public.invoices FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- STORAGE BUCKET
 INSERT INTO storage.buckets (id, name, public, file_size_limit) 
 VALUES ('avatars', 'avatars', true, 5242880)
 ON CONFLICT (id) DO NOTHING;
 
-CREATE POLICY "Users can upload avatars" ON storage.objects 
-  FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
-CREATE POLICY "Users can update own avatars" ON storage.objects 
-  FOR UPDATE USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
-CREATE POLICY "Avatars are publicly readable" ON storage.objects 
-  FOR SELECT USING (bucket_id = 'avatars');
+DO $$ BEGIN CREATE POLICY "Users can upload avatars" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE POLICY "Avatars are publicly readable" ON storage.objects FOR SELECT USING (bucket_id = 'avatars'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
