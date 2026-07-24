@@ -4,8 +4,6 @@ import {
   type WASocket,
   type AuthenticationState,
   initAuthCreds,
-  BufferJSON,
-  proto,
 } from "@whiskeysockets/baileys";
 import { createClient } from "@/lib/supabase/server";
 import QRCode from "qrcode";
@@ -13,88 +11,61 @@ import pino from "pino";
 
 const logger = pino({ level: "silent" });
 
-const activeConnections = new Map<string, { socket: WASocket; qrCode: string | null }>();
+const QR_WAIT_TIMEOUT = 8000;
 
-const CONNECTION_TIMEOUT = 180000;
+interface ActiveSession {
+  socket: WASocket | null;
+  qrCode: string | null;
+  connected: boolean;
+  userId: string;
+}
 
-async function loadAuthState(userId: string): Promise<{ state: AuthenticationState; exists: boolean; saveCreds: () => Promise<void> }> {
-  const credsKey = `wa:${userId}:creds`;
-  const keysKey = `wa:${userId}:keys`;
+const sessions = new Map<string, ActiveSession>();
 
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("whatsapp_sessions")
-    .select("auth_state")
-    .eq("user_id", userId)
-    .single();
+async function loadAuthState(userId: string): Promise<{
+  state: AuthenticationState;
+  exists: boolean;
+}> {
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("whatsapp_sessions")
+      .select("auth_state")
+      .eq("user_id", userId)
+      .single();
 
-  if (data?.auth_state) {
-    try {
-      const creds = JSON.parse(JSON.stringify(data.auth_state.creds), (key, value) => {
-        if (key === "noiseKey" && value) return { ...value };
-        if (key === "signedIdentityKey" && value) return { ...value };
-        if (key === "signedPreKey" && value) return { ...value };
-        return value;
-      }) as any;
-
-      const keys: any = {
-        get: async (type: string, ids: string[]) => {
-          const storedKeys = data.auth_state.keys?.[type];
-          const result: any = {};
-          if (storedKeys) {
-            for (const id of ids) {
-              if (storedKeys[id]) result[id] = storedKeys[id];
-            }
-          }
-          return result;
-        },
-        set: async (items: any) => {
-          if (!data.auth_state.keys) data.auth_state.keys = {};
-          for (const category of Object.keys(items)) {
-            if (!data.auth_state.keys[category]) data.auth_state.keys[category] = {};
-            Object.assign(data.auth_state.keys[category], items[category]);
-          }
-          await saveAuthState(userId, { creds, keys: data.auth_state.keys });
-        },
-      };
-
+    if (data?.auth_state?.creds) {
       return {
-        state: { creds, keys },
-        exists: true,
-        saveCreds: async () => {
-          await saveAuthState(userId, { creds, keys: data.auth_state.keys });
+        state: {
+          creds: data.auth_state.creds,
+          keys: data.auth_state.keys || {
+            get: async () => ({}),
+            set: async () => {},
+          },
         },
+        exists: true,
       };
-    } catch {}
-  }
-
-  const initCreds = initAuthCreds();
-  const keyStore: Record<string, any> = {};
+    }
+  } catch {}
 
   return {
     state: {
-      creds: initCreds as any,
+      creds: initAuthCreds() as any,
       keys: {
-        get: async (_type: string, _ids: string[]) => ({}),
-        set: async (items: any) => {
-          for (const category of Object.keys(items)) {
-            if (!keyStore[category]) keyStore[category] = {};
-            Object.assign(keyStore[category], items[category]);
-          }
-        },
+        get: async () => ({}),
+        set: async () => {},
       },
     },
     exists: false,
-    saveCreds: async () => {},
   };
 }
 
-async function saveAuthState(userId: string, authState: { creds: any; keys: any }) {
+async function saveAuthState(userId: string, creds: any, keys: any) {
   try {
     const supabase = await createClient();
     await supabase.from("whatsapp_sessions").upsert({
       user_id: userId,
-      auth_state: authState,
+      auth_state: { creds, keys },
       connected: true,
       updated_at: new Date().toISOString(),
     });
@@ -103,56 +74,48 @@ async function saveAuthState(userId: string, authState: { creds: any; keys: any 
 
 export async function startWhatsAppConnection(
   userId: string
-): Promise<{ qrCode: string } | { connected: true } | { error: string }> {
-  const existing = activeConnections.get(userId);
-  if (existing?.qrCode) {
-    return { qrCode: existing.qrCode };
-  }
+): Promise<{ qrCode: string } | { error: string }> {
+  const { state } = await loadAuthState(userId);
 
-  const { state, exists } = await loadAuthState(userId);
-  let qrGenerated = false;
+  return new Promise((resolve) => {
+    const timedOut = { done: false };
 
-  try {
     const socket = makeWASocket({
       auth: state,
       printQRInTerminal: false,
       logger,
       browser: ["DataBuks", "Chrome", "1.0.0"],
-      connectTimeoutMs: 30000,
-      keepAliveIntervalMs: 15000,
+      connectTimeoutMs: 15000,
+      keepAliveIntervalMs: 30000,
     });
 
-    activeConnections.set(userId, { socket, qrCode: null });
+    sessions.set(userId, {
+      socket,
+      qrCode: null,
+      connected: false,
+      userId,
+    });
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        cleanup(userId);
-        if (qrGenerated) return;
-        resolve({ error: "Connection timeout. Please try again." });
-      }, CONNECTION_TIMEOUT);
+    socket.ev.on("connection.update", async (update) => {
+      const { qr, connection, lastDisconnect } = update;
 
-      socket.ev.on("connection.update", async (update) => {
-        const { qr, connection, lastDisconnect } = update;
-
-        if (qr && !qrGenerated) {
-          qrGenerated = true;
+      if (qr && !timedOut.done) {
+        timedOut.done = true;
+        try {
           const qrImage = await QRCode.toDataURL(qr);
-          const conn = activeConnections.get(userId);
-          if (conn) conn.qrCode = qrImage;
+          const session = sessions.get(userId);
+          if (session) session.qrCode = qrImage;
           resolve({ qrCode: qrImage });
+        } catch {
+          resolve({ error: "Failed to generate QR code" });
         }
+      }
 
-        if (connection === "open") {
-          clearTimeout(timeout);
-          const conn = activeConnections.get(userId);
-          if (conn) conn.qrCode = null;
-
+      if (connection === "open") {
+        try {
           const creds = (socket.authState as any)?.creds;
           const keys = (socket.authState as any)?.keys;
-
-          if (creds) {
-            await saveAuthState(userId, { creds, keys });
-          }
+          if (creds) await saveAuthState(userId, creds, keys);
 
           const supabase = await createClient();
           await supabase
@@ -160,107 +123,89 @@ export async function startWhatsAppConnection(
             .update({ connected: true, updated_at: new Date().toISOString() })
             .eq("user_id", userId);
 
-          resolve({ connected: true });
-        }
+          const session = sessions.get(userId);
+          if (session) session.connected = true;
 
-        if (connection === "close") {
-          const shouldReconnect =
-            (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
-
-          if (shouldReconnect) {
-            const conn = activeConnections.get(userId);
-            if (conn) {
-              setTimeout(async () => {
-                try {
-                  const { state: savedState } = await loadAuthState(userId);
-                  if (!savedState.creds.me) return;
-                  const reconnectSocket = makeWASocket({
-                    auth: savedState,
-                    logger,
-                    browser: ["DataBuks", "Chrome", "1.0.0"],
-                    connectTimeoutMs: 15000,
-                    keepAliveIntervalMs: 15000,
-                  });
-
-                  reconnectSocket.ev.on("connection.update", async ({ connection: connStatus }) => {
-                    if (connStatus === "open") {
-                      const newCreds = (reconnectSocket.authState as any)?.creds;
-                      const newKeys = (reconnectSocket.authState as any)?.keys;
-                      if (newCreds) {
-                        await saveAuthState(userId, { creds: newCreds, keys: newKeys });
-                      }
-                      activeConnections.set(userId, { socket: reconnectSocket, qrCode: null });
-                      await updateConnectionStatus(userId, true);
-                    }
-                    if (connStatus === "close") {
-                      cleanup(userId);
-                      await updateConnectionStatus(userId, false);
-                    }
-                  });
-                } catch {
-                  cleanup(userId);
-                  await updateConnectionStatus(userId, false);
-                }
-              }, 2000);
-            }
-          } else {
-            clearTimeout(timeout);
-            cleanup(userId);
-            await updateConnectionStatus(userId, false);
-            const supabase = await createClient();
-            await supabase.from("whatsapp_sessions").delete().eq("user_id", userId);
+          if (!timedOut.done) {
+            timedOut.done = true;
+            resolve({ error: "" });
           }
-        }
-      });
+        } catch {}
+      }
 
-      socket.ev.on("creds.update", async () => {
+      if (connection === "close") {
+        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+        if (statusCode === DisconnectReason.loggedOut) {
+          sessions.delete(userId);
+          const supabase = await createClient();
+          await supabase.from("whatsapp_sessions").delete().eq("user_id", userId);
+        }
+
+        if (!timedOut.done) {
+          timedOut.done = true;
+          resolve({ error: "Connection closed. WhatsApp may be down. Try again." });
+        }
+      }
+    });
+
+    socket.ev.on("creds.update", async () => {
+      try {
         const creds = (socket.authState as any)?.creds;
         const keys = (socket.authState as any)?.keys;
-        if (creds) {
-          await saveAuthState(userId, { creds, keys });
-        }
-      });
+        if (creds) await saveAuthState(userId, creds, keys);
+      } catch {}
     });
-  } catch (err: any) {
-    cleanup(userId);
-    return { error: err.message ?? "Failed to start WhatsApp connection" };
+
+    setTimeout(() => {
+      if (!timedOut.done) {
+        timedOut.done = true;
+        resolve({ error: "QR generation timeout. Please try again." });
+      }
+    }, QR_WAIT_TIMEOUT);
+  });
+}
+
+export function getActiveQrCode(userId: string): string | null {
+  return sessions.get(userId)?.qrCode ?? null;
+}
+
+export async function getWhatsAppStatus(
+  userId: string
+): Promise<{ connected: boolean }> {
+  const session = sessions.get(userId);
+  if (session?.connected) return { connected: true };
+
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("whatsapp_sessions")
+      .select("connected")
+      .eq("user_id", userId)
+      .single();
+
+    return { connected: data?.connected ?? false };
+  } catch {
+    return { connected: false };
   }
 }
 
-export async function disconnectWhatsApp(userId: string): Promise<{ success: boolean }> {
+export async function disconnectWhatsApp(
+  userId: string
+): Promise<{ success: boolean }> {
   try {
-    cleanup(userId);
+    const session = sessions.get(userId);
+    if (session?.socket) {
+      try { session.socket.ws?.close(); } catch {}
+    }
+    sessions.delete(userId);
+
     const supabase = await createClient();
     await supabase.from("whatsapp_sessions").delete().eq("user_id", userId);
+
     return { success: true };
   } catch {
     return { success: false };
   }
-}
-
-export async function getWhatsAppStatus(userId: string): Promise<{ connected: boolean }> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("whatsapp_sessions")
-    .select("connected")
-    .eq("user_id", userId)
-    .single();
-
-  const isConnected = data?.connected ?? false;
-
-  if (!isConnected) {
-    const conn = activeConnections.get(userId);
-    if (conn?.socket) {
-      try {
-        const creds = (conn.socket.authState as any)?.creds;
-        return { connected: !!creds?.me };
-      } catch {
-        return { connected: false };
-      }
-    }
-  }
-
-  return { connected: isConnected };
 }
 
 export async function sendWhatsAppMessage(
@@ -269,13 +214,22 @@ export async function sendWhatsAppMessage(
   message: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { state } = await loadAuthState(userId);
-    if (!(state.creds as any)?.me) {
-      return { success: false, error: "No active WhatsApp session. Please scan QR code first." };
+    const supabase = await createClient();
+    const { data: session } = await supabase
+      .from("whatsapp_sessions")
+      .select("auth_state")
+      .eq("user_id", userId)
+      .single();
+
+    if (!session?.auth_state?.creds) {
+      return { success: false, error: "No active WhatsApp session" };
     }
 
     const socket = makeWASocket({
-      auth: state,
+      auth: {
+        creds: session.auth_state.creds,
+        keys: session.auth_state.keys || { get: async () => ({}), set: async () => {} },
+      },
       logger,
       browser: ["DataBuks", "Chrome", "1.0.0"],
       connectTimeoutMs: 15000,
@@ -290,13 +244,15 @@ export async function sendWhatsAppMessage(
       socket.ev.on("connection.update", async ({ connection }) => {
         if (connection === "open") {
           try {
-            const formattedJid = jid.includes("@s.whatsapp.net") ? jid : `${jid}@s.whatsapp.net`;
+            const formattedJid = jid.includes("@s.whatsapp.net")
+              ? jid
+              : `${jid}@s.whatsapp.net`;
             await socket.sendMessage(formattedJid, { text: message });
             clearTimeout(msgTimeout);
 
             const creds = (socket.authState as any)?.creds;
             const keys = (socket.authState as any)?.keys;
-            if (creds) await saveAuthState(userId, { creds, keys });
+            if (creds) await saveAuthState(userId, creds, keys);
 
             resolve({ success: true });
           } catch (err: any) {
@@ -310,37 +266,8 @@ export async function sendWhatsAppMessage(
           resolve({ success: false, error: "Failed to connect" });
         }
       });
-
-      socket.ev.on("creds.update", async () => {
-        const creds = (socket.authState as any)?.creds;
-        const keys = (socket.authState as any)?.keys;
-        if (creds) await saveAuthState(userId, { creds, keys });
-      });
     });
   } catch (err: any) {
     return { success: false, error: err.message };
-  }
-}
-
-export async function getActiveQrCode(userId: string): Promise<string | null> {
-  const conn = activeConnections.get(userId);
-  return conn?.qrCode ?? null;
-}
-
-async function updateConnectionStatus(userId: string, connected: boolean) {
-  try {
-    const supabase = await createClient();
-    await supabase
-      .from("whatsapp_sessions")
-      .update({ connected, updated_at: new Date().toISOString() })
-      .eq("user_id", userId);
-  } catch {}
-}
-
-function cleanup(userId: string) {
-  const conn = activeConnections.get(userId);
-  if (conn) {
-    try { conn.socket.ws?.close(); } catch {}
-    activeConnections.delete(userId);
   }
 }

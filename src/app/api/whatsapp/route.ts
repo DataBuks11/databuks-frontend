@@ -7,6 +7,9 @@ import {
   getActiveQrCode,
 } from "@/lib/whatsapp";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const action = searchParams.get("action");
@@ -23,11 +26,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === "qr") {
-      const currentQr = await getActiveQrCode(userId);
+      const currentQr = getActiveQrCode(userId);
       if (currentQr) {
         return NextResponse.json({ qrCode: currentQr });
       }
-      return NextResponse.json({ qrCode: null, message: "No active QR code. Start a connection first." });
+      return NextResponse.json({ qrCode: null, message: "No active QR. Start a connection first." });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });

@@ -1,5 +1,5 @@
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY!;
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v2";
+const COMPOSIO_BASE = "https://backend.composio.dev/api/v1";
 
 export interface ComposioConnection {
   id: string;
@@ -28,7 +28,7 @@ export async function initiateConnection(
       "x-api-key": COMPOSIO_API_KEY,
     },
     body: JSON.stringify({
-      appName,
+      integrationId: appName,
       entityId,
       authMode: "OAUTH2",
     }),
@@ -60,7 +60,7 @@ export async function getConnections(
   }
 
   const data = await response.json();
-  return data.items ?? [];
+  return data.items ?? data.data ?? [];
 }
 
 export async function disconnectConnection(connectionId: string): Promise<void> {
