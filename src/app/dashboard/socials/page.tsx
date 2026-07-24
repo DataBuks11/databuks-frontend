@@ -86,6 +86,10 @@ export default function SocialsPage() {
         const platform = params.get("platform");
         if (platform) {
           startOAuthPolling(platform);
+        } else {
+          if (connections.length === 0) {
+            startOAuthPolling(null);
+          }
         }
       } catch {}
     }
@@ -93,21 +97,18 @@ export default function SocialsPage() {
     return () => { cancelled = true; if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
-  function startOAuthPolling(platform: string) {
+  function startOAuthPolling(platform: string | null) {
     let attempts = 0;
-    const maxAttempts = 20;
+    const maxAttempts = 10;
     pollingRef.current = setInterval(async () => {
       attempts++;
       await loadConnections();
-      const connected = getConnectionForPlatform(platform);
-      if (connected || attempts >= maxAttempts) {
+      if (attempts >= maxAttempts) {
         if (pollingRef.current) clearInterval(pollingRef.current);
-        window.history.replaceState({}, "", "/dashboard/socials");
+        if (platform) window.history.replaceState({}, "", "/dashboard/socials");
       }
     }, 3000);
-  }
-
-  async function loadConnections() {
+  }  async function loadConnections() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -211,8 +212,9 @@ export default function SocialsPage() {
   async function handleComposioConnect(platform: string) {
     setConnecting(platform);
     setError("");
+    const safetyTimer = setTimeout(() => setConnecting(null), 15000);
     try {
-      if (!userId) { setError("You must be logged in to connect accounts"); setConnecting(null); return; }
+      if (!userId) { setError("You must be logged in to connect accounts"); clearTimeout(safetyTimer); setConnecting(null); return; }
       const redirectUri = `${window.location.origin}/dashboard/socials?platform=${platform}`;
       const res = await fetch("/api/composio/connections", {
         method: "POST",
@@ -220,10 +222,10 @@ export default function SocialsPage() {
         body: JSON.stringify({ appName: platform, entityId: userId, redirectUri }),
       });
       const data = await res.json();
-      if (data.error) { setError(data.error); setConnecting(null); return; }
-      if (data.redirectUrl) { window.location.href = data.redirectUrl; }
-      else { await loadConnections(); setConnecting(null); }
-    } catch { setError("Failed to initiate connection"); setConnecting(null); }
+      if (data.error) { setError(data.error); clearTimeout(safetyTimer); setConnecting(null); return; }
+      if (data.redirectUrl) { clearTimeout(safetyTimer); window.location.href = data.redirectUrl; }
+      else { await loadConnections(); clearTimeout(safetyTimer); setConnecting(null); }
+    } catch { setError("Failed to initiate connection"); clearTimeout(safetyTimer); setConnecting(null); }
   }
 
   // ---- Disconnect handlers ----
