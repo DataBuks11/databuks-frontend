@@ -1,5 +1,10 @@
+import { createClient } from "@/lib/supabase/server";
+
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY!;
 const COMPOSIO_BASE = "https://backend.composio.dev";
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : "https://databuks-frontend.vercel.app";
 
 const AUTH_CONFIGS: Record<string, string> = {
   instagram: process.env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID || "",
@@ -22,13 +27,14 @@ export async function initiateConnection(
   if (!userId) throw new Error("A valid authenticated user ID is required");
 
   const authConfigId = AUTH_CONFIGS[(appName ?? "").toLowerCase()];
-  if (!authConfigId) {
-    throw new Error(`Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID.`);
-  }
+  if (!authConfigId) throw new Error(`Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID.`);
+
+  const callbackUrl = `${BASE_URL}/api/composio/callback?platform=${appName}&userId=${userId}`;
 
   const body = {
     auth_config_id: authConfigId,
     user_id: userId,
+    callback_url: callbackUrl,
   };
 
   const response = await fetch(`${COMPOSIO_BASE}/api/v3/connected_accounts/link`, {
