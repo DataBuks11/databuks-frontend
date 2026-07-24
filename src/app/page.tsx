@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useMemo } from "react";
 import Link from "next/link";
 import { motion, useInView, AnimatePresence } from "framer-motion";
 import {
@@ -149,15 +149,15 @@ function FadeInWhenVisible({
 }
 
 function ParticleField() {
-  const particles = Array.from({ length: 40 }, (_, i) => ({
+  const particles = useMemo(() => Array.from({ length: 30 }, (_, i) => ({
     id: i,
     x: Math.random() * 100,
     y: Math.random() * 100,
     size: Math.random() * 2 + 1,
     duration: Math.random() * 15 + 10,
     delay: Math.random() * 10,
-    opacity: Math.random() * 0.3 + 0.05,
-  }));
+    opacity: Math.random() * 0.2 + 0.05,
+  })), []);
 
   return (
     <div className="absolute inset-0">

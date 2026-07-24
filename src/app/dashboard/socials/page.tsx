@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   RefreshCw, ExternalLink, Unlink, Link2, Instagram, Facebook,
@@ -46,7 +46,7 @@ const platformConfig: Record<string, {
   },
 };
 
-interface ComposioItem { id: string; appName: string; appId: string; status: string; createdAt: string; }
+interface ComposioItem { id: string; appName: string; app_name?: string; integration_id?: string; appId: string; status: string; createdAt: string; }
 
 export default function SocialsPage() {
   const [connections, setConnections] = useState<ComposioItem[]>([]);
@@ -69,6 +69,8 @@ export default function SocialsPage() {
 
   const supabase = createClient();
 
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -76,15 +78,37 @@ export default function SocialsPage() {
       await loadConnections();
       await checkWhatsAppStatus();
       await checkTelegramStatus();
+
+      const params = new URLSearchParams(window.location.search);
+      const platform = params.get("platform");
+      if (platform) {
+        startOAuthPolling(platform);
+      }
     }
     init();
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
+
+  function startOAuthPolling(platform: string) {
+    let attempts = 0;
+    const maxAttempts = 20;
+    pollingRef.current = setInterval(async () => {
+      attempts++;
+      await loadConnections();
+      const connected = getConnectionForPlatform(platform);
+      if (connected || attempts >= maxAttempts) {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        window.history.replaceState({}, "", "/dashboard/socials");
+      }
+    }, 3000);
+  }
 
   async function loadConnections() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const uid = user?.id ?? "default";
+      const uid = user?.id;
+      if (!uid) return;
       const res = await fetch(`/api/composio/connections?userId=${uid}`);
       const data = await res.json();
       if (data.connections) setConnections(data.connections);
@@ -217,7 +241,10 @@ export default function SocialsPage() {
   }
 
   function getConnectionForPlatform(platform: string) {
-    return connections.find(c => c.appName.toLowerCase() === platform.toLowerCase() && c.status === "ACTIVE");
+    return connections.find(c => {
+      const name = (c.appName || c.app_name || c.integration_id || "").toLowerCase();
+      return name === platform.toLowerCase() && (c.status === "ACTIVE" || c.status === "INITIATED");
+    });
   }
 
   function isConnected(platform: string) {
