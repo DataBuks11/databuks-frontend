@@ -72,21 +72,25 @@ export default function SocialsPage() {
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUserId(user?.id ?? "");
-      await loadConnections();
-      await checkWhatsAppStatus();
-      await checkTelegramStatus();
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        setUserId(user?.id ?? "");
+        await loadConnections();
+        await checkWhatsAppStatus();
+        await checkTelegramStatus();
 
-      const params = new URLSearchParams(window.location.search);
-      const platform = params.get("platform");
-      if (platform) {
-        startOAuthPolling(platform);
-      }
+        const params = new URLSearchParams(window.location.search);
+        const platform = params.get("platform");
+        if (platform) {
+          startOAuthPolling(platform);
+        }
+      } catch {}
     }
     init();
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    return () => { cancelled = true; if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   function startOAuthPolling(platform: string) {
@@ -250,7 +254,19 @@ export default function SocialsPage() {
   function isConnected(platform: string) {
     if (platform === "whatsapp") return whatsAppStatus;
     if (platform === "telegram") return tgStatus;
-    return !!getConnectionForPlatform(platform);
+    const conn = getConnectionForPlatform(platform);
+    if (!conn) return false;
+    return conn.status === "ACTIVE" || conn.status === "INITIATED";
+  }
+
+  function getConnectionStatus(platform: string): string {
+    if (platform === "whatsapp") return whatsAppStatus ? "ACTIVE" : "";
+    if (platform === "telegram") return tgStatus ? "ACTIVE" : "";
+    const conn = connections.find(c => {
+      const name = ((c.appName || c.app_name || c.integration_id) ?? "").toLowerCase();
+      return name === (platform ?? "").toLowerCase();
+    });
+    return conn?.status ?? "";
   }
 
   function handleConnect(platform: string) {
@@ -303,26 +319,14 @@ export default function SocialsPage() {
                       )}
                     </div>
                   </div>
-                  <Badge variant={connected ? "success" : "secondary"}>
-                    {connected ? "Connected" : "Disconnected"}
+                  <Badge variant={connected ? "success" : getConnectionStatus(key) === "EXPIRED" ? "destructive" : "secondary"}>
+                    {connected ? "Connected" : getConnectionStatus(key) === "EXPIRED" ? "Expired" : "Disconnected"}
                   </Badge>
                 </div>
 
                 <CardContent className="p-0 space-y-3">
                   {connected ? (
                     <>
-                      {key !== "whatsapp" && key !== "telegram" && conn && (
-                        <>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-white/40 font-light">Connection ID</span>
-                            <span className="text-white/60 font-mono text-xs">{conn.id.slice(0, 12)}...</span>
-                          </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-white/40 font-light">Connected</span>
-                            <span className="text-white/60 text-xs">{new Date(conn.createdAt).toLocaleDateString()}</span>
-                          </div>
-                        </>
-                      )}
                       {key === "whatsapp" && (
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-white/40 font-light">Status</span>
@@ -341,6 +345,17 @@ export default function SocialsPage() {
                         <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300"
                           onClick={() => handleDisconnect(key, conn?.id)}>
                           <Unlink className="w-3.5 h-3.5" />Disconnect
+                        </Button>
+                      </div>
+                    </>
+                  ) : getConnectionStatus(key) === "EXPIRED" ? (
+                    <>
+                      <p className="text-xs text-orange-400/70 font-light">Connection expired. Reconnect to continue using this account.</p>
+                      <div className="flex gap-2 pt-1">
+                        <Button className="w-full liquid-glass rounded-full gap-2 text-sm"
+                          onClick={() => handleConnect(key)} disabled={connecting === key}>
+                          {connecting === key ? <><RefreshCw className="w-4 h-4 animate-spin" />Reconnecting...</> :
+                            <><RefreshCw className="w-4 h-4" />Reconnect {config.name}</>}
                         </Button>
                       </div>
                     </>
@@ -434,32 +449,6 @@ export default function SocialsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Composio Connections List */}
-      {connections.length > 0 && (
-        <div className="glass rounded-2xl p-6">
-          <h3 className="text-base font-medium text-white mb-4">Composio Connections</h3>
-          <div className="space-y-2">
-            {connections.map((conn) => {
-              const cfg = platformConfig[(conn.appName || conn.app_name || conn.integration_id || "").toLowerCase()];
-              const Icon = cfg?.icon ?? ExternalLink;
-              return (
-                <div key={conn.id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-white/[0.02]">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-7 h-7 rounded-full bg-gradient-to-br ${cfg?.color ?? "from-gray-500 to-gray-400"} flex items-center justify-center`}>
-                      <Icon className="w-3.5 h-3.5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-white font-medium">{cfg?.name ?? conn.appName}</p>
-                      <p className="text-[11px] text-white/30 font-light font-mono">{conn.id.slice(0, 8)}...</p>
-                    </div>
-                  </div>
-                  <Badge variant={conn.status === "ACTIVE" ? "success" : "warning"}>{(conn.status ?? "").toLowerCase()}</Badge>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

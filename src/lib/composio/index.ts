@@ -64,7 +64,7 @@ export async function initiateConnection(
 
 export async function getConnections(userId: string): Promise<ComposioConnection[]> {
   const response = await fetch(
-    `${COMPOSIO_BASE}/api/v3.1/connected_accounts?user_id=${userId}&status=ACTIVE`,
+    `${COMPOSIO_BASE}/api/v3.1/connected_accounts?user_id=${userId}`,
     { headers: { "x-api-key": COMPOSIO_API_KEY } }
   );
 
