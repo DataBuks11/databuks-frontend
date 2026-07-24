@@ -37,9 +37,10 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { automationTasks } from "@/lib/data";
-import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAutomation, useAutomationMutations } from "@/hooks/use-automation";
 import type { AutomationTask } from "@/types";
+import { cn } from "@/lib/utils";
 
 const statusConfig: Record<
   AutomationTask["status"],
@@ -134,71 +135,39 @@ const summaryCards = [
 ];
 
 export default function AutomationPage() {
-  const [tasks, setTasks] = useState(automationTasks);
+  const { tasks, loading, error, refetch } = useAutomation();
+  const { createTask, updateTask, deleteTask, loading: mutating } = useAutomationMutations();
+
   const [showNewDialog, setShowNewDialog] = useState(false);
-  const [newAutomationName, setNewAutomationName] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState<string>("");
-  const [selectedTrigger, setSelectedTrigger] = useState<string>("");
+  const [newName, setNewName] = useState("");
+  const [newAgent, setNewAgent] = useState("");
+  const [newDesc, setNewDesc] = useState("");
 
-  const handleStatusChange = useCallback(
-    (id: string, newStatus: AutomationTask["status"]) => {
-      setTasks((prev) =>
-        prev.map((t) => {
-          if (t.id !== id) return t;
-          if (newStatus === "running")
-            return { ...t, status: "running", progress: 0 };
-          if (newStatus === "completed")
-            return {
-              ...t,
-              status: "completed",
-              progress: 100,
-              lastRun: new Date().toLocaleString(),
-              time: "Completed just now",
-            };
-          if (newStatus === "failed")
-            return { ...t, status: "failed", time: "Failed just now" };
-          if (newStatus === "queued") return { ...t, status: "queued", progress: 0 };
-          return t;
-        })
-      );
-    },
-    []
-  );
+  async function handleStatusChange(id: string, newStatus: AutomationTask["status"]) {
+    const updates: any = { status: newStatus };
+    if (newStatus === "running") updates.progress = 0;
+    if (newStatus === "completed") updates.progress = 100;
+    await updateTask(id, updates);
+    refetch();
+  }
 
-  const runAllQueued = useCallback(() => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.status === "queued" ? { ...t, status: "running", progress: 0, time: "Running..." } : t
-      )
-    );
-  }, []);
+  async function runAllQueued() {
+    const queued = tasks.filter((t) => t.status === "queued");
+    for (const t of queued) {
+      await updateTask(t.id, { status: "running", progress: 0 });
+    }
+    refetch();
+  }
 
-  const handleCreateAutomation = useCallback(() => {
-    if (!newAutomationName.trim() || !selectedAgent) return;
-    const newTask: AutomationTask = {
-      id: `at-${Date.now()}`,
-      name: newAutomationName.trim(),
-      agent: selectedAgent,
-      status: "queued",
-      progress: 0,
-      time: "Just created",
-      description: `Trigger: ${selectedTrigger || "Manual"}`,
-    };
-    setTasks((prev) => [newTask, ...prev]);
-    setNewAutomationName("");
-    setSelectedAgent("");
-    setSelectedTrigger("");
-    setShowNewDialog(false);
-  }, [newAutomationName, selectedAgent, selectedTrigger]);
+  async function handleCreate() {
+    if (!newName.trim() || !newAgent) return;
+    await createTask({ name: newName.trim(), agent: newAgent, description: newDesc, status: "queued" });
+    setNewName(""); setNewAgent(""); setNewDesc(""); setShowNewDialog(false);
+    refetch();
+  }
 
-  const activeTasks = useMemo(
-    () => tasks.filter((t) => t.status === "running" || t.status === "queued"),
-    [tasks]
-  );
-  const historyTasks = useMemo(
-    () => tasks.filter((t) => t.status === "completed" || t.status === "failed"),
-    [tasks]
-  );
+  const activeTasks = useMemo(() => tasks.filter((t) => t.status === "running" || t.status === "queued"), [tasks]);
+  const historyTasks = useMemo(() => tasks.filter((t) => t.status === "completed" || t.status === "failed"), [tasks]);
 
   const hasQueued = useMemo(
     () => tasks.some((t) => t.status === "queued"),
@@ -245,6 +214,13 @@ export default function AutomationPage() {
           </Button>
         </div>
       </motion.div>
+
+      {error && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-red-500/10 border border-red-500/20">
+          <div className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-red-400" /><span className="text-sm text-red-400">{error}</span></div>
+          <Button variant="ghost" size="sm" onClick={refetch} className="gap-1"><RotateCw className="w-3.5 h-3.5" />Retry</Button>
+        </div>
+      )}
 
       {/* Summary Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -345,14 +321,13 @@ export default function AutomationPage() {
               <Input
                 id="automation-name"
                 placeholder="e.g. Instagram DM Outreach - Q1"
-                value={newAutomationName}
-                onChange={(e) => setNewAutomationName(e.target.value)}
+                value={newName} onChange={(e) => setNewName(e.target.value)}
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="agent-select">Agent</Label>
-              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+              <Select value={newAgent} onValueChange={setNewAgent}>
                 <SelectTrigger id="agent-select">
                   <SelectValue placeholder="Select an agent" />
                 </SelectTrigger>
@@ -367,34 +342,18 @@ export default function AutomationPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="trigger-select">Trigger</Label>
-              <Select
-                value={selectedTrigger}
-                onValueChange={setSelectedTrigger}
-              >
-                <SelectTrigger id="trigger-select">
-                  <SelectValue placeholder="Select a trigger" />
-                </SelectTrigger>
-                <SelectContent>
-                  {triggers.map((trigger) => (
-                    <SelectItem key={trigger} value={trigger}>
-                      {trigger}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="desc">Description</Label>
+              <Input
+                id="desc"
+                placeholder="What does this automation do?"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+              />
             </div>
 
             <div className="flex justify-end gap-3 pt-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowNewDialog(false)}
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleCreateAutomation}>
-                Create Automation
-              </Button>
+              <Button variant="outline" onClick={() => setShowNewDialog(false)} className="rounded-full">Cancel</Button>
+              <Button onClick={handleCreate} disabled={mutating || !newName.trim()} className="rounded-full">{mutating ? "Creating..." : "Create Automation"}</Button>
             </div>
           </div>
         </DialogContent>
