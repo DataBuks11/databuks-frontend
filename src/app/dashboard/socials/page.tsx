@@ -71,6 +71,7 @@ export default function SocialsPage() {
   const supabase = createClient();
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const supabaseRef = useRef<any[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +110,9 @@ export default function SocialsPage() {
         if (platform) window.history.replaceState({}, "", "/dashboard/socials");
       }
     }, 3000);
-  }  async function loadConnections() {
+  }
+
+  async function loadConnections() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -125,32 +128,49 @@ export default function SocialsPage() {
       const supabaseData = await supabaseRes.json();
 
       if (composioData.connections) setConnections(composioData.connections);
-      if (supabaseData.connections) setSupabaseConnections(supabaseData.connections);
+      if (supabaseData.connections) {
+        setSupabaseConnections(supabaseData.connections);
+        supabaseRef.current = supabaseData.connections;
+      }
 
       if (composioData.connections) {
         for (const conn of composioData.connections) {
-          if (conn.status === "ACTIVE" && conn.id) {
-            const platform = conn.appName || conn.app_name || conn.integration_id;
-            if (platform) {
-              const alreadySaved = supabaseData.connections?.some(
-                (c: any) => c.platform === platform.toLowerCase() && c.status === "connected"
-              );
-              if (!alreadySaved) {
-                try {
-                  await fetch("/api/social-connections", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      platform: platform.toLowerCase(),
-                      connection_id: conn.id,
-                      display_name: conn.appName || conn.app_name,
-                      status: "connected",
-                    }),
-                  });
-                  const refresh = await fetch("/api/social-connections");
-                  const refreshData = await refresh.json();
-                  if (refreshData.connections) setSupabaseConnections(refreshData.connections);
-                } catch {}
+          const connStatus = conn.status;
+          const isLive = connStatus === "ACTIVE" || connStatus === "INITIATED";
+          const platform = (conn.appName || conn.app_name || conn.integration_id || "").toLowerCase();
+          const connId = conn.id;
+
+          console.log(`[Composio] Connection: ${connId} | platform=${platform} | status=${connStatus} | live=${isLive}`);
+
+          if (isLive && connId && platform) {
+            const alreadySaved = supabaseData.connections?.some(
+              (c: any) => c.platform === platform && c.status === "connected"
+            );
+
+            if (!alreadySaved) {
+              console.log(`[PERSIST] Saving ${platform} (${connId}) to Supabase...`);
+              try {
+                const saveRes = await fetch("/api/social-connections", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    platform,
+                    connection_id: connId,
+                    display_name: conn.appName || conn.app_name || platform,
+                    status: "connected",
+                  }),
+                });
+                const saveData = await saveRes.json();
+                console.log(`[PERSIST] Supabase result:`, saveData);
+
+                const refresh = await fetch("/api/social-connections");
+                const refreshData = await refresh.json();
+                if (refreshData.connections) {
+                  setSupabaseConnections(refreshData.connections);
+                  supabaseRef.current = refreshData.connections;
+                }
+              } catch (e) {
+                console.error(`[PERSIST] Failed:`, e);
               }
             }
           }
@@ -275,16 +295,21 @@ export default function SocialsPage() {
 
   function pollAfterOAuthPopup(platform: string) {
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 30;
     if (pollingRef.current) clearInterval(pollingRef.current);
     pollingRef.current = setInterval(async () => {
       attempts++;
+      console.log(`[POLL] Attempt ${attempts}/${maxAttempts} for ${platform}`);
       await loadConnections();
-      const connected = getConnectionForPlatform(platform);
-      if (connected || attempts >= maxAttempts) {
+      const persisted = supabaseRef.current.some(
+        (c: any) => c.platform === platform && c.status === "connected"
+      );
+      const composioLive = !!getConnectionForPlatform(platform);
+      if (persisted || composioLive || attempts >= maxAttempts) {
+        console.log(`[POLL] Stopping - persisted=${persisted} composioLive=${composioLive}`);
         if (pollingRef.current) clearInterval(pollingRef.current);
         setConnecting(null);
-        if (connected) loadConnections();
+        if (persisted || composioLive) loadConnections();
       }
     }, 2000);
   }
