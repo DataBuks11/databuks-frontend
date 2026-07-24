@@ -212,20 +212,42 @@ export default function SocialsPage() {
   async function handleComposioConnect(platform: string) {
     setConnecting(platform);
     setError("");
-    const safetyTimer = setTimeout(() => setConnecting(null), 15000);
+    const safetyTimer = setTimeout(() => setConnecting(null), 30000);
     try {
       if (!userId) { setError("You must be logged in to connect accounts"); clearTimeout(safetyTimer); setConnecting(null); return; }
-      const redirectUri = `${window.location.origin}/dashboard/socials?platform=${platform}`;
       const res = await fetch("/api/composio/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appName: platform, entityId: userId, redirectUri }),
+        body: JSON.stringify({ appName: platform, userId }),
       });
       const data = await res.json();
       if (data.error) { setError(data.error); clearTimeout(safetyTimer); setConnecting(null); return; }
-      if (data.redirectUrl) { clearTimeout(safetyTimer); window.location.href = data.redirectUrl; }
-      else { await loadConnections(); clearTimeout(safetyTimer); setConnecting(null); }
+      if (data.redirectUrl) {
+        clearTimeout(safetyTimer);
+        window.open(data.redirectUrl, "_blank", "width=600,height=700");
+        pollAfterOAuthPopup(platform);
+      } else {
+        await loadConnections();
+        clearTimeout(safetyTimer);
+        setConnecting(null);
+      }
     } catch { setError("Failed to initiate connection"); clearTimeout(safetyTimer); setConnecting(null); }
+  }
+
+  function pollAfterOAuthPopup(platform: string) {
+    let attempts = 0;
+    const maxAttempts = 40;
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(async () => {
+      attempts++;
+      await loadConnections();
+      const connected = getConnectionForPlatform(platform);
+      if (connected || attempts >= maxAttempts) {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        setConnecting(null);
+        if (connected) loadConnections();
+      }
+    }, 2000);
   }
 
   // ---- Disconnect handlers ----

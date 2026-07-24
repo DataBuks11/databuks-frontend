@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  initiateConnection,
-  getConnections,
-  disconnectConnection,
-} from "@/lib/composio";
+import { initiateConnection, getConnections, disconnectConnection } from "@/lib/composio";
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +21,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { appName, entityId, userId, redirectUri } = body;
+    const { appName, entityId, userId } = body;
 
     if (!appName) {
       return NextResponse.json({ error: "appName is required" }, { status: 400 });
@@ -33,12 +29,10 @@ export async function POST(request: NextRequest) {
 
     const uid = userId || entityId;
     if (!uid || uid === "default") {
-      return NextResponse.json({
-        error: "A valid authenticated user ID is required. Please ensure you are logged in.",
-      }, { status: 400 });
+      return NextResponse.json({ error: "A valid authenticated user ID is required." }, { status: 400 });
     }
 
-    const result = await initiateConnection(appName, uid, redirectUri);
+    const result = await initiateConnection(appName, uid);
 
     return NextResponse.json({
       connectedAccountId: result.connectionId,
