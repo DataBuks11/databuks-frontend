@@ -1,49 +1,50 @@
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY!;
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v1";
+const COMPOSIO_BASE = "https://backend.composio.dev";
 
 if (!process.env.COMPOSIO_API_KEY) {
-  console.warn("[DataBuks] COMPOSIO_API_KEY is not set in environment variables");
+  console.warn("[DataBuks] COMPOSIO_API_KEY is not set");
 }
+
+const AUTH_CONFIGS: Record<string, string> = {
+  instagram: process.env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID || "",
+  facebook: process.env.COMPOSIO_FACEBOOK_AUTH_CONFIG_ID || "",
+};
 
 export interface ComposioConnection {
   id: string;
-  integrationId: string;
-  appName: string;
-  appId: string;
-  status: "ACTIVE" | "INACTIVE" | "EXPIRED" | "INITIATED";
-  createdAt: string;
-  updatedAt: string;
-  labels?: string[];
-  connectionParams?: Record<string, any>;
-}
-
-interface InitiateConnectionResponse {
-  connectedAccountId: string;
-  connectionStatus: string;
-  redirectUrl?: string;
+  integration_id: string;
+  app_name?: string;
+  status: "INITIALIZING" | "INITIATED" | "ACTIVE" | "FAILED" | "EXPIRED" | "INACTIVE" | "REVOKED";
+  created_at: string;
+  updated_at: string;
 }
 
 export async function initiateConnection(
   appName: string,
-  entityId: string,
+  userId: string,
   redirectUri?: string
-): Promise<InitiateConnectionResponse> {
-  if (!entityId || entityId === "default") {
-    throw new Error("A valid user entityId is required to initiate a Composio connection");
+): Promise<{ connectionId: string; redirectUrl: string | null }> {
+  if (!userId || userId === "default") {
+    throw new Error("A valid authenticated user ID is required");
   }
 
-  const callbackUrl = redirectUri || getRedirectUri(appName);
+  const authConfigId = AUTH_CONFIGS[appName.toLowerCase()];
+  if (!authConfigId) {
+    throw new Error(
+      `Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID environment variable. Add your ${appName} auth config ID from the Composio dashboard.`
+    );
+  }
+
+  const callbackUrl = redirectUri || getDefaultRedirectUri(appName);
 
   const body: Record<string, any> = {
-    integrationId: appName,
-    appName,
-    entityId,
-    authMode: "OAUTH2",
-    redirectUri: callbackUrl,
-    labels: ["databuks"],
+    auth_config: { id: authConfigId },
+    connection: {},
+    user_id: userId,
+    redirect_url: callbackUrl,
   };
 
-  const response = await fetch(`${COMPOSIO_BASE}/connectedAccounts`, {
+  const response = await fetch(`${COMPOSIO_BASE}/api/v3.1/connected_accounts`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -57,18 +58,27 @@ export async function initiateConnection(
     throw new Error(`Composio initiate failed (${response.status}): ${err}`);
   }
 
-  return response.json();
+  const data = await response.json();
+
+  const redirectUrl =
+    data.redirect_url ||
+    data.redirectUrl ||
+    (data.connectionData?.authScheme === "OAUTH2" && data.connectionData?.val?.redirectUrl) ||
+    null;
+
+  return {
+    connectionId: data.id,
+    redirectUrl,
+  };
 }
 
 export async function getConnections(
-  entityId: string
+  userId: string
 ): Promise<ComposioConnection[]> {
   const response = await fetch(
-    `${COMPOSIO_BASE}/connectedAccounts?entityId=${entityId}&status=ACTIVE`,
+    `${COMPOSIO_BASE}/api/v3.1/connected_accounts?user_id=${userId}&status=ACTIVE`,
     {
-      headers: {
-        "x-api-key": COMPOSIO_API_KEY,
-      },
+      headers: { "x-api-key": COMPOSIO_API_KEY },
     }
   );
 
@@ -78,18 +88,16 @@ export async function getConnections(
   }
 
   const data = await response.json();
-  return data.items ?? [];
+  return data.data ?? data.items ?? [];
 }
 
 export async function getConnectionById(
   connectionId: string
 ): Promise<ComposioConnection | null> {
   const response = await fetch(
-    `${COMPOSIO_BASE}/connectedAccounts/${connectionId}`,
+    `${COMPOSIO_BASE}/api/v3.1/connected_accounts/${connectionId}`,
     {
-      headers: {
-        "x-api-key": COMPOSIO_API_KEY,
-      },
+      headers: { "x-api-key": COMPOSIO_API_KEY },
     }
   );
 
@@ -104,12 +112,10 @@ export async function getConnectionById(
 
 export async function disconnectConnection(connectionId: string): Promise<void> {
   const response = await fetch(
-    `${COMPOSIO_BASE}/connectedAccounts/${connectionId}`,
+    `${COMPOSIO_BASE}/api/v3.1/connected_accounts/${connectionId}`,
     {
       method: "DELETE",
-      headers: {
-        "x-api-key": COMPOSIO_API_KEY,
-      },
+      headers: { "x-api-key": COMPOSIO_API_KEY },
     }
   );
 
@@ -117,28 +123,6 @@ export async function disconnectConnection(connectionId: string): Promise<void> 
     const err = await response.text();
     throw new Error(`Composio delete failed (${response.status}): ${err}`);
   }
-}
-
-export async function reinitiateConnection(
-  connectionId: string
-): Promise<InitiateConnectionResponse> {
-  const response = await fetch(
-    `${COMPOSIO_BASE}/connectedAccounts/${connectionId}/reinitiate`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": COMPOSIO_API_KEY,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Composio reinitiate failed (${response.status}): ${err}`);
-  }
-
-  return response.json();
 }
 
 export async function getConnectionStatus(
@@ -151,10 +135,6 @@ export async function getConnectionStatus(
   return connection;
 }
 
-function getRedirectUri(platform: string): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || "https://databuks-frontend.vercel.app";
-
-  return `${appUrl}/dashboard/socials?platform=${platform}`;
+function getDefaultRedirectUri(platform: string): string {
+  return `https://databuks-frontend.vercel.app/dashboard/socials?platform=${platform}`;
 }
