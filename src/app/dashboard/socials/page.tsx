@@ -271,9 +271,9 @@ export default function SocialsPage() {
   async function handleComposioConnect(platform: string) {
     setConnecting(platform);
     setError("");
-    const safetyTimer = setTimeout(() => setConnecting(null), 30000);
+    const safetyTimer = setTimeout(() => setConnecting(null), 60000);
     try {
-      if (!userId) { setError("You must be logged in to connect accounts"); clearTimeout(safetyTimer); setConnecting(null); return; }
+      if (!userId) { setError("You must be logged in"); clearTimeout(safetyTimer); setConnecting(null); return; }
       const res = await fetch("/api/composio/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -281,35 +281,64 @@ export default function SocialsPage() {
       });
       const data = await res.json();
       if (data.error) { setError(data.error); clearTimeout(safetyTimer); setConnecting(null); return; }
-      if (data.redirectUrl) {
+      if (data.redirectUrl && data.connectedAccountId) {
         clearTimeout(safetyTimer);
         window.open(data.redirectUrl, "_blank", "width=600,height=700");
-        pollAfterOAuthPopup(platform);
+        pollByConnectionId(platform, data.connectedAccountId);
       } else {
         await loadConnections();
         clearTimeout(safetyTimer);
         setConnecting(null);
       }
-    } catch { setError("Failed to initiate connection"); clearTimeout(safetyTimer); setConnecting(null); }
+    } catch { setError("Failed to initiate"); clearTimeout(safetyTimer); setConnecting(null); }
   }
 
-  function pollAfterOAuthPopup(platform: string) {
+  function pollByConnectionId(platform: string, connectionId: string) {
     let attempts = 0;
     const maxAttempts = 30;
     if (pollingRef.current) clearInterval(pollingRef.current);
     pollingRef.current = setInterval(async () => {
       attempts++;
-      console.log(`[POLL] Attempt ${attempts}/${maxAttempts} for ${platform}`);
-      await loadConnections();
-      const persisted = supabaseRef.current.some(
-        (c: any) => c.platform === platform && c.status === "connected"
-      );
-      const composioLive = !!getConnectionForPlatform(platform);
-      if (persisted || composioLive || attempts >= maxAttempts) {
-        console.log(`[POLL] Stopping - persisted=${persisted} composioLive=${composioLive}`);
+      console.log(`[POLL] Attempt ${attempts} — verifying connection ${connectionId}`);
+
+      let conn: any = null;
+      try {
+        const res = await fetch(`/api/composio/connections?action=verify&id=${connectionId}`);
+        const data = await res.json();
+        conn = data.connection;
+      } catch {}
+
+      if (conn && (conn.status === "ACTIVE" || conn.status === "INITIATED")) {
+        console.log(`[POLL] Connection verified: ${conn.id} status=${conn.status}`);
+
+        try {
+          const saveRes = await fetch("/api/social-connections", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              platform,
+              connection_id: connectionId,
+              display_name: conn.app_name || conn.appName || platform,
+              status: "connected",
+            }),
+          });
+          const saveData = await saveRes.json();
+          console.log(`[PERSIST] Supabase result:`, saveData);
+        } catch (e) {
+          console.error(`[PERSIST] Failed:`, e);
+        }
+
+        await loadConnections();
         if (pollingRef.current) clearInterval(pollingRef.current);
         setConnecting(null);
-        if (persisted || composioLive) loadConnections();
+        return;
+      }
+
+      await loadConnections();
+      if (attempts >= maxAttempts) {
+        console.log(`[POLL] Timeout — stopping`);
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        setConnecting(null);
       }
     }, 2000);
   }
