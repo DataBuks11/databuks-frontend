@@ -47,12 +47,14 @@ export default function Sidebar() {
 
   useEffect(() => {
     async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUserEmail(user.email ?? "");
-        const name = user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "User";
-        setUserName(name);
-      }
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setUserEmail(user.email ?? "");
+          const name = user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "User";
+          setUserName(name);
+        }
+      } catch {}
     }
     getUser();
   }, [supabase]);
