@@ -242,8 +242,8 @@ export default function SocialsPage() {
 
   function getConnectionForPlatform(platform: string) {
     return connections.find(c => {
-      const name = (c.appName || c.app_name || c.integration_id || "").toLowerCase();
-      return name === platform.toLowerCase() && (c.status === "ACTIVE" || c.status === "INITIATED");
+      const name = ((c.appName || c.app_name || c.integration_id) ?? "").toLowerCase();
+      return name === (platform ?? "").toLowerCase() && (c.status === "ACTIVE" || c.status === "INITIATED");
     });
   }
 
@@ -440,7 +440,7 @@ export default function SocialsPage() {
           <h3 className="text-base font-medium text-white mb-4">Composio Connections</h3>
           <div className="space-y-2">
             {connections.map((conn) => {
-              const cfg = platformConfig[conn.appName.toLowerCase()];
+              const cfg = platformConfig[(conn.appName || conn.app_name || conn.integration_id || "").toLowerCase()];
               const Icon = cfg?.icon ?? ExternalLink;
               return (
                 <div key={conn.id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-white/[0.02]">
@@ -453,7 +453,7 @@ export default function SocialsPage() {
                       <p className="text-[11px] text-white/30 font-light font-mono">{conn.id.slice(0, 8)}...</p>
                     </div>
                   </div>
-                  <Badge variant={conn.status === "ACTIVE" ? "success" : "warning"}>{conn.status.toLowerCase()}</Badge>
+                  <Badge variant={conn.status === "ACTIVE" ? "success" : "warning"}>{(conn.status ?? "").toLowerCase()}</Badge>
                 </div>
               );
             })}

@@ -80,8 +80,8 @@ export default function ConversationsPage() {
     const q = search.toLowerCase();
     return conversations.filter(
       (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.lastMessage.toLowerCase().includes(q)
+        (c.name ?? "").toLowerCase().includes(q) ||
+        (c.lastMessage ?? "").toLowerCase().includes(q)
     );
   }, [search, conversations]);
 

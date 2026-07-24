@@ -22,7 +22,7 @@ export async function initiateConnection(
 ): Promise<{ connectionId: string; redirectUrl: string | null }> {
   if (!userId) throw new Error("A valid authenticated user ID is required");
 
-  const authConfigId = AUTH_CONFIGS[appName.toLowerCase()];
+  const authConfigId = AUTH_CONFIGS[(appName ?? "").toLowerCase()];
   if (!authConfigId) {
     throw new Error(
       `Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID. Add it from Composio Dashboard → Settings → Auth Configs.`
