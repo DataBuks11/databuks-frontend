@@ -109,59 +109,89 @@ export default function SocialsPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
-      if (!uid) return;
+      if (!uid || !user) return;
 
-      // 1. Fetch Composio connections
       const composioRes = await fetch(`/api/composio/connections?userId=${uid}`);
       const composioData = await composioRes.json();
       const compConns: any[] = composioData.connections || [];
 
-      // 2. Fetch Supabase connections
-      const supabaseRes = await fetch(`/api/social-connections`);
-      const supabaseData = await supabaseRes.json();
-      const scList: any[] = supabaseData.connections || [];
-
-      // 3. Sync: for every Composio connection that is ACTIVE/INITIATED, ensure it's "connected" in Supabase
       for (const cc of compConns) {
         const isLive = cc.status === "ACTIVE" || cc.status === "INITIATED";
         const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
         if (isLive && p && cc.id) {
-          const existsInSupabase = scList.some((sc: any) => sc.platform === p && sc.connection_id === cc.id);
-          if (!existsInSupabase) {
-            await fetch("/api/social-connections", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ platform: p, connection_id: cc.id, status: "connected" }),
+          const { data: existing } = await supabase
+            .from("social_connections")
+            .select("id")
+            .eq("user_id", uid)
+            .eq("platform", p)
+            .maybeSingle();
+
+          if (existing) {
+            await supabase.from("social_connections").update({
+              connection_id: cc.id,
+              status: "connected",
+              last_sync: new Date().toISOString(),
+            }).eq("id", existing.id);
+          } else {
+            await supabase.from("social_connections").insert({
+              user_id: uid,
+              platform: p,
+              connection_id: cc.id,
+              handle: cc.app_name || cc.appName || p,
+              status: "connected",
+              last_sync: new Date().toISOString(),
             });
           }
         }
       }
 
-      // 4. Also check pending connections and verify by ID
-      for (const sc of scList) {
-        if (sc.status !== "connected" && sc.connection_id) {
-          try {
-            const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${sc.connection_id}`);
-            const verifyData = await verifyRes.json();
-            if (verifyData.connection) {
-              const st = verifyData.connection.status;
-              if (st === "ACTIVE" || st === "INITIATED") {
-                await fetch("/api/social-connections", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ platform: sc.platform, connection_id: sc.connection_id, status: "connected" }),
-                });
+      for (const cc of compConns) {
+        if (cc.status !== "ACTIVE" && cc.status !== "INITIATED" && cc.id) {
+          const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
+          if (p) {
+            try {
+              const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${cc.id}`);
+              const verifyData = await verifyRes.json();
+              if (verifyData.connection) {
+                const st = verifyData.connection.status;
+                if (st === "ACTIVE" || st === "INITIATED") {
+                  const { data: existing } = await supabase
+                    .from("social_connections")
+                    .select("id")
+                    .eq("user_id", uid)
+                    .eq("platform", p)
+                    .maybeSingle();
+                  if (existing) {
+                    await supabase.from("social_connections").update({
+                      connection_id: cc.id,
+                      status: "connected",
+                      last_sync: new Date().toISOString(),
+                    }).eq("id", existing.id);
+                  } else {
+                    await supabase.from("social_connections").insert({
+                      user_id: uid,
+                      platform: p,
+                      connection_id: cc.id,
+                      handle: cc.app_name || cc.appName || p,
+                      status: "connected",
+                      last_sync: new Date().toISOString(),
+                    });
+                  }
+                }
               }
-            }
-          } catch {}
+            } catch {}
+          }
         }
       }
 
-      // 5. Refresh final state
-      const refresh = await fetch("/api/social-connections");
-      const refreshData = await refresh.json();
-      setSupabaseConnections(refreshData.connections || []);
-      supabaseRef.current = refreshData.connections || [];
+      const { data: scData } = await supabase
+        .from("social_connections")
+        .select("*")
+        .eq("user_id", uid);
+
+      const scList = scData || [];
+      setSupabaseConnections(scList);
+      supabaseRef.current = scList;
     } catch {} finally { setLoading(false); }
   }
 
