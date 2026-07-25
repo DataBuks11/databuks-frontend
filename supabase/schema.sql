@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS public.social_connections (
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   platform TEXT CHECK (platform IN ('instagram', 'facebook', 'whatsapp', 'telegram', 'linkedin')),
   handle TEXT,
-  status TEXT DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'expired', 'error')),
+  connection_id TEXT,
+  status TEXT DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'expired', 'error', 'pending')),
   followers INTEGER DEFAULT 0,
   last_sync TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
