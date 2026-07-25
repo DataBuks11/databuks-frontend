@@ -69,189 +69,70 @@ export default function SocialsPage() {
   const [tgVerify, setTgVerify] = useState<{ valid: boolean; name?: string; error?: string } | null>(null);
 
   const supabase = createClient();
-
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const supabaseRef = useRef<any[]>([]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (cancelled) return;
-        setUserId(user?.id ?? "");
-        await loadConnections();
-        await checkWhatsAppStatus();
-        await checkTelegramStatus();
-
-        const params = new URLSearchParams(window.location.search);
-        const platform = params.get("platform");
-        if (platform) {
-          startOAuthPolling(platform);
-        } else {
-          if (connections.length === 0) {
-            startOAuthPolling(null);
-          }
-        }
-      } catch {}
-    }
     init();
-    return () => { cancelled = true; if (pollingRef.current) clearInterval(pollingRef.current); };
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
-  function startOAuthPolling(platform: string | null) {
-    let attempts = 0;
-    const maxAttempts = 10;
-    pollingRef.current = setInterval(async () => {
-      attempts++;
-      await loadConnections();
-      if (attempts >= maxAttempts) {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        if (platform) window.history.replaceState({}, "", "/dashboard/socials");
-      }
-    }, 3000);
+  async function init() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUserId(user?.id ?? "");
+      await loadAndVerify();
+      await checkWhatsAppStatus();
+      await checkTelegramStatus();
+    } catch {}
   }
 
-  async function loadConnections() {
+  async function loadAndVerify() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
       if (!uid) return;
 
-      const [composioRes, supabaseRes] = await Promise.all([
-        fetch(`/api/composio/connections?userId=${uid}`),
-        fetch(`/api/social-connections`),
-      ]);
-
-      const composioData = await composioRes.json();
+      const supabaseRes = await fetch(`/api/social-connections`);
       const supabaseData = await supabaseRes.json();
+      const scList: any[] = supabaseData.connections || [];
 
-      if (composioData.connections) setConnections(composioData.connections);
-      if (supabaseData.connections) {
-        setSupabaseConnections(supabaseData.connections);
-        supabaseRef.current = supabaseData.connections;
-      }
-
-      if (supabaseData.connections) {
-        for (const sc of supabaseData.connections) {
-          if (sc.status === "pending" && sc.connection_id) {
-            try {
-              const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${sc.connection_id}`);
-              const verifyData = await verifyRes.json();
-              if (verifyData.connection && (verifyData.connection.status === "ACTIVE" || verifyData.connection.status === "INITIATED")) {
+      let updated = false;
+      for (const sc of scList) {
+        if (sc.status !== "connected" && sc.connection_id) {
+          try {
+            const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${sc.connection_id}`);
+            const verifyData = await verifyRes.json();
+            if (verifyData.connection) {
+              const st = verifyData.connection.status;
+              if (st === "ACTIVE" || st === "INITIATED") {
                 await fetch("/api/social-connections", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    platform: sc.platform,
-                    connection_id: sc.connection_id,
-                    status: "connected",
-                  }),
+                  body: JSON.stringify({ platform: sc.platform, connection_id: sc.connection_id, status: "connected" }),
                 });
+                updated = true;
               }
-            } catch {}
-          }
+            }
+          } catch {}
         }
+      }
+
+      if (updated) {
         const refresh = await fetch("/api/social-connections");
         const refreshData = await refresh.json();
         if (refreshData.connections) {
           setSupabaseConnections(refreshData.connections);
           supabaseRef.current = refreshData.connections;
         }
+      } else {
+        setSupabaseConnections(scList);
+        supabaseRef.current = scList;
       }
-    } catch { } finally { setLoading(false); }
+    } catch {} finally { setLoading(false); }
   }
 
-  async function checkWhatsAppStatus() {
-    try {
-      const uid = userId;
-      if (!uid) return;
-      const res = await fetch(`/api/whatsapp?action=status&userId=${uid}`);
-      const data = await res.json();
-      setWhatsAppStatus(data.connected ?? false);
-    } catch { }
-  }
-
-  async function checkTelegramStatus() {
-    try {
-      const uid = userId;
-      if (!uid) return;
-      const res = await fetch(`/api/telegram?action=status&userId=${uid}`);
-      const data = await res.json();
-      setTgStatus(data.connected ?? false);
-      if (data.bot) setTgBot(data.bot);
-    } catch { }
-  }
-
-  // ---- WhatsApp handlers ----
-  async function handleWhatsAppConnect() {
-    setQrModalOpen(true);
-    setQrLoading(true);
-    setQrCode(null);
-    setError("");
-    try {
-      const uid = userId;
-      if (!uid) { setError("Not authenticated"); return; }
-      const res = await fetch("/api/whatsapp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "connect", userId: uid }),
-      });
-      const data = await res.json();
-      if (data.qrCode) { setQrCode(data.qrCode); startQrPolling(); }
-      else if (data.error) { setError(data.error); setQrModalOpen(false); }
-      else { setWhatsAppStatus(true); setQrModalOpen(false); setQrCode(null); }
-    } catch { setError("Failed to generate QR code"); }
-    finally { setQrLoading(false); }
-  }
-
-  function startQrPolling() {
-    const interval = setInterval(async () => {
-      const uid = userId;
-      if (!uid) { clearInterval(interval); return; }
-      const res = await fetch(`/api/whatsapp?action=status&userId=${uid}`);
-      const data = await res.json();
-      if (data.connected) { clearInterval(interval); setWhatsAppStatus(true); setQrModalOpen(false); setQrCode(null); }
-    }, 3000);
-    setTimeout(() => clearInterval(interval), 180000);
-  }
-
-  // ---- Telegram handlers ----
-  function openTelegramModal() { setTgModalOpen(true); setTgToken(""); setTgVerify(null); }
-  
-  async function handleVerifyToken() {
-    if (!tgToken.trim()) return;
-    setTgLoading(true);
-    setTgVerify(null);
-    try {
-      const res = await fetch("/api/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "verify", token: tgToken.trim(), userId: userId || "default" }),
-      });
-      const data = await res.json();
-      setTgVerify(data);
-    } catch { setTgVerify({ valid: false, error: "Failed to verify" }); }
-    finally { setTgLoading(false); }
-  }
-
-  async function handleConnectTelegram() {
-    setTgLoading(true);
-    try {
-      const res = await fetch("/api/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "connect", token: tgToken.trim(), userId }),
-      });
-      const data = await res.json();
-      if (data.success) { setTgStatus(true); setTgBot({ username: data.bot?.username ?? "", name: data.bot?.first_name ?? "" }); setTgModalOpen(false); }
-      else { setError(data.error); }
-    } catch { setError("Failed to connect"); }
-    finally { setTgLoading(false); }
-  }
-
-  // ---- Composio handlers ----
   async function handleComposioConnect(platform: string) {
     setConnecting(platform);
     setError("");
@@ -266,62 +147,37 @@ export default function SocialsPage() {
       if (data.error) { setError(data.error); setConnecting(null); return; }
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
-      } else {
-        await loadConnections();
-        setConnecting(null);
       }
     } catch { setConnecting(null); }
   }
 
-  // ---- Disconnect handlers ----
   async function handleDisconnect(platform: string, connectionId?: string) {
     if (platform === "whatsapp") {
       await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect", userId }) });
-      setWhatsAppStatus(false);
-      return;
+      setWhatsAppStatus(false); return;
     }
     if (platform === "telegram") {
       await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect", userId }) });
-      setTgStatus(false); setTgBot(null);
-      return;
+      setTgStatus(false); setTgBot(null); return;
     }
     if (connectionId) {
       await fetch(`/api/composio/connections?id=${connectionId}`, { method: "DELETE" });
-      await loadConnections();
     }
-  }
-
-  function getConnectionForPlatform(platform: string) {
-    return connections.find(c => {
-      const name = ((c.appName || c.app_name || c.integration_id) ?? "").toLowerCase();
-      return name === (platform ?? "").toLowerCase() && (c.status === "ACTIVE" || c.status === "INITIATED");
-    });
+    await fetch("/api/social-connections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform, status: "disconnected" }) });
+    loadAndVerify();
   }
 
   function isConnected(platform: string) {
     if (platform === "whatsapp") return whatsAppStatus;
     if (platform === "telegram") return tgStatus;
-    const supabaseConn = supabaseConnections.find(
-      (c) => c.platform === platform && c.status === "connected"
-    );
-    if (supabaseConn) return true;
-    const conn = getConnectionForPlatform(platform);
-    if (!conn) return false;
-    return conn.status === "ACTIVE" || conn.status === "INITIATED";
+    return supabaseRef.current.some((c: any) => c.platform === platform && c.status === "connected");
   }
 
   function getConnectionStatus(platform: string): string {
     if (platform === "whatsapp") return whatsAppStatus ? "ACTIVE" : "";
     if (platform === "telegram") return tgStatus ? "ACTIVE" : "";
-    const supabaseConn = supabaseConnections.find(
-      (c) => c.platform === platform && c.status === "connected"
-    );
-    if (supabaseConn) return "ACTIVE";
-    const conn = connections.find(c => {
-      const name = ((c.appName || c.app_name || c.integration_id) ?? "").toLowerCase();
-      return name === (platform ?? "").toLowerCase();
-    });
-    return conn?.status ?? "";
+    const sc = supabaseRef.current.find((c: any) => c.platform === platform);
+    return sc?.status ?? "";
   }
 
   function handleConnect(platform: string) {
@@ -329,6 +185,53 @@ export default function SocialsPage() {
     if (cfg.type === "baileys") { handleWhatsAppConnect(); return; }
     if (cfg.type === "telegram") { openTelegramModal(); return; }
     handleComposioConnect(platform);
+  }
+
+  async function handleWhatsAppConnect() {
+    setQrModalOpen(true); setQrLoading(true); setQrCode(null); setError("");
+    try {
+      if (!userId) { setError("Not authenticated"); return; }
+      const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
+      const data = await res.json();
+      if (data.qrCode) { setQrCode(data.qrCode); pollQr(); }
+      else if (data.error) { setError(data.error); setQrModalOpen(false); }
+      else { setWhatsAppStatus(true); setQrModalOpen(false); }
+    } catch { setError("Failed"); } finally { setQrLoading(false); }
+  }
+
+  function pollQr() {
+    const interval = setInterval(async () => {
+      const res = await fetch(`/api/whatsapp?action=status&userId=${userId}`);
+      const data = await res.json();
+      if (data.connected) { clearInterval(interval); setWhatsAppStatus(true); setQrModalOpen(false); }
+    }, 3000);
+    setTimeout(() => clearInterval(interval), 180000);
+  }
+
+  async function checkWhatsAppStatus() {
+    try { if (!userId) return; const res = await fetch(`/api/whatsapp?action=status&userId=${userId}`); const d = await res.json(); setWhatsAppStatus(d.connected ?? false); } catch {}
+  }
+
+  async function checkTelegramStatus() {
+    try { if (!userId) return; const res = await fetch(`/api/telegram?action=status&userId=${userId}`); const d = await res.json(); setTgStatus(d.connected ?? false); if (d.bot) setTgBot(d.bot); } catch {}
+  }
+
+  function openTelegramModal() { setTgModalOpen(true); setTgToken(""); setTgVerify(null); }
+  async function handleVerifyToken() {
+    if (!tgToken.trim()) return; setTgLoading(true); setTgVerify(null);
+    try {
+      const res = await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify", token: tgToken.trim(), userId }) });
+      setTgVerify(await res.json());
+    } catch { setTgVerify({ valid: false, error: "Failed" }); } finally { setTgLoading(false); }
+  }
+  async function handleConnectTelegram() {
+    setTgLoading(true);
+    try {
+      const res = await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", token: tgToken.trim(), userId }) });
+      const data = await res.json();
+      if (data.success) { setTgStatus(true); setTgBot(data.bot || { username: "", name: "" }); setTgModalOpen(false); }
+      else setError(data.error);
+    } catch { setError("Failed"); } finally { setTgLoading(false); }
   }
 
   return (
@@ -347,16 +250,12 @@ export default function SocialsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {Object.entries(platformConfig).map(([key, config], index) => {
           const connected = isConnected(key);
-          const conn = getConnectionForPlatform(key);
           const Icon = config.icon;
+          const status = getConnectionStatus(key);
+          const isExpired = status === "expired" || status === "pending";
 
           return (
-            <motion.div
-              key={key}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: index * 0.08 }}
-            >
+            <motion.div key={key} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: index * 0.08 }}>
               <Card className={`glass-card p-5 border-l-2 ${config.borderColor} glass-hover`}>
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -365,17 +264,13 @@ export default function SocialsPage() {
                     </div>
                     <div>
                       <h3 className="text-base font-medium text-white">{config.name}</h3>
-                      {connected ? (
-                        <p className="text-xs text-white/40 font-light">
-                          {key === "whatsapp" ? "Connected via QR" : key === "telegram" ? `@${tgBot?.username ?? "bot"}` : "Connected via Composio"}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-white/30 font-light">Not connected</p>
-                      )}
+                      <p className="text-xs text-white/40 font-light">
+                        {connected ? (key === "whatsapp" ? "Connected via QR" : key === "telegram" ? `@${tgBot?.username ?? "bot"}` : "Connected") : "Not connected"}
+                      </p>
                     </div>
                   </div>
-                  <Badge variant={connected ? "success" : getConnectionStatus(key) === "EXPIRED" ? "destructive" : "secondary"}>
-                    {connected ? "Connected" : getConnectionStatus(key) === "EXPIRED" ? "Expired" : "Disconnected"}
+                  <Badge variant={connected ? "success" : isExpired ? "warning" : "secondary"}>
+                    {connected ? "Connected" : isExpired ? status.charAt(0).toUpperCase() + status.slice(1) : "Disconnected"}
                   </Badge>
                 </div>
 
@@ -386,7 +281,8 @@ export default function SocialsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-white/40 font-light">Status</span>
                           <span className="text-emerald-400 font-medium text-xs flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Active
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Active
                           </span>
                         </div>
                       )}
@@ -397,30 +293,21 @@ export default function SocialsPage() {
                         </div>
                       )}
                       <div className="flex gap-2 pt-2">
-                        <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300"
-                          onClick={() => handleDisconnect(key, conn?.id)}>
+                        <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300" onClick={() => handleDisconnect(key)}>
                           <Unlink className="w-3.5 h-3.5" />Disconnect
                         </Button>
-                      </div>
-                    </>
-                  ) : getConnectionStatus(key) === "EXPIRED" ? (
-                    <>
-                      <p className="text-xs text-orange-400/70 font-light">Connection expired. Reconnect to continue using this account.</p>
-                      <div className="flex gap-2 pt-1">
-                        <Button className="w-full liquid-glass rounded-full gap-2 text-sm"
-                          onClick={() => handleConnect(key)} disabled={connecting === key}>
-                          {connecting === key ? <><RefreshCw className="w-4 h-4 animate-spin" />Reconnecting...</> :
-                            <><RefreshCw className="w-4 h-4" />Reconnect {config.name}</>}
+                        <Button variant="outline" size="sm" className="gap-2 text-xs" onClick={() => handleConnect(key)}>
+                          <RefreshCw className="w-3.5 h-3.5" />Reconnect
                         </Button>
                       </div>
                     </>
                   ) : (
                     <>
-                      <p className="text-xs text-white/30 font-light">{config.desc}</p>
-                      <Button className="w-full liquid-glass rounded-full gap-2 text-sm"
-                        onClick={() => handleConnect(key)} disabled={connecting === key}>
-                        {connecting === key ? <><RefreshCw className="w-4 h-4 animate-spin" />Connecting...</> :
-                          <><Link2 className="w-4 h-4" />{config.connectLabel}</>}
+                      <p className="text-xs text-white/30 font-light">
+                        {isExpired ? "Connection pending. Complete OAuth and refresh this page." : config.desc}
+                      </p>
+                      <Button className="w-full liquid-glass rounded-full gap-2 text-sm" onClick={() => handleConnect(key)} disabled={connecting === key}>
+                        {connecting === key ? <><RefreshCw className="w-4 h-4 animate-spin" />Connecting...</> : <><Link2 className="w-4 h-4" />{config.connectLabel}</>}
                       </Button>
                     </>
                   )}
@@ -431,79 +318,28 @@ export default function SocialsPage() {
         })}
       </div>
 
-      {/* WhatsApp QR Modal */}
       <Dialog open={qrModalOpen} onOpenChange={setQrModalOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><QrCode className="w-5 h-5 text-green-400" />Connect WhatsApp</DialogTitle></DialogHeader>
           <div className="flex flex-col items-center py-4">
-            {qrLoading && !qrCode && (
-              <div className="flex flex-col items-center gap-3">
-                <RefreshCw className="w-8 h-8 text-green-400 animate-spin" />
-                <p className="text-sm text-white/50 font-light">Generating QR code...</p>
-              </div>
-            )}
-            {qrCode && (
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-4">
-                <div className="p-3 bg-white rounded-2xl"><img src={qrCode} alt="QR" className="w-56 h-56" /></div>
-                <p className="text-sm text-white/50 font-light text-center">WhatsApp → Settings → Linked Devices → Link a Device</p>
-                <div className="flex items-center gap-2 text-xs text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />Waiting for scan...</div>
-              </motion.div>
-            )}
-            {!qrLoading && !qrCode && (
-              <Button onClick={handleWhatsAppConnect} className="liquid-glass rounded-full gap-2"><QrCode className="w-4 h-4" />Generate QR Code</Button>
-            )}
+            {qrLoading && !qrCode && <div className="flex flex-col items-center gap-3"><RefreshCw className="w-8 h-8 text-green-400 animate-spin" /><p className="text-sm text-white/50 font-light">Generating QR code...</p></div>}
+            {qrCode && <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-4"><div className="p-3 bg-white rounded-2xl"><img src={qrCode} alt="QR" className="w-56 h-56" /></div><p className="text-sm text-white/50 font-light text-center">WhatsApp → Settings → Linked Devices → Link a Device</p><div className="flex items-center gap-2 text-xs text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />Waiting for scan...</div></motion.div>}
+            {!qrLoading && !qrCode && <Button onClick={handleWhatsAppConnect} className="liquid-glass rounded-full gap-2"><QrCode className="w-4 h-4" />Generate QR Code</Button>}
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Telegram Token Modal */}
       <Dialog open={tgModalOpen} onOpenChange={setTgModalOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><Bot className="w-5 h-5 text-sky-400" />Connect Telegram Bot</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20">
-              <p className="text-xs text-white/60 font-light">
-                1. Open Telegram → <strong className="text-white/80">@BotFather</strong><br />
-                2. Send <code className="text-sky-400">/newbot</code> → follow steps<br />
-                3. Copy the bot token → paste below
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-sm font-light text-white/60">Bot Token</Label>
-              <div className="flex gap-2">
-                <Input placeholder="123456:ABC-DEF1234ghikl..." value={tgToken}
-                  onChange={(e) => { setTgToken(e.target.value); setTgVerify(null); }}
-                  className="flex-1" />
-                <Button onClick={handleVerifyToken} disabled={tgLoading || !tgToken.trim()}
-                  className="liquid-glass rounded-full px-4 gap-1.5 shrink-0">
-                  {tgLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
-                  Verify
-                </Button>
-              </div>
-            </div>
-
-            {tgVerify && (
-              <div className={`p-3 rounded-xl flex items-start gap-2.5 ${tgVerify.valid ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-red-500/10 border border-red-500/20"}`}>
-                {tgVerify.valid ? <Check className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" /> : <X className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />}
-                <div>
-                  <p className={`text-sm font-medium ${tgVerify.valid ? "text-emerald-400" : "text-red-400"}`}>
-                    {tgVerify.valid ? `Bot verified: @${tgVerify.name}` : "Invalid token"}
-                  </p>
-                  {tgVerify.error && <p className="text-xs text-red-400/70 font-light mt-0.5">{tgVerify.error}</p>}
-                </div>
-              </div>
-            )}
-
-            <Button onClick={handleConnectTelegram} disabled={!tgVerify?.valid || tgLoading}
-              className="w-full liquid-glass rounded-full gap-2" variant="primary">
-              {tgLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-              Connect Bot
-            </Button>
+            <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20"><p className="text-xs text-white/60 font-light">1. Open Telegram → <strong className="text-white/80">@BotFather</strong><br />2. Send <code className="text-sky-400">/newbot</code> → follow steps<br />3. Copy the bot token → paste below</p></div>
+            <div className="space-y-1.5"><Label className="text-sm font-light text-white/60">Bot Token</Label><div className="flex gap-2"><Input placeholder="123456:ABC-DEF1234..." value={tgToken} onChange={(e) => { setTgToken(e.target.value); setTgVerify(null); }} className="flex-1" /><Button onClick={handleVerifyToken} disabled={tgLoading || !tgToken.trim()} className="liquid-glass rounded-full px-4 gap-1.5 shrink-0">{tgLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}Verify</Button></div></div>
+            {tgVerify && <div className={`p-3 rounded-xl flex items-start gap-2.5 ${tgVerify.valid ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-red-500/10 border border-red-500/20"}`}>{tgVerify.valid ? <Check className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" /> : <X className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />}<div><p className={`text-sm font-medium ${tgVerify.valid ? "text-emerald-400" : "text-red-400"}`}>{tgVerify.valid ? `Bot verified: @${tgVerify.name}` : "Invalid token"}</p>{tgVerify.error && <p className="text-xs text-red-400/70 font-light mt-0.5">{tgVerify.error}</p>}</div></div>}
+            <Button onClick={handleConnectTelegram} disabled={!tgVerify?.valid || tgLoading} className="w-full liquid-glass rounded-full gap-2" variant="primary">{tgLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}Connect Bot</Button>
           </div>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }
