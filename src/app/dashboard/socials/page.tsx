@@ -133,47 +133,31 @@ export default function SocialsPage() {
         supabaseRef.current = supabaseData.connections;
       }
 
-      if (composioData.connections) {
-        for (const conn of composioData.connections) {
-          const connStatus = conn.status;
-          const isLive = connStatus === "ACTIVE" || connStatus === "INITIATED";
-          const platform = (conn.appName || conn.app_name || conn.integration_id || "").toLowerCase();
-          const connId = conn.id;
-
-          console.log(`[Composio] Connection: ${connId} | platform=${platform} | status=${connStatus} | live=${isLive}`);
-
-          if (isLive && connId && platform) {
-            const alreadySaved = supabaseData.connections?.some(
-              (c: any) => c.platform === platform && c.status === "connected"
-            );
-
-            if (!alreadySaved) {
-              console.log(`[PERSIST] Saving ${platform} (${connId}) to Supabase...`);
-              try {
-                const saveRes = await fetch("/api/social-connections", {
+      if (supabaseData.connections) {
+        for (const sc of supabaseData.connections) {
+          if (sc.status === "pending" && sc.connection_id) {
+            try {
+              const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${sc.connection_id}`);
+              const verifyData = await verifyRes.json();
+              if (verifyData.connection && (verifyData.connection.status === "ACTIVE" || verifyData.connection.status === "INITIATED")) {
+                await fetch("/api/social-connections", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    platform,
-                    connection_id: connId,
-                    display_name: conn.appName || conn.app_name || platform,
+                    platform: sc.platform,
+                    connection_id: sc.connection_id,
                     status: "connected",
                   }),
                 });
-                const saveData = await saveRes.json();
-                console.log(`[PERSIST] Supabase result:`, saveData);
-
-                const refresh = await fetch("/api/social-connections");
-                const refreshData = await refresh.json();
-                if (refreshData.connections) {
-                  setSupabaseConnections(refreshData.connections);
-                  supabaseRef.current = refreshData.connections;
-                }
-              } catch (e) {
-                console.error(`[PERSIST] Failed:`, e);
               }
-            }
+            } catch {}
           }
+        }
+        const refresh = await fetch("/api/social-connections");
+        const refreshData = await refresh.json();
+        if (refreshData.connections) {
+          setSupabaseConnections(refreshData.connections);
+          supabaseRef.current = refreshData.connections;
         }
       }
     } catch { } finally { setLoading(false); }
@@ -272,7 +256,7 @@ export default function SocialsPage() {
     setConnecting(platform);
     setError("");
     try {
-      if (!userId) { setError("You must be logged in"); setConnecting(null); return; }
+      if (!userId) { setConnecting(null); return; }
       const res = await fetch("/api/composio/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -286,7 +270,7 @@ export default function SocialsPage() {
         await loadConnections();
         setConnecting(null);
       }
-    } catch { setError("Failed to initiate"); setConnecting(null); }
+    } catch { setConnecting(null); }
   }
 
   // ---- Disconnect handlers ----

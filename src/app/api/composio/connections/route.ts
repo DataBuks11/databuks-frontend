@@ -33,6 +33,35 @@ export async function POST(request: NextRequest) {
     if (!uid || uid === "default") return NextResponse.json({ error: "Valid user ID required." }, { status: 400 });
 
     const result = await initiateConnection(appName, uid);
+
+    if (result.connectionId) {
+      const { createClient } = await import("@/lib/supabase/server");
+      const supabase = await createClient();
+      const { data: existing } = await supabase
+        .from("social_connections")
+        .select("id")
+        .eq("user_id", uid)
+        .eq("platform", appName.toLowerCase())
+        .maybeSingle();
+
+      if (existing) {
+        await supabase.from("social_connections").update({
+          connection_id: result.connectionId,
+          status: "pending",
+          last_sync: new Date().toISOString(),
+        }).eq("id", existing.id);
+      } else {
+        await supabase.from("social_connections").insert({
+          user_id: uid,
+          platform: appName.toLowerCase(),
+          connection_id: result.connectionId,
+          handle: `${appName}_composio`,
+          status: "pending",
+          last_sync: new Date().toISOString(),
+        });
+      }
+    }
+
     return NextResponse.json({
       connectedAccountId: result.connectionId,
       connectionStatus: "INITIATED",
