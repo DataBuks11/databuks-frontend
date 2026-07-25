@@ -87,8 +87,9 @@ export default function SocialsPage() {
     try {
       TRACE("INIT", "START");
       const { data: { user } } = await supabase.auth.getUser();
-      TRACE("INIT", { userId: user?.id, email: user?.email });
-      setUserId(user?.id ?? "");
+      const resolvedId = resolveUserId(user);
+      TRACE("INIT", { userFromAuth: user?.id, email: user?.email, resolvedId });
+      setUserId(resolvedId ?? "");
       await loadAndVerify();
       await checkWhatsAppStatus();
       await checkTelegramStatus();
@@ -146,14 +147,21 @@ export default function SocialsPage() {
     } catch(e:any) { TRACE("VERIFY", `ERROR: ${e.message}`); return false; }
   }
 
+  function resolveUserId(userFromAuth: any) {
+    if (userFromAuth?.id) return userFromAuth.id;
+    const stored = localStorage.getItem("composio_pending_userId");
+    if (stored) return stored;
+    return null;
+  }
+
   async function loadAndVerify() {
     TRACE("LOAD_VERIFY", "START");
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const uid = user?.id;
-      TRACE("LOAD_VERIFY", { userId: uid, hasUser: !!user });
-      if (!uid || !user) { TRACE("LOAD_VERIFY", "ABORT: no user"); return; }
+      const uid = resolveUserId(user);
+      TRACE("LOAD_VERIFY", { userFromAuth: user?.id, resolvedUid: uid, hasUser: !!user });
+      if (!uid) { TRACE("LOAD_VERIFY", "ABORT: no resolved user id"); return; }
 
       const storedConn = localStorage.getItem("composio_pending_conn");
       const storedUserId = localStorage.getItem("composio_pending_userId");
@@ -197,12 +205,13 @@ export default function SocialsPage() {
   }
 
   async function handleComposioConnect(platform: string) {
-    TRACE("CLICK", `Connect ${platform} clicked. userId=${userId}`);
+    const effectiveUserId = userId || resolveUserId(null);
+    TRACE("CLICK", `Connect ${platform} clicked. userId=${effectiveUserId}`);
     setConnecting(platform);
     setError("");
     try {
-      if (!userId) { TRACE("CLICK", "ABORT: no userId"); setConnecting(null); return; }
-      const reqBody = { appName: platform, userId };
+      if (!effectiveUserId) { TRACE("CLICK", "ABORT: no userId"); setConnecting(null); return; }
+      const reqBody = { appName: platform, userId: effectiveUserId };
       TRACE("POST_COMPOSIO", { url: "/api/composio/connections", body: reqBody });
       const res = await fetch("/api/composio/connections", {
         method: "POST",
@@ -219,7 +228,7 @@ export default function SocialsPage() {
           connectionId: data.connectedAccountId,
           timestamp: Date.now(),
         }));
-        localStorage.setItem("composio_pending_userId", userId);
+        localStorage.setItem("composio_pending_userId", effectiveUserId);
         TRACE("REDIRECT", "localStorage saved. Redirecting to Composio...");
         window.location.href = data.redirectUrl;
       } else {
