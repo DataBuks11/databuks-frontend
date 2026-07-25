@@ -109,38 +109,45 @@ export default function SocialsPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
-      console.log("1. getUser uid:", uid);
       if (!uid || !user) return;
 
-      const composioRes = await fetch(`/api/composio/connections?userId=${uid}`);
-      const composioData = await composioRes.json();
-      const compConns: any[] = composioData.connections || [];
-      console.log("2. Composio connections:", compConns.length, compConns.map(c => ({ id:c.id, st:c.status, app:(c.appName||c.app_name||c.integration_id) })));
+      const storedConn = localStorage.getItem("composio_pending_conn");
+      const storedUserId = localStorage.getItem("composio_pending_userId");
 
-      for (const cc of compConns) {
-        const isLive = cc.status === "ACTIVE" || cc.status === "INITIATED";
-        const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
-        console.log("3. Processing:", p, cc.status, isLive);
-        if (isLive && p && cc.id) {
-          try {
-            const saveRes = await fetch("/api/social-connections", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userId: uid, platform: p, connection_id: cc.id, status: "connected" }),
-            });
-            const saveData = await saveRes.json();
-            console.log("4. Save result:", saveData);
-          } catch(e) { console.error("4. Save error:", e); }
-        }
+      if (storedConn && storedUserId === uid) {
+        try {
+          const pending = JSON.parse(storedConn);
+          const age = Date.now() - pending.timestamp;
+          if (age < 300000) {
+            console.log("Verifying pending connection:", pending.connectionId);
+            const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${pending.connectionId}`);
+            const verifyData = await verifyRes.json();
+            console.log("Verify result:", verifyData);
+            if (verifyData.connection) {
+              const st = verifyData.connection.status;
+              console.log("Connection status:", st);
+              if (st === "ACTIVE" || st === "INITIATED") {
+                const saveRes = await fetch("/api/social-connections", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ userId: uid, platform: pending.platform, connection_id: pending.connectionId, status: "connected" }),
+                });
+                console.log("Save result:", await saveRes.json());
+              }
+            }
+          }
+          localStorage.removeItem("composio_pending_conn");
+          localStorage.removeItem("composio_pending_userId");
+        } catch(e) { console.error("Pending verify error:", e); }
       }
 
       const scRes = await fetch(`/api/social-connections?userId=${uid}`);
       const scData = await scRes.json();
       const scList = scData.connections || [];
-      console.log("5. Final Supabase:", scList.length, "rows");
+      console.log("Supabase connections:", scList.length);
       setSupabaseConnections(scList);
       supabaseRef.current = scList;
-    } catch(e) { console.error("loadAndVerify error:", e); } finally { setLoading(false); }
+    } catch(e) { console.error("loadAndVerify:", e); } finally { setLoading(false); }
   }
 
   async function handleComposioConnect(platform: string) {
@@ -155,7 +162,13 @@ export default function SocialsPage() {
       });
       const data = await res.json();
       if (data.error) { setError(data.error); setConnecting(null); return; }
-      if (data.redirectUrl) {
+      if (data.redirectUrl && data.connectedAccountId) {
+        localStorage.setItem("composio_pending_conn", JSON.stringify({
+          platform,
+          connectionId: data.connectedAccountId,
+          timestamp: Date.now(),
+        }));
+        localStorage.setItem("composio_pending_userId", userId);
         window.location.href = data.redirectUrl;
       }
     } catch { setConnecting(null); }
