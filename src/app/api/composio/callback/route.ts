@@ -22,12 +22,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get("platform");
     const userId = searchParams.get("userId");
+    const origin = searchParams.get("origin");
+    const redirectBase = origin || BASE;
 
-    CB("ENTRY", { platform, userId });
+    CB("ENTRY", { platform, userId, origin, redirectBase });
 
     if (!userId || !platform) {
       CB("MISSING_PARAMS", { userId, platform });
-      return NextResponse.redirect(`${BASE}/dashboard/socials`);
+      return NextResponse.redirect(`${redirectBase}/dashboard/socials`);
     }
 
     const { data: pending, error: pendingErr } = await supabaseAdmin
@@ -117,7 +119,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
     CB("FINAL_STATE", { row: finalRow });
 
-    return NextResponse.redirect(`${BASE}/dashboard/socials?platform=${platform}`);
+    return NextResponse.redirect(`${redirectBase}/dashboard/socials?platform=${platform}`);
   } catch (e: any) {
     CB("FATAL_ERROR", { message: e.message });
     return NextResponse.redirect(`${BASE}/dashboard/socials`);

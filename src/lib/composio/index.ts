@@ -27,15 +27,17 @@ export interface ComposioConnection {
 
 export async function initiateConnection(
   appName: string,
-  userId: string
+  userId: string,
+  origin?: string
 ): Promise<{ connectionId: string; redirectUrl: string | null }> {
   if (!userId) throw new Error("A valid authenticated user ID is required");
 
   const authConfigId = AUTH_CONFIGS[(appName ?? "").toLowerCase()];
-  LIB("INITIATE", { appName, authConfigId, userId });
+  const effectiveBase = origin || BASE_URL;
+  LIB("INITIATE", { appName, authConfigId, userId, origin, effectiveBase });
   if (!authConfigId) throw new Error(`Missing COMPOSIO_${appName.toUpperCase()}_AUTH_CONFIG_ID.`);
 
-  const callbackUrl = `${BASE_URL}/api/composio/callback?platform=${appName}&userId=${userId}`;
+  const callbackUrl = `${effectiveBase}/api/composio/callback?platform=${appName}&userId=${userId}&origin=${encodeURIComponent(effectiveBase)}`;
 
   const body = {
     auth_config_id: authConfigId,

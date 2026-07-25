@@ -215,7 +215,7 @@ export default function SocialsPage() {
     setError("");
     try {
       if (!effectiveUserId) { TRACE("CLICK", "ABORT: no userId"); setConnecting(null); return; }
-      const reqBody = { appName: platform, userId: effectiveUserId };
+      const reqBody = { appName: platform, userId: effectiveUserId, origin: window.location.origin };
       TRACE("POST_COMPOSIO", { url: "/api/composio/connections", body: reqBody });
       const res = await fetch("/api/composio/connections", {
         method: "POST",

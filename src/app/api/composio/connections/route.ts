@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { appName, entityId, userId } = body;
+    const { appName, entityId, userId, origin } = body;
     const uid = userId || entityId;
 
     API("POST", { appName, userId_passed: uid, fullBody: body });
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     }
 
     API("CALLING_COMPOSIO_LINK", { appName, uid });
-    const result = await initiateConnection(appName, uid);
+    const result = await initiateConnection(appName, uid, origin);
     API("COMPOSIO_LINK_RESULT", { connectionId: result.connectionId, redirectUrl: result.redirectUrl });
 
     if (result.connectionId) {
