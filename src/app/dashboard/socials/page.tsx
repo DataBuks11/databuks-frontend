@@ -14,6 +14,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
 
+const TRACE = (tag: string, data?: any) => {
+  if (data !== undefined) console.log(`[TRACE:${tag}]`, data);
+  else console.log(`[TRACE:${tag}] TRIGGERED`);
+};
+
 const platformConfig: Record<string, {
   name: string; icon: React.ElementType; color: string; borderColor: string;
   type: "composio" | "baileys" | "telegram";
@@ -73,13 +78,16 @@ export default function SocialsPage() {
   const supabaseRef = useRef<any[]>([]);
 
   useEffect(() => {
+    TRACE("MOUNT", "SocialsPage loaded");
     init();
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   async function init() {
     try {
+      TRACE("INIT", "START");
       const { data: { user } } = await supabase.auth.getUser();
+      TRACE("INIT", { userId: user?.id, email: user?.email });
       setUserId(user?.id ?? "");
       await loadAndVerify();
       await checkWhatsAppStatus();
@@ -87,100 +95,137 @@ export default function SocialsPage() {
 
       const params = new URLSearchParams(window.location.search);
       const platform = params.get("platform");
+      TRACE("INIT", { urlHasPlatformParam: !!platform, platform });
       if (platform) {
         let attempts = 0;
+        TRACE("POLLING", `START for platform=${platform}, interval=2s, max=15`);
         pollingRef.current = setInterval(async () => {
           attempts++;
+          TRACE("POLLING", { attempt: attempts, platform });
           await loadAndVerify();
           const connected = supabaseRef.current.some(
             (c: any) => c.platform === platform && c.status === "connected"
           );
+          TRACE("POLLING", { attempt: attempts, connectionsInRef: supabaseRef.current.length, platforms: supabaseRef.current.map((c:any) => ({p:c.platform,s:c.status})), foundConnected: connected });
           if (connected || attempts >= 15) {
+            TRACE("POLLING", connected ? "STOPPED: connection found" : "STOPPED: max attempts reached");
             if (pollingRef.current) clearInterval(pollingRef.current);
             window.history.replaceState({}, "", "/dashboard/socials");
           }
         }, 2000);
       }
-    } catch {}
+    } catch(e:any) { TRACE("INIT", `ERROR: ${e.message}`); }
   }
 
   async function verifyAndSync(connId: string, platform: string, uid: string) {
     try {
+      TRACE("VERIFY", { stage: "START", connectionId: connId, platform, userId: uid });
       const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${connId}`);
       const verifyData = await verifyRes.json();
-      if (!verifyData.connection) return false;
+      TRACE("VERIFY", { stage: "COMPOSIO_RESPONSE", data: verifyData });
+      if (!verifyData.connection) {
+        TRACE("VERIFY", { stage: "NO_CONNECTION_FOUND" });
+        return false;
+      }
       const st = verifyData.connection.status;
+      TRACE("VERIFY", { stage: "COMPOSIO_STATUS", status: st });
       if (st === "ACTIVE") {
-        await fetch("/api/social-connections", {
+        const saveBody = { userId: uid, platform, connection_id: connId, status: "connected" };
+        TRACE("PERSIST", { stage: "CALLING_POST_social_connections", body: saveBody });
+        const saveRes = await fetch("/api/social-connections", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: uid, platform, connection_id: connId, status: "connected" }),
+          body: JSON.stringify(saveBody),
         });
+        const saveData = await saveRes.json();
+        TRACE("PERSIST", { stage: "POST_RESULT", status: saveRes.status, data: saveData });
         return true;
       }
+      TRACE("VERIFY", { stage: "NOT_ACTIVE_YET", status: st });
       return false;
-    } catch { return false; }
+    } catch(e:any) { TRACE("VERIFY", `ERROR: ${e.message}`); return false; }
   }
 
   async function loadAndVerify() {
+    TRACE("LOAD_VERIFY", "START");
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
-      if (!uid || !user) return;
+      TRACE("LOAD_VERIFY", { userId: uid, hasUser: !!user });
+      if (!uid || !user) { TRACE("LOAD_VERIFY", "ABORT: no user"); return; }
 
-      // Step 1: Check localStorage for brand-new connection from OAuth redirect
       const storedConn = localStorage.getItem("composio_pending_conn");
       const storedUserId = localStorage.getItem("composio_pending_userId");
+      TRACE("LOAD_VERIFY", { hasLocalStorage: !!storedConn, storedUserId, currentUserId: uid, match: storedUserId === uid });
+
       if (storedConn && storedUserId === uid) {
         const pending = JSON.parse(storedConn);
         const age = Date.now() - pending.timestamp;
+        TRACE("LOCALSTORAGE", { pending, ageMs: age });
         if (age < 300000) {
+          TRACE("LOCALSTORAGE", "VERIFYING...");
           await verifyAndSync(pending.connectionId, pending.platform, uid);
         }
         localStorage.removeItem("composio_pending_conn");
         localStorage.removeItem("composio_pending_userId");
+        TRACE("LOCALSTORAGE", "CLEARED");
       }
 
-      // Step 2: Check all Supabase connections — re-verify any that are still "pending"
+      TRACE("SUPABASE_FETCH", `GET /api/social-connections?userId=${uid}`);
       const scRes = await fetch(`/api/social-connections?userId=${uid}`);
       const scData = await scRes.json();
       const scList: any[] = scData.connections || [];
+      TRACE("SUPABASE_FETCH", { count: scList.length, list: scList.map((c:any) => ({id:c.id,platform:c.platform,status:c.status,connection_id:c.connection_id})) });
 
       for (const sc of scList) {
         if (sc.status === "pending" && sc.connection_id) {
+          TRACE("SUPABASE_PENDING", { connection_id: sc.connection_id, platform: sc.platform });
           const becameActive = await verifyAndSync(sc.connection_id, sc.platform, uid);
-          if (becameActive) sc.status = "connected";
+          if (becameActive) { sc.status = "connected"; TRACE("SUPABASE_PENDING", "NOW ACTIVE — marking connected"); }
+          else { TRACE("SUPABASE_PENDING", "Still not active on Composio"); }
         }
       }
 
+      TRACE("STATE_UPDATE", { settingConnections: scList.length, platforms: scList.map((c:any) => ({p:c.platform,s:c.status})) });
       setSupabaseConnections(scList);
       supabaseRef.current = scList;
-    } catch(e) { console.error("loadAndVerify:", e); } finally { setLoading(false); }
+
+      const instaConn = scList.find((c:any) => c.platform === "instagram");
+      TRACE("UI_CHECK", { instagramStatus: instaConn?.status, instagramConnectionId: instaConn?.connection_id, isConnectedRenders: instaConn?.status === "connected" });
+    } catch(e:any) { TRACE("LOAD_VERIFY", `ERROR: ${e.message}`); } finally { setLoading(false); }
   }
 
   async function handleComposioConnect(platform: string) {
+    TRACE("CLICK", `Connect ${platform} clicked. userId=${userId}`);
     setConnecting(platform);
     setError("");
     try {
-      if (!userId) { setConnecting(null); return; }
+      if (!userId) { TRACE("CLICK", "ABORT: no userId"); setConnecting(null); return; }
+      const reqBody = { appName: platform, userId };
+      TRACE("POST_COMPOSIO", { url: "/api/composio/connections", body: reqBody });
       const res = await fetch("/api/composio/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appName: platform, userId }),
+        body: JSON.stringify(reqBody),
       });
       const data = await res.json();
+      TRACE("POST_COMPOSIO", { status: res.status, response: data });
       if (data.error) { setError(data.error); setConnecting(null); return; }
       if (data.redirectUrl && data.connectedAccountId) {
+        TRACE("REDIRECT", { redirectUrl: data.redirectUrl, connectedAccountId: data.connectedAccountId });
         localStorage.setItem("composio_pending_conn", JSON.stringify({
           platform,
           connectionId: data.connectedAccountId,
           timestamp: Date.now(),
         }));
         localStorage.setItem("composio_pending_userId", userId);
+        TRACE("REDIRECT", "localStorage saved. Redirecting to Composio...");
         window.location.href = data.redirectUrl;
+      } else {
+        TRACE("POST_COMPOSIO", "MISSING redirectUrl or connectedAccountId");
       }
-    } catch { setConnecting(null); }
+    } catch(e:any) { TRACE("CLICK", `ERROR: ${e.message}`); setConnecting(null); }
   }
 
   async function handleDisconnect(platform: string, connectionId?: string) {
