@@ -109,32 +109,38 @@ export default function SocialsPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
+      console.log("1. getUser uid:", uid);
       if (!uid || !user) return;
 
       const composioRes = await fetch(`/api/composio/connections?userId=${uid}`);
       const composioData = await composioRes.json();
       const compConns: any[] = composioData.connections || [];
+      console.log("2. Composio connections:", compConns.length, compConns.map(c => ({ id:c.id, st:c.status, app:(c.appName||c.app_name||c.integration_id) })));
 
       for (const cc of compConns) {
         const isLive = cc.status === "ACTIVE" || cc.status === "INITIATED";
         const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
+        console.log("3. Processing:", p, cc.status, isLive);
         if (isLive && p && cc.id) {
           try {
-            await fetch("/api/social-connections", {
+            const saveRes = await fetch("/api/social-connections", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ userId: uid, platform: p, connection_id: cc.id, status: "connected" }),
             });
-          } catch {}
+            const saveData = await saveRes.json();
+            console.log("4. Save result:", saveData);
+          } catch(e) { console.error("4. Save error:", e); }
         }
       }
 
       const scRes = await fetch(`/api/social-connections?userId=${uid}`);
       const scData = await scRes.json();
       const scList = scData.connections || [];
+      console.log("5. Final Supabase:", scList.length, "rows");
       setSupabaseConnections(scList);
       supabaseRef.current = scList;
-    } catch {} finally { setLoading(false); }
+    } catch(e) { console.error("loadAndVerify error:", e); } finally { setLoading(false); }
   }
 
   async function handleComposioConnect(platform: string) {
