@@ -140,6 +140,10 @@ export default function SocialsPage() {
         });
         const saveData = await saveRes.json();
         TRACE("PERSIST", { stage: "POST_RESULT", status: saveRes.status, data: saveData });
+        if (!saveRes.ok) {
+          TRACE("PERSIST", { stage: "POST_FAILED", status: saveRes.status });
+          return false;
+        }
         return true;
       }
       TRACE("VERIFY", { stage: "NOT_ACTIVE_YET", status: st });
