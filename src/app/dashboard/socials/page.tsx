@@ -107,61 +107,34 @@ export default function SocialsPage() {
   async function loadAndVerify() {
     setLoading(true);
     try {
-      const { data: { user }, error: userErr } = await supabase.auth.getUser();
-      console.log("[DEBUG] getUser:", user?.id, userErr);
+      const { data: { user } } = await supabase.auth.getUser();
       const uid = user?.id;
       if (!uid || !user) return;
 
       const composioRes = await fetch(`/api/composio/connections?userId=${uid}`);
       const composioData = await composioRes.json();
       const compConns: any[] = composioData.connections || [];
-      console.log("[DEBUG] Composio connections:", compConns.length, JSON.stringify(compConns.map(c => ({ id: c.id, status: c.status, app: c.appName || c.app_name || c.integration_id }))));
 
       for (const cc of compConns) {
         const isLive = cc.status === "ACTIVE" || cc.status === "INITIATED";
         const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
-        console.log("[DEBUG] Processing:", p, cc.status, isLive, cc.id);
         if (isLive && p && cc.id) {
-          const { data: existing, error: selErr } = await supabase
-            .from("social_connections")
-            .select("id")
-            .eq("user_id", uid)
-            .eq("platform", p)
-            .maybeSingle();
-          console.log("[DEBUG] Existing in Supabase:", existing, selErr);
-
-          if (existing) {
-            const { error: updErr } = await supabase.from("social_connections").update({
-              connection_id: cc.id,
-              status: "connected",
-              last_sync: new Date().toISOString(),
-            }).eq("id", existing.id);
-            console.log("[DEBUG] UPDATE result:", updErr);
-          } else {
-            const { error: insErr } = await supabase.from("social_connections").insert({
-              user_id: uid,
-              platform: p,
-              connection_id: cc.id,
-              handle: cc.app_name || cc.appName || p,
-              status: "connected",
-              last_sync: new Date().toISOString(),
+          try {
+            await fetch("/api/social-connections", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId: uid, platform: p, connection_id: cc.id, status: "connected" }),
             });
-            console.log("[DEBUG] INSERT result:", insErr);
-          }
+          } catch {}
         }
       }
 
-      const { data: scData, error: scErr } = await supabase
-        .from("social_connections")
-        .select("*")
-        .eq("user_id", uid);
-      console.log("[DEBUG] Final Supabase read:", scData?.length, "rows", scErr);
-
-      setSupabaseConnections(scData || []);
-      supabaseRef.current = scData || [];
-    } catch (e) {
-      console.error("[DEBUG] loadAndVerify error:", e);
-    } finally { setLoading(false); }
+      const scRes = await fetch(`/api/social-connections?userId=${uid}`);
+      const scData = await scRes.json();
+      const scList = scData.connections || [];
+      setSupabaseConnections(scList);
+      supabaseRef.current = scList;
+    } catch {} finally { setLoading(false); }
   }
 
   async function handleComposioConnect(platform: string) {
