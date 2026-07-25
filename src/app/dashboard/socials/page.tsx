@@ -104,6 +104,24 @@ export default function SocialsPage() {
     } catch {}
   }
 
+  async function verifyAndSync(connId: string, platform: string, uid: string) {
+    try {
+      const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${connId}`);
+      const verifyData = await verifyRes.json();
+      if (!verifyData.connection) return false;
+      const st = verifyData.connection.status;
+      if (st === "ACTIVE") {
+        await fetch("/api/social-connections", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: uid, platform, connection_id: connId, status: "connected" }),
+        });
+        return true;
+      }
+      return false;
+    } catch { return false; }
+  }
+
   async function loadAndVerify() {
     setLoading(true);
     try {
@@ -111,40 +129,31 @@ export default function SocialsPage() {
       const uid = user?.id;
       if (!uid || !user) return;
 
+      // Step 1: Check localStorage for brand-new connection from OAuth redirect
       const storedConn = localStorage.getItem("composio_pending_conn");
       const storedUserId = localStorage.getItem("composio_pending_userId");
-
       if (storedConn && storedUserId === uid) {
-        try {
-          const pending = JSON.parse(storedConn);
-          const age = Date.now() - pending.timestamp;
-          if (age < 300000) {
-            console.log("Verifying pending connection:", pending.connectionId);
-            const verifyRes = await fetch(`/api/composio/connections?action=verify&id=${pending.connectionId}`);
-            const verifyData = await verifyRes.json();
-            console.log("Verify result:", verifyData);
-            if (verifyData.connection) {
-              const st = verifyData.connection.status;
-              console.log("Connection status:", st);
-              if (st === "ACTIVE" || st === "INITIATED") {
-                const saveRes = await fetch("/api/social-connections", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ userId: uid, platform: pending.platform, connection_id: pending.connectionId, status: "connected" }),
-                });
-                console.log("Save result:", await saveRes.json());
-              }
-            }
-          }
-          localStorage.removeItem("composio_pending_conn");
-          localStorage.removeItem("composio_pending_userId");
-        } catch(e) { console.error("Pending verify error:", e); }
+        const pending = JSON.parse(storedConn);
+        const age = Date.now() - pending.timestamp;
+        if (age < 300000) {
+          await verifyAndSync(pending.connectionId, pending.platform, uid);
+        }
+        localStorage.removeItem("composio_pending_conn");
+        localStorage.removeItem("composio_pending_userId");
       }
 
+      // Step 2: Check all Supabase connections — re-verify any that are still "pending"
       const scRes = await fetch(`/api/social-connections?userId=${uid}`);
       const scData = await scRes.json();
-      const scList = scData.connections || [];
-      console.log("Supabase connections:", scList.length);
+      const scList: any[] = scData.connections || [];
+
+      for (const sc of scList) {
+        if (sc.status === "pending" && sc.connection_id) {
+          const becameActive = await verifyAndSync(sc.connection_id, sc.platform, uid);
+          if (becameActive) sc.status = "connected";
+        }
+      }
+
       setSupabaseConnections(scList);
       supabaseRef.current = scList;
     } catch(e) { console.error("loadAndVerify:", e); } finally { setLoading(false); }
