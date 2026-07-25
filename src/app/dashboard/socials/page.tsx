@@ -84,6 +84,23 @@ export default function SocialsPage() {
       await loadAndVerify();
       await checkWhatsAppStatus();
       await checkTelegramStatus();
+
+      const params = new URLSearchParams(window.location.search);
+      const platform = params.get("platform");
+      if (platform) {
+        let attempts = 0;
+        pollingRef.current = setInterval(async () => {
+          attempts++;
+          await loadAndVerify();
+          const connected = supabaseRef.current.some(
+            (c: any) => c.platform === platform && c.status === "connected"
+          );
+          if (connected || attempts >= 15) {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            window.history.replaceState({}, "", "/dashboard/socials");
+          }
+        }, 2000);
+      }
     } catch {}
   }
 
