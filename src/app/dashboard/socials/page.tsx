@@ -111,11 +111,33 @@ export default function SocialsPage() {
       const uid = user?.id;
       if (!uid) return;
 
+      // 1. Fetch Composio connections
+      const composioRes = await fetch(`/api/composio/connections?userId=${uid}`);
+      const composioData = await composioRes.json();
+      const compConns: any[] = composioData.connections || [];
+
+      // 2. Fetch Supabase connections
       const supabaseRes = await fetch(`/api/social-connections`);
       const supabaseData = await supabaseRes.json();
       const scList: any[] = supabaseData.connections || [];
 
-      let updated = false;
+      // 3. Sync: for every Composio connection that is ACTIVE/INITIATED, ensure it's "connected" in Supabase
+      for (const cc of compConns) {
+        const isLive = cc.status === "ACTIVE" || cc.status === "INITIATED";
+        const p = (cc.appName || cc.app_name || cc.integration_id || "").toLowerCase();
+        if (isLive && p && cc.id) {
+          const existsInSupabase = scList.some((sc: any) => sc.platform === p && sc.connection_id === cc.id);
+          if (!existsInSupabase) {
+            await fetch("/api/social-connections", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ platform: p, connection_id: cc.id, status: "connected" }),
+            });
+          }
+        }
+      }
+
+      // 4. Also check pending connections and verify by ID
       for (const sc of scList) {
         if (sc.status !== "connected" && sc.connection_id) {
           try {
@@ -129,24 +151,17 @@ export default function SocialsPage() {
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ platform: sc.platform, connection_id: sc.connection_id, status: "connected" }),
                 });
-                updated = true;
               }
             }
           } catch {}
         }
       }
 
-      if (updated) {
-        const refresh = await fetch("/api/social-connections");
-        const refreshData = await refresh.json();
-        if (refreshData.connections) {
-          setSupabaseConnections(refreshData.connections);
-          supabaseRef.current = refreshData.connections;
-        }
-      } else {
-        setSupabaseConnections(scList);
-        supabaseRef.current = scList;
-      }
+      // 5. Refresh final state
+      const refresh = await fetch("/api/social-connections");
+      const refreshData = await refresh.json();
+      setSupabaseConnections(refreshData.connections || []);
+      supabaseRef.current = refreshData.connections || [];
     } catch {} finally { setLoading(false); }
   }
 
