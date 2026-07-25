@@ -242,6 +242,7 @@ export default function SocialsPage() {
   }
 
   async function handleDisconnect(platform: string, connectionId?: string) {
+    TRACE("DISCONNECT", { platform, connectionId, userId });
     if (platform === "whatsapp") {
       await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect", userId }) });
       setWhatsAppStatus(false); return;
@@ -250,11 +251,31 @@ export default function SocialsPage() {
       await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect", userId }) });
       setTgStatus(false); setTgBot(null); return;
     }
-    if (connectionId) {
-      await fetch(`/api/composio/connections?id=${connectionId}`, { method: "DELETE" });
+    // Optimistic UI: immediately show disconnected
+    const updated = supabaseRef.current.map((c: any) =>
+      c.platform === platform ? { ...c, status: "disconnected" } : c
+    );
+    setSupabaseConnections(updated);
+    supabaseRef.current = updated;
+
+    try {
+      if (connectionId) {
+        TRACE("DISCONNECT", { stage: "DELETING_COMPOSIO", connectionId });
+        await fetch(`/api/composio/connections?id=${connectionId}`, { method: "DELETE" });
+      }
+      const disconnectBody = { userId, platform, status: "disconnected" };
+      TRACE("DISCONNECT", { stage: "UPDATING_SUPABASE", body: disconnectBody });
+      const res = await fetch("/api/social-connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(disconnectBody),
+      });
+      const data = await res.json();
+      TRACE("DISCONNECT", { stage: "RESULT", status: res.status, data });
+    } catch (e: any) {
+      TRACE("DISCONNECT", `ERROR: ${e.message}`);
     }
-    await fetch("/api/social-connections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform, status: "disconnected" }) });
-    loadAndVerify();
+    await loadAndVerify();
   }
 
   function isConnected(platform: string) {
@@ -383,7 +404,7 @@ export default function SocialsPage() {
                         </div>
                       )}
                       <div className="flex gap-2 pt-2">
-                        <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300" onClick={() => handleDisconnect(key)}>
+                        <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300" onClick={() => { const sc = supabaseRef.current.find((c: any) => c.platform === key); handleDisconnect(key, sc?.connection_id); }}>
                           <Unlink className="w-3.5 h-3.5" />Disconnect
                         </Button>
                         <Button variant="outline" size="sm" className="gap-2 text-xs" onClick={() => handleConnect(key)}>
