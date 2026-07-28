@@ -27,7 +27,7 @@ interface NavbarProps {
 export default function Navbar({ onMenuToggle }: NavbarProps) {
   const pathname = usePathname();
   const pageTitle = pageTitles[pathname] ?? "Dashboard";
-  const notificationCount = 5;
+  const notificationCount = 0;
 
   return (
     <header className="sticky top-0 z-20 h-16 bg-black/60 backdrop-blur-xl border-b border-white/[0.04] flex items-center justify-between px-3 md:px-5">

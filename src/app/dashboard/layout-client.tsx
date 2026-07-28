@@ -33,14 +33,19 @@ function DashboardBg() {
 
 export function DashboardLayoutClient({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
     <div className="min-h-screen bg-black relative">
       <DashboardBg />
-      <Sidebar />
+      <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((prev) => !prev)} />
       <MobileSidebar open={mobileOpen} onClose={() => setMobileOpen(false)} />
       <Navbar onMenuToggle={() => setMobileOpen((prev) => !prev)} />
-      <main className="relative z-10 md:pl-60 pt-20 px-4 sm:px-6 md:px-8 pb-12">
+      <main
+        className={`relative z-10 pt-20 px-4 sm:px-6 md:px-8 pb-12 transition-all duration-300 ${
+          sidebarCollapsed ? "md:pl-[5rem]" : "md:pl-60"
+        }`}
+      >
         {children}
       </main>
     </div>
