@@ -151,3 +151,65 @@
     border-radius: 4px;
   }
 }
+
+/* Lenis smooth scroll */
+html.lenis, html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* GPU-accelerated orb animations */
+@keyframes orb-float-1 {
+  0%, 100% { transform: translate(-20%, -10%) scale(1); }
+  25% { transform: translate(20%, 10%) scale(1.15); }
+  50% { transform: translate(-10%, -20%) scale(0.9); }
+  75% { transform: translate(10%, 20%) scale(1.1); }
+}
+
+@keyframes orb-float-2 {
+  0%, 100% { transform: translate(10%, -5%) scale(0.9); }
+  25% { transform: translate(-20%, 15%) scale(1.2); }
+  50% { transform: translate(10%, -10%) scale(0.95); }
+  75% { transform: translate(-5%, 5%) scale(1.1); }
+}
+
+@keyframes orb-float-3 {
+  0%, 100% { transform: translate(0%, 0%) scale(1.1); }
+  25% { transform: translate(30%, -20%) scale(0.85); }
+  50% { transform: translate(-10%, 20%) scale(1.15); }
+  75% { transform: translate(20%, -10%) scale(0.95); }
+}
+
+@keyframes particle-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-40px) scale(1.4); }
+  50% { transform: translateY(0) scale(1); }
+  75% { transform: translateY(20px) scale(1.2); }
+}
+
+.animate-orb-1 {
+  animation: orb-float-1 20s ease-in-out infinite;
+}
+
+.animate-orb-2 {
+  animation: orb-float-2 25s ease-in-out infinite;
+}
+
+.animate-orb-3 {
+  animation: orb-float-3 22s ease-in-out infinite;
+}
+
+.animate-particle {
+  animation: particle-float ease-in-out infinite;
+}

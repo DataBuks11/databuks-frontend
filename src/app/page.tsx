@@ -149,39 +149,30 @@ function FadeInWhenVisible({
 }
 
 function ParticleField() {
-  const particles = useMemo(() => Array.from({ length: 30 }, (_, i) => ({
+  const particles = useMemo(() => Array.from({ length: 12 }, (_, i) => ({
     id: i,
     x: ((i * 37 + 13) % 100),
     y: ((i * 53 + 7) % 100),
     size: ((i % 3) + 1),
-    duration: 10 + (i % 10),
-    delay: i % 8,
-    opacity: 0.05 + (i % 5) * 0.04,
+    duration: 12 + (i % 8),
+    delay: i % 6,
+    opacity: 0.06 + (i % 4) * 0.04,
   })), []);
 
   return (
     <div className="absolute inset-0">
       {particles.map((p) => (
-        <motion.div
+        <div
           key={p.id}
-          className="absolute rounded-full bg-blue-400"
+          className="absolute rounded-full bg-blue-400 animate-particle"
           style={{
             left: `${p.x}%`,
             top: `${p.y}%`,
             width: p.size,
             height: p.size,
             opacity: p.opacity,
-          }}
-          animate={{
-            y: ["0px", "-80px", "0px", "40px", "0px"],
-            opacity: [p.opacity, p.opacity * 2.5, p.opacity, p.opacity * 1.5, p.opacity],
-            scale: [1, 1.8, 1, 1.4, 1],
-          }}
-          transition={{
-            duration: p.duration,
-            delay: p.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
+            animationDuration: `${p.duration}s`,
+            animationDelay: `${p.delay}s`,
           }}
         />
       ))}
@@ -216,7 +207,8 @@ export default function LandingPage() {
           loop
           muted
           playsInline
-          className="absolute inset-0 w-full h-full object-cover"
+          preload="metadata"
+          className="absolute inset-0 w-full h-full object-cover will-change-auto"
         >
           <source
             src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260405_171521_25968ba2-b594-4b32-aab7-f6b69398a6fa.mp4"
@@ -224,61 +216,32 @@ export default function LandingPage() {
           />
         </video>
 
-        {/* Animated gradient orbs - on top of video */}
-        <motion.div
-          className="absolute w-[800px] h-[800px] rounded-full z-20"
+        {/* Animated gradient orbs - pure CSS for GPU performance */}
+        <div
+          className="absolute w-[800px] h-[800px] rounded-full z-20 animate-orb-1"
           style={{
             background: "radial-gradient(circle at center, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.05) 30%, transparent 70%)",
             filter: "blur(80px)",
+            willChange: "transform",
           }}
-          animate={{
-            x: ["-20%", "20%", "-10%", "10%", "-20%"],
-            y: ["-10%", "10%", "-20%", "20%", "-10%"],
-            scale: [1, 1.15, 0.9, 1.1, 1],
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
         />
 
-        <motion.div
-          className="absolute w-[600px] h-[600px] rounded-full bottom-0 right-0 z-20"
+        <div
+          className="absolute w-[600px] h-[600px] rounded-full bottom-0 right-0 z-20 animate-orb-2"
           style={{
             background: "radial-gradient(circle at center, rgba(99,102,241,0.12) 0%, rgba(99,102,241,0.04) 30%, transparent 70%)",
             filter: "blur(80px)",
+            willChange: "transform",
           }}
-          animate={{
-            x: ["10%", "-20%", "10%", "-5%", "10%"],
-            y: ["-5%", "15%", "-10%", "5%", "-5%"],
-            scale: [0.9, 1.2, 0.95, 1.1, 0.9],
-          }}
-          transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
         />
 
-        <motion.div
-          className="absolute w-[500px] h-[500px] rounded-full top-1/2 left-1/3 z-20"
+        <div
+          className="absolute w-[500px] h-[500px] rounded-full top-1/2 left-1/3 z-20 animate-orb-3"
           style={{
             background: "radial-gradient(circle at center, rgba(139,92,246,0.1) 0%, rgba(139,92,246,0.03) 30%, transparent 70%)",
             filter: "blur(70px)",
+            willChange: "transform",
           }}
-          animate={{
-            x: ["0%", "30%", "-10%", "20%", "0%"],
-            y: ["0%", "-20%", "20%", "-10%", "0%"],
-            scale: [1.1, 0.85, 1.15, 0.95, 1.1],
-          }}
-          transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
-        />
-
-        <motion.div
-          className="absolute w-[400px] h-[400px] rounded-full top-1/4 right-1/4 z-20"
-          style={{
-            background: "radial-gradient(circle at center, rgba(59,130,246,0.08) 0%, transparent 70%)",
-            filter: "blur(50px)",
-          }}
-          animate={{
-            x: ["-30%", "20%", "-15%", "30%", "-30%"],
-            y: ["20%", "-15%", "30%", "-20%", "20%"],
-            scale: [1, 0.8, 1.05, 0.9, 1],
-          }}
-          transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
         />
 
         {/* Floating particles — client-only to prevent hydration mismatch */}
@@ -521,7 +484,8 @@ export default function LandingPage() {
             loop
             muted
             playsInline
-            className="absolute inset-0 w-full h-full object-cover"
+            preload="metadata"
+            className="absolute inset-0 w-full h-full object-cover will-change-auto"
           >
             <source
               src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260302_085844_21a8f4b3-dea5-4ede-be16-d53f6973bb14.mp4"
