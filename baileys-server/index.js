@@ -311,7 +311,18 @@ app.post("/send", async (req, res) => {
 });
 
 // ─── Start ───
-app.listen(PORT, () => {
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught Exception:", err.message);
+  console.error(err.stack);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+});
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`🟢 Baileys server running on port ${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
+  console.log(`   Supabase: ${SUPABASE_URL ? "Connected" : "NOT configured"}`);
+  console.log(`   API Key: ${API_KEY ? "Set" : "NOT set"}`);
+  console.log(`   Health: http://0.0.0.0:${PORT}/health`);
 });
