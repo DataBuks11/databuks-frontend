@@ -8,20 +8,13 @@ import {
   Target,
   MessageSquare,
   Workflow,
-  CheckCircle,
   BarChart3,
   Play,
   Menu,
   X,
   ArrowRight,
-  ChevronRight,
   Sparkles,
-  Zap,
-  Users,
-  TrendingUp,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const features = [
@@ -74,54 +67,7 @@ const steps = [
   { step: "08", title: "Qualified Leads → Customers", desc: "Track pipeline, measure conversion, watch revenue grow." },
 ];
 
-const pricingPlans = [
-  {
-    name: "Starter",
-    price: "$49",
-    period: "/mo",
-    description: "For solopreneurs and small teams getting started.",
-    features: [
-      "500 automated DMs/month",
-      "3 social platform connections",
-      "Basic lead scoring",
-      "Content scheduler (10 posts/month)",
-      "Email support",
-    ],
-    highlighted: false,
-  },
-  {
-    name: "Pro",
-    price: "$149",
-    period: "/mo",
-    description: "For growing businesses that need multi-channel automation.",
-    features: [
-      "5,000 automated DMs/month",
-      "All platform connections",
-      "Advanced AI lead scoring",
-      "Unlimited content scheduling",
-      "Analytics dashboard",
-      "Priority support",
-      "API access",
-    ],
-    highlighted: true,
-  },
-  {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For agencies and large teams with dedicated support.",
-    features: [
-      "Unlimited DMs and automations",
-      "White-label dashboard",
-      "Dedicated account manager",
-      "Custom AI model training",
-      "SLA guarantee",
-      "SSO and advanced security",
-      "Multi-team workspaces",
-    ],
-    highlighted: false,
-  },
-];
+
 
 function FadeInWhenVisible({
   children,
@@ -192,7 +138,6 @@ export default function LandingPage() {
     { label: "Home", href: "#home" },
     { label: "Features", href: "#features" },
     { label: "How It Works", href: "#how-it-works" },
-    { label: "Pricing", href: "#pricing" },
   ];
 
   return (
@@ -437,42 +382,7 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Bottom Stats */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 1 }}
-          className="flex items-end gap-6 sm:gap-10 md:gap-16 px-5 sm:px-8 md:px-16 lg:px-20 pb-8 sm:pb-10"
-        >
-          <div className="flex items-end gap-3">
-            <div className="relative w-5 h-5 shrink-0 mb-1">
-              <div className="grid grid-cols-3 gap-[1.5px]">
-                {Array.from({ length: 9 }).map((_, i) => (
-                  <div key={i} className="w-[4px] h-[4px] bg-white/60 rounded-[1px]" />
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="text-xl sm:text-2xl md:text-3xl font-normal text-white">10K+</div>
-              <div className="text-xs sm:text-sm font-light text-white/50">Active Businesses</div>
-            </div>
-          </div>
 
-          <div className="flex items-end gap-3">
-            <div className="grid grid-cols-3 gap-[2px] shrink-0 mb-1">
-              {[1, 0, 1, 0, 1, 0, 1, 0, 1].map((v, i) => (
-                <div
-                  key={i}
-                  className={cn("w-[4px] h-[4px] rounded-[1px]", v ? "bg-white/60" : "bg-white/0")}
-                />
-              ))}
-            </div>
-            <div>
-              <div className="text-xl sm:text-2xl md:text-3xl font-normal text-white">2.4K+</div>
-              <div className="text-xs sm:text-sm font-light text-white/50">Leads Generated Daily</div>
-            </div>
-          </div>
-        </motion.div>
       </motion.div>
 
       {/* SCROLL SECTIONS */}
@@ -556,94 +466,6 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* PRICING */}
-        <section id="pricing" className="relative z-10 py-24 px-5 sm:px-8 md:px-16 lg:px-20">
-          <div className="max-w-7xl mx-auto">
-            <FadeInWhenVisible className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-normal tracking-[-0.03em]">
-                Simple, Transparent Pricing
-              </h2>
-              <p className="mt-4 text-base sm:text-lg font-light text-white/50 max-w-xl mx-auto">
-                Choose the plan that fits your business. Upgrade anytime.
-              </p>
-            </FadeInWhenVisible>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto">
-              {pricingPlans.map((plan, index) => (
-                <FadeInWhenVisible key={plan.name} delay={index * 0.1}>
-                  <div
-                    className={cn(
-                      "glass rounded-2xl p-6 h-full flex flex-col relative glass-hover",
-                      plan.highlighted && "ring-1 ring-blue-500/20"
-                    )}
-                  >
-                    {plan.highlighted && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 liquid-glass rounded-full px-4 py-1">
-                        <span className="text-xs font-medium text-blue-400">Most Popular</span>
-                      </div>
-                    )}
-                    <div className="mb-6">
-                      <h3 className="text-lg font-medium mb-1">{plan.name}</h3>
-                      <p className="text-sm font-light text-white/50 mb-5">{plan.description}</p>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-4xl font-normal tracking-tight">{plan.price}</span>
-                        {plan.period && (
-                          <span className="text-sm font-light text-white/40">{plan.period}</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <ul className="space-y-3 mb-8 flex-1">
-                      {plan.features.map((feature) => (
-                        <li key={feature} className="flex items-start gap-2.5 text-sm font-light text-white/50">
-                          <CheckCircle className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-
-                    <Link
-                      href={plan.name === "Enterprise" ? "#" : "/auth/signup"}
-                      className={cn(
-                        "w-full liquid-glass rounded-full py-2.5 text-sm font-medium text-center transition-all duration-300 hover:bg-white/[0.06]",
-                        plan.highlighted ? "text-white" : "text-white/70"
-                      )}
-                    >
-                      {plan.name === "Enterprise" ? "Contact Sales" : "Get Started"}
-                      <ArrowRight className="w-3.5 h-3.5 inline ml-1.5" />
-                    </Link>
-                  </div>
-                </FadeInWhenVisible>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* CTA */}
-        <section className="relative z-10 py-20 px-5 sm:px-8 md:px-16 lg:px-20">
-          <FadeInWhenVisible>
-            <div className="max-w-2xl mx-auto text-center glass rounded-2xl p-10 sm:p-12 md:p-16">
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-normal tracking-[-0.03em]">
-                Ready to build your AI workforce?
-              </h2>
-              <p className="mt-4 text-sm sm:text-base font-light text-white/50 max-w-md mx-auto">
-                Join thousands of businesses automating their growth with DataBuks.
-              </p>
-              <div className="mt-8">
-                <Link
-                  href="/auth/signup"
-                  className="liquid-glass rounded-full px-8 py-3.5 text-sm font-medium text-white inline-flex items-center gap-2 hover:bg-white/[0.06] transition-all duration-300"
-                >
-                  Start Free Trial
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              </div>
-              <p className="mt-6 text-xs font-light text-white/30">
-                No credit card required · 14-day free trial · Cancel anytime
-              </p>
-            </div>
-          </FadeInWhenVisible>
-        </section>
 
         {/* Footer */}
         <footer className="relative z-10 border-t border-white/[0.04] px-5 sm:px-8 md:px-16 lg:px-20 py-8">

@@ -213,3 +213,55 @@ html.lenis, html.lenis body {
 .animate-particle {
   animation: particle-float ease-in-out infinite;
 }
+
+/* ===== MOBILE PERFORMANCE OPTIMIZATIONS ===== */
+@media (max-width: 767px) {
+  /* Reduce backdrop-filter blur on mobile — #1 GPU killer */
+  .glass {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .liquid-glass {
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  .glass-subtle {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  /* Hide heavy orb animations on mobile */
+  .animate-orb-1,
+  .animate-orb-2,
+  .animate-orb-3 {
+    display: none !important;
+  }
+
+  /* Reduce particle animation intensity on mobile */
+  .animate-particle {
+    animation: particle-float-mobile ease-in-out infinite;
+  }
+
+  /* Optimize touch scrolling */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Lighter particle animation for mobile */
+@keyframes particle-float-mobile {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-15px); }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-orb-1,
+  .animate-orb-2,
+  .animate-orb-3,
+  .animate-particle {
+    animation: none !important;
+  }
+}
