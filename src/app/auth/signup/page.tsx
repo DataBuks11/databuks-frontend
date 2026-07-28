@@ -79,7 +79,14 @@ export default function SignupPage() {
 
   if (isSuccess) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center px-4">
+      <div className="min-h-screen bg-black flex items-center justify-center px-4 relative">
+        {/* Background Video */}
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <video autoPlay loop muted playsInline preload="metadata" className="absolute inset-0 w-full h-full object-cover">
+            <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260302_085844_21a8f4b3-dea5-4ede-be16-d53f6973bb14.mp4" type="video/mp4" />
+          </video>
+          <div className="absolute inset-0 bg-black/75" />
+        </div>
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -110,12 +117,12 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center px-4 relative">
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute inset-0 grid-pattern opacity-40" />
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full"
-          style={{ background: "radial-gradient(circle at center, rgba(59,130,246,0.04) 0%, transparent 60%)" }}
-        />
+      {/* Background Video */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <video autoPlay loop muted playsInline preload="metadata" className="absolute inset-0 w-full h-full object-cover">
+          <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260302_085844_21a8f4b3-dea5-4ede-be16-d53f6973bb14.mp4" type="video/mp4" />
+        </video>
+        <div className="absolute inset-0 bg-black/75" />
       </div>
 
       <motion.div
