@@ -20,6 +20,7 @@ import { StatCard } from "@/components/charts/stat-card";
 import { ChartArea } from "@/components/charts/area-chart";
 import { ChartBar } from "@/components/charts/bar-chart";
 import { dashboardStats, chartData } from "@/lib/data";
+import { createClient } from "@/lib/supabase/client";
 
 const stats = [
   {
@@ -66,54 +67,6 @@ const stats = [
   },
 ];
 
-const activities = [
-  {
-    id: 1,
-    action: "New lead created",
-    detail: "Sarah Mitchell — NexHealth Technologies",
-    time: "2 minutes ago",
-    icon: UserPlus,
-    iconColor: "text-emerald-400",
-    iconBg: "bg-emerald-400/10",
-  },
-  {
-    id: 2,
-    action: "Content published",
-    detail: "Carousel post on LinkedIn — 847 likes",
-    time: "18 minutes ago",
-    icon: FileText,
-    iconColor: "text-blue-400",
-    iconBg: "bg-blue-400/10",
-  },
-  {
-    id: 3,
-    action: "Meeting booked",
-    detail: "Demo call with Priya Ramachandran — Thu 2PM",
-    time: "1 hour ago",
-    icon: Calendar,
-    iconColor: "text-violet-400",
-    iconBg: "bg-violet-400/10",
-  },
-  {
-    id: 4,
-    action: "Automation completed",
-    detail: "LinkedIn Content Scheduler — 5 posts published",
-    time: "2 hours ago",
-    icon: Zap,
-    iconColor: "text-amber-400",
-    iconBg: "bg-amber-400/10",
-  },
-  {
-    id: 5,
-    action: "Lead converted",
-    detail: "Marcus Webb — Sentinel Commerce Inc. ($48K/yr)",
-    time: "4 hours ago",
-    icon: CheckCircle2,
-    iconColor: "text-emerald-400",
-    iconBg: "bg-emerald-400/10",
-  },
-];
-
 function getGreeting() {
   const hour = new Date().getHours();
   if (hour < 12) return "Good morning";
@@ -132,6 +85,15 @@ function getFormattedDate() {
 export default function DashboardPage() {
   const [greeting] = useState(getGreeting());
   const [date] = useState(getFormattedDate());
+  const [userName, setUserName] = useState("");
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      const name = data.user?.user_metadata?.full_name || data.user?.email?.split("@")[0] || "";
+      setUserName(name);
+    });
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -142,7 +104,7 @@ export default function DashboardPage() {
         transition={{ duration: 0.4 }}
       >
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-          {greeting}, <span className="gradient-text">Marcus</span>
+          {greeting}{userName ? ", " : ""}<span className="gradient-text">{userName}</span>
         </h1>
         <p className="text-white/50 mt-1 text-sm">{date}</p>
       </motion.div>
@@ -213,32 +175,7 @@ export default function DashboardPage() {
           </p>
         </CardHeader>
         <CardContent>
-          <div className="divide-y divide-white/5">
-            {activities.map((activity, index) => (
-              <motion.div
-                key={activity.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, delay: index * 0.08 }}
-                className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"
-              >
-                <div
-                  className={`w-9 h-9 rounded-full ${activity.iconBg} flex items-center justify-center shrink-0`}
-                >
-                  <activity.icon className={`w-4 h-4 ${activity.iconColor}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white">{activity.action}</p>
-                  <p className="text-sm text-white/50 truncate">
-                    {activity.detail}
-                  </p>
-                </div>
-                <span className="text-xs text-white/30 shrink-0">
-                  {activity.time}
-                </span>
-              </motion.div>
-            ))}
-          </div>
+          <p className="text-sm text-white/30 text-center py-8">No recent activity yet. Start by connecting your social accounts.</p>
         </CardContent>
       </Card>
     </div>

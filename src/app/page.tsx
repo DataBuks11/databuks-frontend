@@ -294,11 +294,21 @@ export default function LandingPage() {
                   {link.label}
                 </a>
               ))}
-              <div className="flex flex-col items-center gap-3 mt-4">
-                <div className="liquid-glass h-10 w-10 rounded-full flex items-center justify-center">
-                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600" />
-                </div>
-                <span className="text-sm font-light text-white/50">Account</span>
+              <div className="flex flex-col items-center gap-3 mt-4 w-full px-8">
+                <Link
+                  href="/auth/login"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full liquid-glass rounded-full px-6 py-3 text-base font-medium text-white/80 hover:text-white text-center transition-colors duration-300"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/auth/signup"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full liquid-glass rounded-full px-6 py-3 text-base font-medium text-white text-center hover:bg-white/[0.06] transition-all duration-300"
+                >
+                  Start Free
+                </Link>
               </div>
             </motion.div>
           </motion.div>

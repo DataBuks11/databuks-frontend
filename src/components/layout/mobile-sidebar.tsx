@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -21,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 
 const navLinks = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -45,6 +47,24 @@ interface MobileSidebarProps {
 
 export default function MobileSidebar({ open, onClose }: MobileSidebarProps) {
   const pathname = usePathname();
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      const name = data.user?.user_metadata?.full_name || data.user?.email?.split("@")[0] || "User";
+      setUserName(name);
+      setUserEmail(data.user?.email || "");
+    });
+  }, []);
+
+  const initials = userName
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2) || "U";
 
   return (
     <AnimatePresence>
@@ -129,14 +149,14 @@ export default function MobileSidebar({ open, onClose }: MobileSidebarProps) {
             <div className="border-t border-white/5 p-3">
               <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 hover:bg-white/[0.03] cursor-pointer">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-semibold text-white shrink-0">
-                  MJ
+                  {initials}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-white truncate">
-                    Marcus Johnson
+                    {userName}
                   </p>
                   <p className="text-xs text-muted-foreground truncate">
-                    marcus@databuks.com
+                    {userEmail}
                   </p>
                 </div>
                 <LogOut className="w-4 h-4 text-muted-foreground hover:text-white transition-colors shrink-0" />
