@@ -23,9 +23,17 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const logger = pino({ level: "silent" });
 
 // Supabase client (service role for server-side operations)
-const supabase = SUPABASE_URL && SUPABASE_SERVICE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-  : null;
+let supabase = null;
+try {
+  if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    console.log("[Supabase] Client created successfully");
+  } else {
+    console.warn("[Supabase] Missing URL or SERVICE_KEY — running without persistence");
+  }
+} catch (err) {
+  console.error("[Supabase] Failed to create client:", err.message);
+}
 
 app.use(cors());
 app.use(express.json());
