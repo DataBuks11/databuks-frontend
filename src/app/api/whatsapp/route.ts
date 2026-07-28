@@ -45,6 +45,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(data);
     }
 
+    if (action === "chats") {
+      const data = await proxyGet(`/chats/${userId}`);
+      return NextResponse.json(data);
+    }
+
+    if (action === "messages") {
+      const jid = searchParams.get("jid") || "";
+      const limit = searchParams.get("limit") || "50";
+      const data = await proxyGet(`/messages/${userId}?jid=${jid}&limit=${limit}`);
+      return NextResponse.json(data);
+    }
+
+    if (action === "check-number") {
+      const phone = searchParams.get("phone");
+      if (!phone) return NextResponse.json({ error: "phone required" }, { status: 400 });
+      const data = await proxyGet(`/check-number/${userId}/${phone}`);
+      return NextResponse.json(data);
+    }
+
+    if (action === "health") {
+      const data = await proxyGet("/health");
+      return NextResponse.json(data);
+    }
+
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -54,7 +78,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, userId, jid, message } = body;
+    const { action, userId, jid, message, mediaUrl, caption, type } = body;
 
     if (!userId) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
@@ -75,6 +99,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "jid and message required" }, { status: 400 });
       }
       const data = await proxyPost("/send", { userId, jid, message });
+      return NextResponse.json(data);
+    }
+
+    if (action === "send-media") {
+      if (!jid || !mediaUrl) {
+        return NextResponse.json({ error: "jid and mediaUrl required" }, { status: 400 });
+      }
+      const data = await proxyPost("/send-media", { userId, jid, mediaUrl, caption, type });
       return NextResponse.json(data);
     }
 

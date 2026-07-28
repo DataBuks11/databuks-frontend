@@ -19,6 +19,7 @@ const PORT = process.env.PORT || 3001;
 const API_KEY = process.env.BAILEYS_API_KEY || "dev-key";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const WEBHOOK_URL = process.env.WEBHOOK_URL || ""; // Optional: forward messages to Next.js
 
 const logger = pino({ level: "silent" });
 
@@ -62,7 +63,7 @@ function getAuthDir(userId) {
   return dir;
 }
 
-// ─── Helpers ───
+// ─── Supabase Helpers ───
 async function updateSupabaseStatus(userId, connected) {
   if (!supabase) return;
   try {
@@ -92,15 +93,114 @@ async function updateSupabaseStatus(userId, connected) {
   }
 }
 
+// Store message in Supabase
+async function storeMessage(userId, msg) {
+  if (!supabase) return;
+  try {
+    await supabase.from("whatsapp_messages").insert({
+      user_id: userId,
+      remote_jid: msg.remoteJid,
+      from_me: msg.fromMe,
+      message_id: msg.messageId,
+      message_type: msg.type,
+      message_text: msg.text,
+      timestamp: msg.timestamp,
+      push_name: msg.pushName || null,
+      raw_data: msg.raw || null,
+    });
+  } catch (err) {
+    console.error("[Store Message Error]", err.message);
+  }
+}
+
+// Forward message to webhook (for AI agent processing)
+async function forwardToWebhook(userId, msg) {
+  if (!WEBHOOK_URL) return;
+  try {
+    await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
+      body: JSON.stringify({ userId, message: msg }),
+    });
+  } catch (err) {
+    console.error("[Webhook Error]", err.message);
+  }
+}
+
+// ─── Message Handler ───
+function setupMessageHandler(socket, userId) {
+  socket.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return;
+
+    for (const msg of messages) {
+      // Skip status messages
+      if (msg.key.remoteJid === "status@broadcast") continue;
+
+      const messageText =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        msg.message?.videoMessage?.caption ||
+        "";
+
+      const messageType = msg.message?.conversation
+        ? "text"
+        : msg.message?.extendedTextMessage
+        ? "text"
+        : msg.message?.imageMessage
+        ? "image"
+        : msg.message?.videoMessage
+        ? "video"
+        : msg.message?.audioMessage
+        ? "audio"
+        : msg.message?.documentMessage
+        ? "document"
+        : msg.message?.contactMessage
+        ? "contact"
+        : msg.message?.locationMessage
+        ? "location"
+        : "unknown";
+
+      const parsedMsg = {
+        remoteJid: msg.key.remoteJid,
+        fromMe: msg.key.fromMe || false,
+        messageId: msg.key.id,
+        type: messageType,
+        text: messageText,
+        timestamp: new Date((msg.messageTimestamp || 0) * 1000).toISOString(),
+        pushName: msg.pushName || "",
+        raw: JSON.stringify(msg.message || {}),
+      };
+
+      console.log(
+        `[Message] ${parsedMsg.fromMe ? "SENT" : "RECEIVED"} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
+      );
+
+      // Store in Supabase
+      await storeMessage(userId, parsedMsg);
+
+      // Forward to webhook for AI processing (only incoming messages)
+      if (!parsedMsg.fromMe) {
+        await forwardToWebhook(userId, parsedMsg);
+      }
+    }
+  });
+
+  // Track message read receipts
+  socket.ev.on("message-receipt.update", (updates) => {
+    for (const update of updates) {
+      console.log(`[Receipt] ${update.key.remoteJid} — ${update.receipt?.readTimestamp ? "read" : "delivered"}`);
+    }
+  });
+}
+
 // ─── Connect WhatsApp ───
 async function connectWhatsApp(userId) {
-  // If already connected, return status
   const existing = sessions.get(userId);
   if (existing?.connected) {
     return { connected: true, message: "Already connected" };
   }
 
-  // Clean up old socket if exists
   if (existing?.socket) {
     try { existing.socket.ws?.close(); } catch {}
   }
@@ -121,6 +221,7 @@ async function connectWhatsApp(userId) {
       connectTimeoutMs: 30000,
       keepAliveIntervalMs: 30000,
       retryRequestDelayMs: 250,
+      markOnlineOnConnect: true,
     });
 
     const session = {
@@ -129,8 +230,12 @@ async function connectWhatsApp(userId) {
       connected: false,
       userId,
       qrRetries: 0,
+      phoneNumber: null,
     };
     sessions.set(userId, session);
+
+    // Set up message handler for AI agents
+    setupMessageHandler(socket, userId);
 
     socket.ev.on("connection.update", async (update) => {
       const { qr, connection, lastDisconnect } = update;
@@ -157,6 +262,14 @@ async function connectWhatsApp(userId) {
         console.log(`[WhatsApp] Connected for user: ${userId}`);
         session.connected = true;
         session.qrCode = null;
+
+        // Get phone number
+        try {
+          const user = socket.user;
+          session.phoneNumber = user?.id?.split(":")[0] || null;
+          console.log(`[WhatsApp] Phone: ${session.phoneNumber}`);
+        } catch {}
+
         await updateSupabaseStatus(userId, true);
 
         if (!resolved) {
@@ -170,11 +283,9 @@ async function connectWhatsApp(userId) {
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
         console.log(`[WhatsApp] Disconnected for user: ${userId}, code: ${statusCode}, reconnect: ${shouldReconnect}`);
-
         session.connected = false;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          // User logged out — clean up everything
           sessions.delete(userId);
           const authDir = getAuthDir(userId);
           try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
@@ -185,7 +296,6 @@ async function connectWhatsApp(userId) {
             resolve({ error: "Logged out from WhatsApp. Please reconnect." });
           }
         } else if (shouldReconnect) {
-          // Auto-reconnect
           console.log(`[WhatsApp] Auto-reconnecting for user: ${userId}`);
           setTimeout(() => {
             connectWhatsApp(userId).catch(() => {});
@@ -201,7 +311,6 @@ async function connectWhatsApp(userId) {
 
     socket.ev.on("creds.update", saveCreds);
 
-    // Timeout after 30 seconds
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
@@ -215,10 +324,16 @@ async function connectWhatsApp(userId) {
 
 // Health check
 app.get("/health", (req, res) => {
+  const sessionList = [];
+  sessions.forEach((s, uid) => {
+    sessionList.push({ userId: uid, connected: s.connected, phone: s.phoneNumber });
+  });
   res.json({
     status: "ok",
     activeSessions: sessions.size,
+    sessions: sessionList,
     uptime: process.uptime(),
+    supabase: !!supabase,
   });
 });
 
@@ -245,10 +360,10 @@ app.get("/status/:userId", (req, res) => {
     return res.json({
       connected: session.connected,
       hasQr: !!session.qrCode,
+      phoneNumber: session.phoneNumber,
     });
   }
 
-  // Check Supabase if no in-memory session
   if (supabase) {
     supabase
       .from("whatsapp_sessions")
@@ -256,13 +371,13 @@ app.get("/status/:userId", (req, res) => {
       .eq("user_id", userId)
       .single()
       .then(({ data }) => {
-        res.json({ connected: data?.connected ?? false, hasQr: false });
+        res.json({ connected: data?.connected ?? false, hasQr: false, phoneNumber: null });
       })
       .catch(() => {
-        res.json({ connected: false, hasQr: false });
+        res.json({ connected: false, hasQr: false, phoneNumber: null });
       });
   } else {
-    res.json({ connected: false, hasQr: false });
+    res.json({ connected: false, hasQr: false, phoneNumber: null });
   }
 });
 
@@ -288,7 +403,6 @@ app.post("/disconnect", async (req, res) => {
   }
   sessions.delete(userId);
 
-  // Clean auth files
   const authDir = getAuthDir(userId);
   try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
 
@@ -297,7 +411,7 @@ app.post("/disconnect", async (req, res) => {
   res.json({ success: true });
 });
 
-// Send message
+// Send text message
 app.post("/send", async (req, res) => {
   const { userId, jid, message } = req.body;
   if (!userId || !jid || !message) {
@@ -311,8 +425,109 @@ app.post("/send", async (req, res) => {
 
   try {
     const formattedJid = jid.includes("@") ? jid : `${jid}@s.whatsapp.net`;
-    await session.socket.sendMessage(formattedJid, { text: message });
-    res.json({ success: true });
+    const sent = await session.socket.sendMessage(formattedJid, { text: message });
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send media message (image, video, document)
+app.post("/send-media", async (req, res) => {
+  const { userId, jid, mediaUrl, caption, type } = req.body;
+  if (!userId || !jid || !mediaUrl) {
+    return res.status(400).json({ error: "userId, jid, and mediaUrl required" });
+  }
+
+  const session = sessions.get(userId);
+  if (!session?.connected || !session?.socket) {
+    return res.status(400).json({ error: "No active WhatsApp connection" });
+  }
+
+  try {
+    const formattedJid = jid.includes("@") ? jid : `${jid}@s.whatsapp.net`;
+    let messageContent;
+
+    if (type === "image") {
+      messageContent = { image: { url: mediaUrl }, caption: caption || "" };
+    } else if (type === "video") {
+      messageContent = { video: { url: mediaUrl }, caption: caption || "" };
+    } else if (type === "document") {
+      messageContent = { document: { url: mediaUrl }, caption: caption || "", mimetype: "application/pdf" };
+    } else {
+      messageContent = { image: { url: mediaUrl }, caption: caption || "" };
+    }
+
+    const sent = await session.socket.sendMessage(formattedJid, messageContent);
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get contacts/chats list
+app.get("/chats/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const session = sessions.get(userId);
+
+  if (!session?.connected || !session?.socket) {
+    return res.status(400).json({ error: "No active WhatsApp connection" });
+  }
+
+  try {
+    const chats = await session.socket.groupFetchAllParticipating();
+    const groups = Object.values(chats).map((g) => ({
+      jid: g.id,
+      name: g.subject,
+      participants: g.participants?.length || 0,
+    }));
+    res.json({ groups });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get messages from Supabase (for AI agent to read history)
+app.get("/messages/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const { jid, limit = 50 } = req.query;
+
+  if (!supabase) {
+    return res.status(500).json({ error: "Supabase not configured" });
+  }
+
+  try {
+    let query = supabase
+      .from("whatsapp_messages")
+      .select("*")
+      .eq("user_id", userId)
+      .order("timestamp", { ascending: false })
+      .limit(Number(limit));
+
+    if (jid) query = query.eq("remote_jid", jid);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({ messages: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Check if number exists on WhatsApp
+app.get("/check-number/:userId/:phone", async (req, res) => {
+  const { userId, phone } = req.params;
+  const session = sessions.get(userId);
+
+  if (!session?.connected || !session?.socket) {
+    return res.status(400).json({ error: "No active WhatsApp connection" });
+  }
+
+  try {
+    const jid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
+    const [result] = await session.socket.onWhatsApp(jid);
+    res.json({ exists: result?.exists ?? false, jid: result?.jid });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -331,6 +546,7 @@ process.on("unhandledRejection", (reason) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🟢 Baileys server running on port ${PORT}`);
   console.log(`   Supabase: ${SUPABASE_URL ? "Connected" : "NOT configured"}`);
+  console.log(`   Webhook: ${WEBHOOK_URL || "NOT configured"}`);
   console.log(`   API Key: ${API_KEY ? "Set" : "NOT set"}`);
   console.log(`   Health: http://0.0.0.0:${PORT}/health`);
 });
