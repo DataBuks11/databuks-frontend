@@ -1,14 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  startWhatsAppConnection,
-  disconnectWhatsApp,
-  getWhatsAppStatus,
-  sendWhatsAppMessage,
-  getActiveQrCode,
-} from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
+
+const BAILEYS_URL = process.env.BAILEYS_SERVER_URL || "http://localhost:3001";
+const BAILEYS_KEY = process.env.BAILEYS_API_KEY || "dev-key";
+
+async function proxyGet(path: string) {
+  const res = await fetch(`${BAILEYS_URL}${path}`, {
+    headers: { "x-api-key": BAILEYS_KEY },
+  });
+  return res.json();
+}
+
+async function proxyPost(path: string, body: Record<string, any>) {
+  const res = await fetch(`${BAILEYS_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": BAILEYS_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -21,16 +36,13 @@ export async function GET(request: NextRequest) {
 
   try {
     if (action === "status") {
-      const status = await getWhatsAppStatus(userId);
-      return NextResponse.json(status);
+      const data = await proxyGet(`/status/${userId}`);
+      return NextResponse.json(data);
     }
 
     if (action === "qr") {
-      const currentQr = getActiveQrCode(userId);
-      if (currentQr) {
-        return NextResponse.json({ qrCode: currentQr });
-      }
-      return NextResponse.json({ qrCode: null, message: "No active QR. Start a connection first." });
+      const data = await proxyGet(`/qr/${userId}`);
+      return NextResponse.json(data);
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
@@ -49,21 +61,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "connect") {
-      const result = await startWhatsAppConnection(userId);
-      return NextResponse.json(result);
+      const data = await proxyPost("/connect", { userId });
+      return NextResponse.json(data);
     }
 
     if (action === "disconnect") {
-      const result = await disconnectWhatsApp(userId);
-      return NextResponse.json(result);
+      const data = await proxyPost("/disconnect", { userId });
+      return NextResponse.json(data);
     }
 
     if (action === "send") {
       if (!jid || !message) {
         return NextResponse.json({ error: "jid and message required" }, { status: 400 });
       }
-      const result = await sendWhatsAppMessage(userId, jid, message);
-      return NextResponse.json(result);
+      const data = await proxyPost("/send", { userId, jid, message });
+      return NextResponse.json(data);
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
