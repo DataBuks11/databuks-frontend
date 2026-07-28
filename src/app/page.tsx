@@ -8,6 +8,7 @@ import {
   Target,
   MessageSquare,
   Workflow,
+  CheckCircle,
   BarChart3,
   Play,
   Menu,
