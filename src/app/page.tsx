@@ -513,10 +513,27 @@ export default function LandingPage() {
       </motion.div>
 
       {/* SCROLL SECTIONS */}
-      <div className="relative z-10 bg-black">
+      <div className="relative z-10">
+        {/* Background Video for all sections below hero */}
+        <div className="absolute inset-0 overflow-hidden">
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+          >
+            <source
+              src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260302_085844_21a8f4b3-dea5-4ede-be16-d53f6973bb14.mp4"
+              type="video/mp4"
+            />
+          </video>
+          {/* Dark overlay to maintain liquid glass clarity */}
+          <div className="absolute inset-0 bg-black/70" />
+        </div>
 
         {/* FEATURES */}
-        <section id="features" className="py-24 px-5 sm:px-8 md:px-16 lg:px-20">
+        <section id="features" className="relative z-10 py-24 px-5 sm:px-8 md:px-16 lg:px-20">
           <div className="max-w-7xl mx-auto">
             <FadeInWhenVisible className="text-center mb-16">
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-normal tracking-[-0.03em]">
@@ -546,7 +563,7 @@ export default function LandingPage() {
         </section>
 
         {/* HOW IT WORKS */}
-        <section id="how-it-works" className="py-24 px-5 sm:px-8 md:px-16 lg:px-20 border-y border-white/[0.04]">
+        <section id="how-it-works" className="relative z-10 py-24 px-5 sm:px-8 md:px-16 lg:px-20 border-y border-white/[0.04]">
           <div className="max-w-3xl mx-auto">
             <FadeInWhenVisible className="text-center mb-16">
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-normal tracking-[-0.03em]">
@@ -576,7 +593,7 @@ export default function LandingPage() {
         </section>
 
         {/* PRICING */}
-        <section id="pricing" className="py-24 px-5 sm:px-8 md:px-16 lg:px-20">
+        <section id="pricing" className="relative z-10 py-24 px-5 sm:px-8 md:px-16 lg:px-20">
           <div className="max-w-7xl mx-auto">
             <FadeInWhenVisible className="text-center mb-16">
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-normal tracking-[-0.03em]">
@@ -639,7 +656,7 @@ export default function LandingPage() {
         </section>
 
         {/* CTA */}
-        <section className="py-20 px-5 sm:px-8 md:px-16 lg:px-20">
+        <section className="relative z-10 py-20 px-5 sm:px-8 md:px-16 lg:px-20">
           <FadeInWhenVisible>
             <div className="max-w-2xl mx-auto text-center glass rounded-2xl p-10 sm:p-12 md:p-16">
               <h2 className="text-2xl sm:text-3xl md:text-4xl font-normal tracking-[-0.03em]">
@@ -665,7 +682,7 @@ export default function LandingPage() {
         </section>
 
         {/* Footer */}
-        <footer className="border-t border-white/[0.04] px-5 sm:px-8 md:px-16 lg:px-20 py-8">
+        <footer className="relative z-10 border-t border-white/[0.04] px-5 sm:px-8 md:px-16 lg:px-20 py-8">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-6">
               <span className="text-sm font-light text-white/30">DataBuks</span>
