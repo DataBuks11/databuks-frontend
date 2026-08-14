@@ -255,7 +255,7 @@ export async function processIncomingWhatsAppMessage(
 
   if (context) {
     try {
-      const replyTask = await runAiTask(supabase, {
+      let replyTask = await runAiTask(supabase, {
         userId: input.userId,
         taskType: "GENERATE_WHATSAPP_REPLY",
         leadId: lead.id,
@@ -263,6 +263,19 @@ export async function processIncomingWhatsAppMessage(
         payload: { message: input.text },
         idempotencyKey: idempotencyKey("wa:reply", input.userId, input.messageId),
       });
+
+      if (replyTask.status !== "COMPLETED") {
+        try {
+          replyTask = await runAiTask(supabase, {
+            userId: input.userId,
+            taskType: "GENERATE_WHATSAPP_REPLY",
+            leadId: lead.id,
+            conversationId: conversation.id,
+            payload: { message: input.text },
+            idempotencyKey: idempotencyKey("wa:reply:retry", input.userId, input.messageId),
+          });
+        } catch {}
+      }
       mark("llm_complete", Date.now());
       if (replyTask.status === "COMPLETED") {
         replyText =

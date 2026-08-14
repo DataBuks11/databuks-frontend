@@ -430,6 +430,35 @@ describe("WhatsApp fast reply path", () => {
     expect(sendFn).toHaveBeenCalledTimes(1);
   });
 
+  it("retries once when reply generation is blocked by a transient schema error", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+
+    let callCount = 0;
+    runAiTaskMock.mockImplementation(async (_mockSupabase: any, input: any) => {
+      if (input.taskType === "GENERATE_WHATSAPP_REPLY") {
+        callCount += 1;
+        if (callCount === 1) {
+          return { status: "BLOCKED", output: {}, decision: { allowed: false, ruleId: "AI_SCHEMA" }, error: "AI schema validation failed" };
+        }
+        return mockWhatsAppReply();
+      }
+      return { status: "COMPLETED", output: {}, decision: { allowed: true }, error: null };
+    });
+
+    const result = await processIncomingWhatsAppMessage(supabase, baseInput, { sendFn });
+
+    expect(result.replySent).toBe(true);
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    const keys = runAiTaskMock.mock.calls
+      .filter((call: any[]) => call[1].taskType === "GENERATE_WHATSAPP_REPLY")
+      .map((call: any[]) => call[1].idempotencyKey);
+    expect(keys[0]).toContain("wa:reply:");
+    expect(keys[1]).toContain("wa:reply:retry:");
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
   it("marks send failure without crashing when sendFn throws", async () => {
     const state = makeState();
     const supabase = makeMockSupabase(state);

@@ -32,6 +32,7 @@ export const evidenceItemSchema = z
     ]),
     signal: shortText(120),
     detail: z.string().max(500).optional(),
+    quote: z.string().max(800).optional(),
   })
   .strict();
 

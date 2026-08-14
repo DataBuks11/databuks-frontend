@@ -12,7 +12,7 @@ export const PROMPT_VERSIONS: Record<AiTaskType, string> = {
   DETECT_MEETING_INTENT: "1.3.0",
   GENERATE_FOLLOWUP: "1.3.0",
   SUMMARIZE_CONVERSATION: "1.3.0",
-  GENERATE_WHATSAPP_REPLY: "1.1.0",
+  GENERATE_WHATSAPP_REPLY: "1.2.0",
 };
 
 export const WEBSITE_SCAN_PROMPT_VERSION = "1.0.0";
@@ -430,7 +430,7 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
     "8. Match the person's language. English in -> English out. Hindi in -> natural Hindi (Devanagari). Hinglish in -> natural Hinglish (Latin script). Mixed -> mixed. Set the language field accordingly. Do not translate unnecessarily.",
     "9. Match the person's tone: casual in -> casual out, formal in -> formal out. Never use slang or fake imperfections.",
     "10. For a simple greeting (hi/hello/hey/good morning): reply briefly and naturally. No business intro unless asked.",
-    "11. Never fabricate customer intent. meeting_intent is true ONLY when the person clearly signals wanting to talk/meet/call (e.g. 'can we talk', 'call kar sakte hain', 'are you free tomorrow', 'demo'). Meeting intent must be backed by meeting_intent_evidence: an array of OBJECTS like {source: \"conversation\", signal: \"requested_call\"} quoting the actual message - never plain strings, and empty when meeting_intent is false.",
+    "11. Never fabricate customer intent. meeting_intent is true ONLY when the person clearly signals wanting to talk/meet/call (e.g. 'can we talk', 'call kar sakte hain', 'are you free tomorrow', 'demo'). Meeting intent must be backed by meeting_intent_evidence: an array of OBJECTS shaped exactly like {source: \"conversation\", signal: \"requested_call\", quote: \"their actual words\"} - never plain strings, and empty when meeting_intent is false. Only these three keys are allowed.",
     "12. needs_clarification is true when one short question genuinely moves the conversation forward. ask_one_question must be that exact question, in the same language as the reply.",
     "13. used_business_fact: if the reply used a fact from the business context, put that fact here, otherwise null.",
     "14. Respond ONLY with a single valid JSON object matching the requested schema. No markdown, no commentary.",
@@ -448,7 +448,7 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
       reply: "your short WhatsApp reply here",
       language: "english|hindi|hinglish|other",
       meeting_intent: false,
-      meeting_intent_evidence: [{ source: "conversation", signal: "requested_call" }],
+      meeting_intent_evidence: [{ source: "conversation", signal: "requested_call", quote: "can we talk tomorrow?" }],
       needs_clarification: false,
       ask_one_question: "string or null",
       used_business_fact: "string or null",

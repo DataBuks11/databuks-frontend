@@ -58,6 +58,14 @@ describe("strict AI schemas", () => {
     expect(qualificationSchema.safeParse(bad).success).toBe(false);
   });
 
+  it("accepts evidence with an optional quote key (WhatsApp meeting intent)", () => {
+    const good = {
+      ...validQualification,
+      evidence: [{ source: "conversation", signal: "requested_call", quote: "can we talk tomorrow?" }],
+    };
+    expect(qualificationSchema.safeParse(good).success).toBe(true);
+  });
+
   it("rejects extra unknown fields (strict)", () => {
     expect(qualificationSchema.safeParse({ ...validQualification, hallucinated_field: true }).success).toBe(false);
   });
