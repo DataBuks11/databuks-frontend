@@ -27,7 +27,11 @@ const logger = pino({ level: "silent" });
 let supabase = null;
 try {
   if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
-    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const WebSocket = require("ws");
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      realtime: { transport: WebSocket },
+    });
     console.log("[Supabase] Client created successfully");
   } else {
     console.warn("[Supabase] Missing URL or SERVICE_KEY — running without persistence");
