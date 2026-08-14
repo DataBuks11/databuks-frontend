@@ -4,7 +4,7 @@ import { transitionLead, recordFunnelEvent } from "../funnel/service";
 import { evaluateRules, type RuleContext } from "../rules";
 import { bookMeeting } from "../meeting/engine";
 import { logAiDecision } from "../audit/log";
-import { buildTaskContext } from "../context";
+import { buildWhatsAppReplyContext } from "../context/whatsapp-context";
 import { parseScheduleFromText } from "./schedule";
 import { idempotencyKey } from "../utils/idempotency";
 
@@ -229,12 +229,11 @@ export async function processIncomingWhatsAppMessage(
 
   let context;
   try {
-    context = await buildTaskContext(supabase, {
+    context = await buildWhatsAppReplyContext(supabase, {
       userId: input.userId,
-      taskType: "GENERATE_WHATSAPP_REPLY",
       leadId: lead.id,
       conversationId: conversation.id,
-      payload: { message: input.text },
+      messageLimit: 12,
     });
   } catch {
     context = null;
@@ -243,6 +242,7 @@ export async function processIncomingWhatsAppMessage(
 
   if (context) {
     context.lead = lead;
+    context.conversation = conversation;
   }
 
   let replyText: string | null = null;
@@ -262,6 +262,7 @@ export async function processIncomingWhatsAppMessage(
         conversationId: conversation.id,
         payload: { message: input.text },
         idempotencyKey: idempotencyKey("wa:reply", input.userId, input.messageId),
+        prebuiltContext: context,
       });
 
       if (replyTask.status !== "COMPLETED") {
@@ -273,6 +274,7 @@ export async function processIncomingWhatsAppMessage(
             conversationId: conversation.id,
             payload: { message: input.text },
             idempotencyKey: idempotencyKey("wa:reply:retry", input.userId, input.messageId),
+            prebuiltContext: context,
           });
         } catch {}
       }

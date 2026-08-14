@@ -61,6 +61,7 @@ export interface AiTaskInput {
   conversationId?: string | null;
   payload?: Record<string, unknown>;
   idempotencyKey?: string;
+  prebuiltContext?: TaskContext;
 }
 
 export interface AiTaskResult {

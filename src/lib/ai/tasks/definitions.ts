@@ -29,6 +29,7 @@ export interface TaskDefinition {
   buildPrompt: (ctx: TaskContext) => PromptTemplate;
   action?: TaskAction;
   decisionOf: (validated: Record<string, any>) => string;
+  maxTokens?: number;
 }
 
 export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
@@ -130,5 +131,6 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
+    maxTokens: 600,
   },
 };

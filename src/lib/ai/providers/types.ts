@@ -2,6 +2,7 @@ export interface AiCompletionInput {
   system: string;
   user: string;
   temperature?: number;
+  maxTokens?: number;
 }
 
 export interface AiProvider {

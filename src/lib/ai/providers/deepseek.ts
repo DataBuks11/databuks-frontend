@@ -28,6 +28,7 @@ export class DeepSeekProvider implements AiProvider {
         ],
         temperature: input.temperature ?? 0.2,
         response_format: { type: "json_object" },
+        ...(input.maxTokens ? { max_tokens: input.maxTokens } : {}),
       }),
     });
 

@@ -196,22 +196,26 @@ export async function runAiTask(supabase: any, input: AiTaskInput): Promise<AiTa
   await startAiTask(supabase, task.id, (task.attempts ?? 0) + 1);
 
   let context: TaskContext | null = null;
-  try {
-    context = await buildTaskContext(supabase, input);
-  } catch (error: any) {
-    await failAiTask(supabase, task.id, `Context build failed: ${error.message}`);
-    return {
-      taskId: task.id,
-      status: "FAILED",
-      output: null,
-      decision: { allowed: false, reason: "context build failed" },
-      error: error.message,
-    };
+  if (input.prebuiltContext) {
+    context = input.prebuiltContext;
+  } else {
+    try {
+      context = await buildTaskContext(supabase, input);
+    } catch (error: any) {
+      await failAiTask(supabase, task.id, `Context build failed: ${error.message}`);
+      return {
+        taskId: task.id,
+        status: "FAILED",
+        output: null,
+        decision: { allowed: false, reason: "context build failed" },
+        error: error.message,
+      };
+    }
   }
 
   try {
     const prompt = definition.buildPrompt(context);
-    const raw = await provider.completeJson(prompt);
+    const raw = await provider.completeJson({ ...prompt, ...(definition.maxTokens ? { maxTokens: definition.maxTokens } : {}) });
 
     const validation = validateAiOutput(definition.schema, raw);
     if (!validation.success) {
