@@ -105,6 +105,14 @@ interface ScanResults {
   partial?: boolean;
   model?: string;
   analysis_mode?: string;
+  js_rendered?: boolean;
+  crawl_stats?: {
+    discovered?: number;
+    scanned?: number;
+    failed?: number;
+    robotsSkipped?: number;
+    duplicates?: number;
+  };
 }
 
 interface WebsiteScan {
@@ -437,6 +445,18 @@ export default function WebsiteIntelligencePage() {
               <Badge variant="info">{results?.pages_crawled ?? 0} pages scanned</Badge>
               {typeof results?.pages_discovered === "number" && results.pages_discovered > 0 && (
                 <Badge variant="info">{results.pages_discovered} pages discovered</Badge>
+              )}
+              {typeof (results as any)?.crawl_stats?.failed === "number" && (results as any).crawl_stats.failed > 0 && (
+                <Badge variant="warning">{(results as any).crawl_stats.failed} failed</Badge>
+              )}
+              {typeof (results as any)?.crawl_stats?.robotsSkipped === "number" && (results as any).crawl_stats.robotsSkipped > 0 && (
+                <Badge variant="warning">{(results as any).crawl_stats.robotsSkipped} robots-skipped</Badge>
+              )}
+              {typeof (results as any)?.crawl_stats?.duplicates === "number" && (results as any).crawl_stats.duplicates > 0 && (
+                <Badge variant="warning">{(results as any).crawl_stats.duplicates} duplicates</Badge>
+              )}
+              {results?.js_rendered && (
+                <Badge variant="purple">JS-rendered site — content recovered</Badge>
               )}
               {typeof results?.confidence === "number" && (
                 <Badge variant="info">{Math.round(results.confidence * 100)}% confidence</Badge>

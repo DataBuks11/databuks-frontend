@@ -373,7 +373,7 @@ describe("WhatsApp fast reply path", () => {
 
   it("blocks reply when rate limit reached (WA_001)", async () => {
     const state = makeState();
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 30; i++) {
       state.messages.push({
         id: `ai-${i}`,
         conversation_id: "conv-existing",

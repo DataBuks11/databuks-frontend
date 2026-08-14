@@ -40,6 +40,8 @@ export interface CrawledPage {
   depth: number;
   content_hash: string;
   http_status: number;
+  js_rendered: boolean;
+  js_content: string | null;
 }
 
 export interface DiscoveredDocument {
@@ -54,6 +56,9 @@ export interface CrawlStats {
   robotsSkipped: number;
   duplicates: number;
   depthLimited: number;
+  externalRejected: number;
+  assetSkipped: number;
+  paginationSkipped: number;
 }
 
 export interface CrawlResult {
@@ -64,6 +69,7 @@ export interface CrawlResult {
   stats: CrawlStats;
   partial: boolean;
   error: string | null;
+  jsRendered: boolean;
 }
 
 const SOCIAL_PATTERNS: { platform: string; patterns: RegExp[] }[] = [
@@ -256,9 +262,14 @@ export function extractPageContent(html: string, url: string, httpStatus: number
     if (text && text.length <= 300) headings.push(text);
   });
 
+  const scriptCount = $("script[src]").length;
+  const linkCount = $("a[href]").length;
+
   stripBoilerplate($);
   let text = $("body").text().replace(/\s+/g, " ").trim();
   if (text.length > config.maxBytesPerPage) text = text.slice(0, config.maxBytesPerPage);
+
+  const jsRendered = scriptCount > 0 && text.length < 400 && headings.length === 0 && linkCount < 8;
 
   const parsed = new URL(url);
   const { type } = classifyPage(parsed);
@@ -274,6 +285,8 @@ export function extractPageContent(html: string, url: string, httpStatus: number
     depth,
     content_hash: hashContent(text),
     http_status: httpStatus,
+    js_rendered: jsRendered,
+    js_content: null,
   };
 }
 
@@ -291,6 +304,87 @@ function extractLinks($: cheerio.CheerioAPI, base: URL, pageUrl: string): string
     } catch {}
   });
   return [...new Set(links)];
+}
+
+const JS_CHUNK_PATTERN = /["']\/?(?:\.\/)?(?:assets\/)?([A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.js)["']/g;
+const JS_STRING_PATTERN = /"((?:[^"\\]|\\.){20,500})"/g;
+const JS_CODE_NOISE = /^(?:function|const|var|return|https?:\/\/|\.css|\.js|M\d|\d|import|export|[A-Za-z0-9._/-]+\(|.{0,3}\})/;
+
+function looksLikeCopy(text: string): boolean {
+  if (text.length < 20 || text.length > 500) return false;
+  if (!/[a-zA-Z]/.test(text)) return false;
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  return wordCount >= 2 && JS_CODE_NOISE.test(text) === false && !/^[{}()[\]<>;,=+*/]+$/.test(text);
+}
+
+async function extractJsBundleContent(html: string, pageUrl: string, config: CrawlConfig): Promise<string | null> {
+  try {
+    const $ = cheerio.load(html);
+    const scriptSrcs: string[] = [];
+    $("script[src]").each((_i, el) => {
+      const src = $(el).attr("src");
+      if (!src) return;
+      try {
+        const resolved = new URL(src, pageUrl).toString();
+        if (!ASSET_EXTENSIONS.test(resolved) || resolved.includes(".js")) scriptSrcs.push(resolved);
+      } catch {}
+    });
+
+    if (scriptSrcs.length === 0) return null;
+
+    const bundleTexts: string[] = [];
+    for (const src of scriptSrcs.slice(0, 2)) {
+      try {
+        const response = await fetchWithTimeout(src, config.requestTimeoutMs);
+        if (!response.ok) continue;
+        const js = await response.text();
+        if (js.length > config.maxBytesPerPage * 8) continue;
+        bundleTexts.push(js);
+      } catch {}
+    }
+    if (bundleTexts.length === 0) return null;
+
+    const chunkSrcs = new Set<string>();
+    for (const bundle of bundleTexts) {
+      let match: RegExpExecArray | null;
+      JS_CHUNK_PATTERN.lastIndex = 0;
+      while ((match = JS_CHUNK_PATTERN.exec(bundle)) !== null && chunkSrcs.size < 8) {
+        const chunkPath = match[1];
+        try {
+          chunkSrcs.add(new URL(`/assets/${chunkPath}`, pageUrl).toString());
+        } catch {}
+      }
+    }
+
+    for (const chunkSrc of [...chunkSrcs].slice(0, 8)) {
+      try {
+        const response = await fetchWithTimeout(chunkSrc, config.requestTimeoutMs);
+        if (!response.ok) continue;
+        bundleTexts.push(await response.text());
+      } catch {}
+    }
+
+    const strings = new Set<string>();
+    for (const bundle of bundleTexts) {
+      let match: RegExpExecArray | null;
+      JS_STRING_PATTERN.lastIndex = 0;
+      while ((match = JS_STRING_PATTERN.exec(bundle)) !== null) {
+        const decoded = match[1]
+          .replace(/\\n/g, " ")
+          .replace(/\\"/g, '"')
+          .replace(/\\u([0-9a-fA-F]{4})/g, (_m, code) => String.fromCharCode(parseInt(code, 16)))
+          .replace(/\\(.)/g, "$1")
+          .trim();
+        if (looksLikeCopy(decoded)) strings.add(decoded);
+        if (strings.size >= 120) break;
+      }
+    }
+
+    if (strings.size === 0) return null;
+    return [...strings].join("\n").slice(0, 30000);
+  } catch {
+    return null;
+  }
 }
 
 async function parseSitemapUrls(xml: string): Promise<string[]> {
@@ -363,7 +457,9 @@ async function discoverSitemaps(
 
 export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
   const config = getCrawlConfig();
-  const log: (msg: string) => void = () => {};
+  const log: (msg: string) => void = (msg) => {
+    console.log(`[LIB:ai:crawler] ${msg}`);
+  };
   let baseUrl: URL;
   try {
     baseUrl = new URL(normalizeUrl(rawUrl));
@@ -373,14 +469,15 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
       pages: [],
       socialLinks: [],
       documents: [],
-      stats: { discovered: 0, scanned: 0, failed: 0, robotsSkipped: 0, duplicates: 0, depthLimited: 0 },
+      stats: { discovered: 0, scanned: 0, failed: 0, robotsSkipped: 0, duplicates: 0, depthLimited: 0, externalRejected: 0, assetSkipped: 0, paginationSkipped: 0 },
       partial: false,
       error: error.message,
+      jsRendered: false,
     };
   }
 
   const startedAt = Date.now();
-  const stats: CrawlStats = { discovered: 0, scanned: 0, failed: 0, robotsSkipped: 0, duplicates: 0, depthLimited: 0 };
+  const stats: CrawlStats = { discovered: 0, scanned: 0, failed: 0, robotsSkipped: 0, duplicates: 0, depthLimited: 0, externalRejected: 0, assetSkipped: 0, paginationSkipped: 0 };
   const pages: CrawledPage[] = [];
   const socialLinks: { platform: string; url: string; source_url: string }[] = [];
   const documents: DiscoveredDocument[] = [];
@@ -390,6 +487,8 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
   let partial = false;
   let robots: RobotsRules | null = null;
   let homepageError: string | null = null;
+  let jsRendered = false;
+  let jsContentExtracted = false;
 
   try {
     const robotsResponse = await fetchWithTimeout(`${baseUrl.protocol}//${baseUrl.host}/robots.txt`, config.requestTimeoutMs);
@@ -410,7 +509,7 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
   const paginationCounts = new Map<string, number>();
   let nextPageOrder = 1;
 
-  const enqueue = (rawUrl: string, depth: number, sitemapPriority?: number) => {
+  const enqueue = (rawUrl: string, depth: number, options?: { sitemapPriority?: number; trustedSitemap?: boolean }) => {
     let normalized: string;
     try {
       normalized = normalizeUrl(rawUrl);
@@ -424,17 +523,26 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
       return;
     }
     if (IGNORED_SCHEMES.test(normalized)) return;
-    if (!allowedDomain(baseUrl, parsed, config)) return;
+    if (!allowedDomain(baseUrl, parsed, config) && !options?.trustedSitemap) {
+      stats.externalRejected += 1;
+      return;
+    }
     if (PDF_EXTENSION.test(parsed.pathname)) {
       documents.push({ url: normalized, found_on: rawUrl });
       return;
     }
-    if (ASSET_EXTENSIONS.test(parsed.pathname)) return;
+    if (ASSET_EXTENSIONS.test(parsed.pathname)) {
+      stats.assetSkipped += 1;
+      return;
+    }
 
     const paginationKey = `${parsed.hostname}${parsed.pathname}`;
     if (isPaginationUrl(parsed)) {
       const count = paginationCounts.get(paginationKey) ?? 0;
-      if (count >= 5) return;
+      if (count >= 5) {
+        stats.paginationSkipped += 1;
+        return;
+      }
       paginationCounts.set(paginationKey, count + 1);
     }
 
@@ -448,13 +556,13 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
     queue.push({
       url: normalized,
       depth,
-      priority: (sitemapPriority ?? priority) + (nextPageOrder++ % 5),
+      priority: (options?.sitemapPriority ?? priority) + (nextPageOrder++ % 5),
     });
     stats.discovered += 1;
   };
 
   for (const sitemapUrl of sitemapUrls) {
-    enqueue(sitemapUrl, 2, 20);
+    enqueue(sitemapUrl, 2, { sitemapPriority: 20, trustedSitemap: true });
   }
 
   while (queue.length > 0 && pages.length < config.maxPages) {
@@ -509,12 +617,22 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
       const { item, html, status } = fetched;
 
       const page = extractPageContent(html, item.url, status, item.depth, config);
-      const dedupeKey = page.content_hash;
-      if (seenHashes.has(dedupeKey)) {
-        stats.duplicates += 1;
-        continue;
+      if (page.js_rendered) jsRendered = true;
+
+      if (!page.js_rendered) {
+        const dedupeKey = page.content_hash;
+        if (seenHashes.has(dedupeKey)) {
+          stats.duplicates += 1;
+          continue;
+        }
+        seenHashes.set(dedupeKey, page.url);
       }
-      seenHashes.set(dedupeKey, page.url);
+
+      if (page.js_rendered && !jsContentExtracted) {
+        jsContentExtracted = true;
+        const jsContent = await extractJsBundleContent(html, item.url, config);
+        if (jsContent) page.js_content = jsContent;
+      }
       pages.push(page);
       stats.scanned += 1;
 
@@ -540,6 +658,8 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
 
   if (queue.length > 0) partial = true;
 
+  log(`crawl complete: discovered=${stats.discovered} scanned=${stats.scanned} failed=${stats.failed} robotsSkipped=${stats.robotsSkipped} duplicates=${stats.duplicates} externalRejected=${stats.externalRejected} jsRendered=${jsRendered}`);
+
   if (pages.length === 0) {
     return {
       url: baseUrl.toString(),
@@ -549,6 +669,7 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
       stats,
       partial,
       error: homepageError ?? "No useful public content found",
+      jsRendered,
     };
   }
 
@@ -560,5 +681,6 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
     stats,
     partial,
     error: null,
+    jsRendered,
   };
 }

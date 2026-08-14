@@ -1,4 +1,4 @@
-import { outreachDailyLimit, outreachDuplicateWindowHours, THRESHOLDS } from "./thresholds";
+import { outreachDailyLimit, outreachDuplicateWindowHours, THRESHOLDS, whatsAppReplyLimit } from "./thresholds";
 
 export const VALID_CHANNELS = [
   "instagram",
@@ -307,8 +307,11 @@ export const RULE_CATALOG: Record<string, RuleDefinition> = {
     id: "WA_001",
     evaluate: (ctx) => {
       const count = typeof ctx.aiReplyCountInWindow === "number" ? ctx.aiReplyCountInWindow : 0;
-      if (count >= 8) return { passed: false, reason: "WhatsApp AI reply rate limit reached for this conversation" };
-      return { passed: true, reason: "within WhatsApp reply rate limit" };
+      const limit = whatsAppReplyLimit();
+      if (count >= limit) {
+        return { passed: false, reason: `WhatsApp AI reply rate limit reached for this conversation (${count}/${limit} in the last hour)` };
+      }
+      return { passed: true, reason: `within WhatsApp reply rate limit (${count}/${limit})` };
     },
   },
   WA_002: {

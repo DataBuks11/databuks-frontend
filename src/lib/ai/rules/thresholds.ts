@@ -9,7 +9,14 @@ export const THRESHOLDS = {
   OUTREACH_DAILY_LIMIT: 20,
   MEETING_INTENT_CONFIDENCE_MIN: 0.7,
   OUTREACH_MESSAGE_MAX_LENGTH: 2000,
+  WHATSAPP_HOURLY_REPLY_LIMIT: 30,
 } as const;
+
+export function whatsAppReplyLimit(): number {
+  const envLimit = Number(process.env.WA_HOURLY_REPLY_LIMIT);
+  if (Number.isFinite(envLimit) && envLimit > 0) return Math.floor(envLimit);
+  return THRESHOLDS.WHATSAPP_HOURLY_REPLY_LIMIT;
+}
 
 export function outreachDailyLimit(): number {
   const envLimit = Number(process.env.OUTREACH_DAILY_LIMIT);

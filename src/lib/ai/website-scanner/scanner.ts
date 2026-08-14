@@ -69,7 +69,11 @@ function toCorpusPages(pages: any[]): CorpusPage[] {
     title: page.title,
     page_type: page.page_type ?? "other",
     headings: page.headings ?? [],
-    text: typeof page.text === "string" ? page.text.slice(0, MAX_CHARS_PER_PAGE_IN_CORPUS) : "",
+    text:
+      (typeof page.text === "string" ? page.text.slice(0, MAX_CHARS_PER_PAGE_IN_CORPUS) : "") +
+      (typeof page.js_content === "string" && page.js_content
+        ? `\n\n--- SITE CONTENT RECOVERED FROM JAVASCRIPT BUNDLES ---\n${page.js_content.slice(0, 30000)}`
+        : ""),
   }));
 }
 
@@ -147,7 +151,11 @@ async function storeScanPages(supabase: any, scanId: string, userId: string, pag
     page_type: page.page_type ?? "other",
     depth: page.depth ?? 0,
     content_hash: page.content_hash ?? null,
-    content: page.text ?? "",
+    content:
+      (page.text ?? "") +
+      (typeof page.js_content === "string" && page.js_content
+        ? `\n\n--- SITE CONTENT RECOVERED FROM JAVASCRIPT BUNDLES ---\n${page.js_content.slice(0, 30000)}`
+        : ""),
     status: "crawled",
     http_status: page.http_status ?? null,
   }));
@@ -202,6 +210,7 @@ export async function runWebsiteScan(scanId: string, userId: string): Promise<vo
       crawl_stats: crawl.stats,
       social_links: crawl.socialLinks,
       documents: crawl.documents,
+      js_rendered: crawl.jsRendered,
       model: provider.model,
       model_version: provider.modelVersion,
       prompt_version: WEBSITE_SCAN_PROMPT_VERSION,
