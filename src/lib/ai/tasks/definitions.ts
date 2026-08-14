@@ -1,7 +1,7 @@
 import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
 import type { TaskAction } from "../actions";
 import { TASK_ACTIONS } from "../actions";
-import { buildPrompt, type PromptTemplate } from "../prompts";
+import { buildPrompt, buildWhatsAppReplyPrompt, type PromptTemplate } from "../prompts";
 import {
   buyingSignalSchema,
   enrichSchema,
@@ -13,6 +13,7 @@ import {
   replyAnalysisSchema,
   summarizeSchema,
   urgencySchema,
+  whatsappReplySchema,
 } from "../schemas";
 import type { ZodTypeAny } from "zod";
 
@@ -122,5 +123,12 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     buildPrompt: (ctx) => buildPrompt("SUMMARIZE_CONVERSATION", ctx),
     action: TASK_ACTIONS.SUMMARIZE_CONVERSATION,
     decisionOf: () => "conversation_summarized",
+  },
+  GENERATE_WHATSAPP_REPLY: {
+    schema: whatsappReplySchema,
+    rules: [],
+    buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
+    action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
+    decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },
 };

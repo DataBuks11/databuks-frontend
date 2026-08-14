@@ -285,6 +285,20 @@ export const websiteContactSchema = z
   })
   .strict();
 
+export const whatsappReplySchema = z
+  .object({
+    task: z.literal("whatsapp_reply"),
+    conversation_id: uuid,
+    reply: z.string().min(1).max(1200),
+    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    meeting_intent: z.boolean(),
+    meeting_intent_evidence: z.array(evidenceItemSchema).max(5),
+    needs_clarification: z.boolean(),
+    ask_one_question: z.string().max(300).nullable(),
+    used_business_fact: z.string().max(300).nullable(),
+  })
+  .strict();
+
 export const websiteAnalysisSchema = z
   .object({
     task: z.literal("website_analysis"),

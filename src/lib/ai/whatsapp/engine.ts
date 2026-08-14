@@ -4,6 +4,7 @@ import { transitionLead, recordFunnelEvent } from "../funnel/service";
 import { evaluateRules, type RuleContext } from "../rules";
 import { bookMeeting } from "../meeting/engine";
 import { logAiDecision } from "../audit/log";
+import { buildTaskContext } from "../context";
 import { parseScheduleFromText } from "./schedule";
 import { idempotencyKey } from "../utils/idempotency";
 
@@ -19,6 +20,7 @@ export interface WhatsAppInboundMessage {
 export interface ProcessWhatsAppOptions {
   sendReply?: boolean;
   sendFn?: (input: { userId: string; jid: string; message: string }) => Promise<void>;
+  presenceFn?: (input: { userId: string; jid: string; presence: string }) => Promise<void>;
 }
 
 export interface ProcessWhatsAppResult {
@@ -33,8 +35,19 @@ export interface ProcessWhatsAppResult {
     ruleId?: string;
     reason: string;
   };
+  meetingIntentDetected?: boolean;
   meetingBooked?: boolean;
   meetingId?: string | null;
+  latencyMs?: Record<string, number>;
+}
+
+export interface BackgroundIntelligenceInput {
+  userId: string;
+  leadId: string;
+  conversationId: string;
+  messageId: string;
+  text: string;
+  meetingSignal: boolean;
 }
 
 export function normalizeWhatsAppPhone(remoteJid: string): string | null {
@@ -60,6 +73,22 @@ async function defaultSendReply(input: { userId: string; jid: string; message: s
   if (!response.ok) {
     throw new Error(`WhatsApp send failed (${response.status})`);
   }
+}
+
+async function defaultSendPresence(input: { userId: string; jid: string; presence: string }): Promise<void> {
+  const baseUrl = process.env.BAILEYS_SERVER_URL;
+  if (!baseUrl) return;
+  const apiKey = process.env.BAILEYS_API_KEY;
+  try {
+    await fetch(`${baseUrl.replace(/\/+$/, "")}/presence`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey || "dev-key",
+      },
+      body: JSON.stringify({ userId: input.userId, jid: input.jid, presence: input.presence }),
+    });
+  } catch {}
 }
 
 async function findOrCreateLead(supabase: SupabaseClient, userId: string, phone: string, pushName: string): Promise<Record<string, any>> {
@@ -140,8 +169,15 @@ export async function processIncomingWhatsAppMessage(
   input: WhatsAppInboundMessage,
   options: ProcessWhatsAppOptions = {}
 ): Promise<ProcessWhatsAppResult> {
+  const startedAt = Date.now();
+  const timings: Record<string, number> = {};
+  const mark = (stage: string, t: number) => {
+    timings[stage] = t - startedAt;
+  };
+
   const sendReply = options.sendReply ?? true;
   const sendFn = options.sendFn ?? defaultSendReply;
+  const presenceFn = options.presenceFn ?? defaultSendPresence;
 
   const phone = normalizeWhatsAppPhone(input.remoteJid);
   if (!phone) return { processed: false, skippedReason: "invalid_jid", replySent: false };
@@ -179,6 +215,8 @@ export async function processIncomingWhatsAppMessage(
     }
     throw new Error(`Failed to store message: ${insertError.message}`);
   }
+  const persistedAt = Date.now();
+  mark("ingestion", persistedAt);
 
   await recordFunnelEvent(supabase, {
     userId: input.userId,
@@ -189,183 +227,71 @@ export async function processIncomingWhatsAppMessage(
     metadata: { conversation_id: conversation.id, message_id: input.messageId },
   });
 
-  const messageCount = await messageCountForConversation(supabase, conversation.id);
+  let context;
+  try {
+    context = await buildTaskContext(supabase, {
+      userId: input.userId,
+      taskType: "GENERATE_WHATSAPP_REPLY",
+      leadId: lead.id,
+      conversationId: conversation.id,
+      payload: { message: input.text },
+    });
+  } catch {
+    context = null;
+  }
+  mark("context_load", Date.now());
 
-  if (!lead.company && !lead.industry) {
+  if (context) {
+    context.lead = lead;
+  }
+
+  let replyText: string | null = null;
+  let meetingIntentDetected = false;
+  let language = "other";
+
+  try {
+    await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "composing" });
+  } catch {}
+
+  if (context) {
     try {
-      const bucket = Math.floor(messageCount / 3);
-      await runAiTask(supabase, {
+      const replyTask = await runAiTask(supabase, {
         userId: input.userId,
-        taskType: "ENRICH_LEAD",
+        taskType: "GENERATE_WHATSAPP_REPLY",
         leadId: lead.id,
         conversationId: conversation.id,
         payload: { message: input.text },
-        idempotencyKey: idempotencyKey("wa:enrich", input.userId, lead.id, bucket),
+        idempotencyKey: idempotencyKey("wa:reply", input.userId, input.messageId),
       });
-    } catch {}
-  }
-
-  const { data: leadAfterEnrich } = await supabase
-    .from("leads")
-    .select("*")
-    .eq("id", lead.id)
-    .maybeSingle();
-  const leadNow = leadAfterEnrich ?? lead;
-
-  if (leadNow.funnel_stage === "DISCOVERED") {
-    try {
-      await transitionLead(supabase, {
-        leadId: leadNow.id,
-        userId: input.userId,
-        toStage: "ENRICHED",
-        eventType: "INBOUND_MESSAGE",
-        metadata: { channel: "whatsapp", conversation_id: conversation.id },
-      });
-    } catch {}
-  }
-
-  const { data: intelligence } = await supabase
-    .from("lead_intelligence")
-    .select("id, updated_at")
-    .eq("lead_id", lead.id)
-    .eq("user_id", input.userId)
-    .maybeSingle();
-
-  const wasAlreadyQualified =
-    leadNow.funnel_stage === "QUALIFIED" ||
-    leadNow.funnel_stage === "PRIORITIZED" ||
-    leadNow.funnel_stage === "OUTREACH_READY" ||
-    leadNow.funnel_stage === "CONTACTED" ||
-    leadNow.funnel_stage === "CONVERSATION";
-
-  const shouldRunQualificationAnalysis =
-    !intelligence ||
-    (!wasAlreadyQualified && messageCount >= 3);
-
-  let qualificationPassed = false;
-
-  if (shouldRunQualificationAnalysis) {
-    try {
-      const bucket = Math.floor(messageCount / 5);
-      const qualificationResult = await runAiTask(supabase, {
-        userId: input.userId,
-        taskType: "QUALIFY_LEAD",
-        leadId: lead.id,
-        conversationId: conversation.id,
-        idempotencyKey: idempotencyKey("wa:qualify", input.userId, lead.id, bucket),
-      });
-      qualificationPassed =
-        qualificationResult.status === "COMPLETED" &&
-        qualificationResult.output?.decision === "qualified";
-    } catch {}
-  }
-
-  const { data: leadAfterQualify } = await supabase
-    .from("leads")
-    .select("*")
-    .eq("id", lead.id)
-    .single();
-
-  const canAdvanceFunnel = wasAlreadyQualified || qualificationPassed;
-
-  if (canAdvanceFunnel && leadAfterQualify?.funnel_stage === "QUALIFIED") {
-    const { data: freshIntelligence } = await supabase
-      .from("lead_intelligence")
-      .select("*")
-      .eq("lead_id", lead.id)
-      .eq("user_id", input.userId)
-      .maybeSingle();
-    for (const nextStage of ["PRIORITIZED", "OUTREACH_READY", "CONTACTED"] as const) {
-      try {
-        const transition = await transitionLead(supabase, {
-          leadId: lead.id,
-          userId: input.userId,
-          toStage: nextStage,
-          intelligence: freshIntelligence,
-          qualificationDecision: "qualified",
-          eventType: nextStage === "CONTACTED" ? "CONTACTED_VIA_WHATSAPP" : "STAGE_TRANSITION",
-          metadata: { channel: "whatsapp" },
-        });
-        if (!transition.allowed) break;
-      } catch {
-        break;
+      mark("llm_complete", Date.now());
+      if (replyTask.status === "COMPLETED") {
+        replyText =
+          typeof replyTask.output?.reply === "string" && replyTask.output.reply.trim() !== ""
+            ? replyTask.output.reply.trim()
+            : null;
+        meetingIntentDetected = replyTask.output?.meeting_intent === true;
+        language = typeof replyTask.output?.language === "string" ? replyTask.output.language : "other";
       }
+    } catch (error: any) {
+      console.error(`[LIB:ai:whatsapp] reply generation failed: ${error?.message}`);
     }
   }
 
-  if (messageCount > 0 && messageCount % 20 === 0) {
-    try {
-      await runAiTask(supabase, {
-        userId: input.userId,
-        taskType: "SUMMARIZE_CONVERSATION",
-        conversationId: conversation.id,
-        leadId: lead.id,
-        idempotencyKey: idempotencyKey("wa:summary", input.userId, conversation.id, messageCount),
-      });
-    } catch {}
-  }
-
-  const analysis = await runAiTask(supabase, {
-    userId: input.userId,
-    taskType: "ANALYZE_REPLY",
-    conversationId: conversation.id,
-    leadId: lead.id,
-    payload: { message: input.text },
-    idempotencyKey: idempotencyKey("wa:analyze", input.userId, input.messageId),
-  });
-
-  const meetingIntentDetected = analysis.output?.meeting_intent === true;
-  let meetingBooked = false;
-  let meetingId: string | null = null;
-
-  if (meetingIntentDetected) {
-    const intentTask = await runAiTask(supabase, {
-      userId: input.userId,
-      taskType: "DETECT_MEETING_INTENT",
-      conversationId: conversation.id,
-      leadId: lead.id,
-      payload: {},
-      idempotencyKey: idempotencyKey("wa:intent", input.userId, input.messageId),
-    });
-
-    if (intentTask.status === "COMPLETED" && intentTask.output?.meeting_intent === true) {
-      const schedule = parseScheduleFromText(input.text);
-      if (schedule && new Date(schedule.scheduledAt).getTime() > Date.now()) {
-        const booking = await bookMeeting(supabase, {
-          userId: input.userId,
-          leadId: lead.id,
-          conversationId: conversation.id,
-          scheduledAt: schedule.scheduledAt,
-          durationMinutes: schedule.durationMinutes,
-          medium: "call",
-          idempotencyKey: idempotencyKey("wa:meeting", input.userId, lead.id, input.messageId),
-        });
-        meetingBooked = booking.allowed;
-        meetingId = booking.meeting?.id ?? null;
-      }
-    }
-  }
-
-  const replyRequired = analysis.output?.reply_required !== false;
-  const replyText: string | null =
-    typeof analysis.output?.suggested_reply === "string" && analysis.output.suggested_reply.trim() !== ""
-      ? analysis.output.suggested_reply.trim()
-      : null;
-
-  if (!sendReply || !replyRequired || !replyText) {
+  if (!sendReply || !replyText) {
     await markWhatsAppProcessed(supabase, input, null);
     return {
       processed: true,
       leadId: lead.id,
       conversationId: conversation.id,
       replySent: false,
-      replyText: replyText,
-      decision: { allowed: true, reason: "no reply required" },
-      meetingBooked,
-      meetingId,
+      replyText: null,
+      decision: { allowed: true, reason: "no reply generated" },
+      meetingIntentDetected,
+      latencyMs: timings,
     };
   }
 
+  const rulesStartedAt = Date.now();
   const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const { count: recentAiReplies } = await supabase
     .from("messages")
@@ -388,15 +314,27 @@ export async function processIncomingWhatsAppMessage(
     new Date(lastAiReply.created_at).getTime() > Date.now() - 5 * 60 * 1000;
 
   const ruleContext: RuleContext = {
-    lead: leadAfterQualify ?? leadNow,
+    lead,
     message: replyText,
     aiReplyCountInWindow: recentAiReplies ?? 0,
     duplicateReplyDetected: duplicateDetected,
   };
   const ruleResult = evaluateRules(["LEAD_010", "LEAD_016", "LEAD_018", "WA_001", "WA_002"], ruleContext);
+  mark("rules_complete", Date.now());
 
   if (!ruleResult.allowed) {
+    try {
+      await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "paused" });
+    } catch {}
     await markWhatsAppProcessed(supabase, input, null);
+    await recordFunnelEvent(supabase, {
+      userId: input.userId,
+      leadId: lead.id,
+      eventType: "WHATSAPP_REPLY_BLOCKED",
+      fromStage: lead.funnel_stage ?? null,
+      toStage: null,
+      metadata: { ruleId: ruleResult.ruleId, reason: ruleResult.reason, conversation_id: conversation.id },
+    });
     await logAiDecision(supabase, {
       user_id: input.userId,
       lead_id: lead.id,
@@ -405,7 +343,7 @@ export async function processIncomingWhatsAppMessage(
       model: "deepseek-v4-flash",
       model_version: "v4-flash",
       prompt_version: "n/a",
-      input_context: { reply_text: replyText, message_id: input.messageId },
+      input_context: { reply_text: replyText, message_id: input.messageId, language, timings },
       output: {},
       ai_decision: "blocked",
       rule_result: ruleResult,
@@ -414,14 +352,6 @@ export async function processIncomingWhatsAppMessage(
       error_code: ruleResult.ruleId ?? null,
       error_message: ruleResult.reason,
     });
-    await recordFunnelEvent(supabase, {
-      userId: input.userId,
-      leadId: lead.id,
-      eventType: "WHATSAPP_REPLY_BLOCKED",
-      fromStage: leadAfterQualify?.funnel_stage ?? null,
-      toStage: null,
-      metadata: { ruleId: ruleResult.ruleId, reason: ruleResult.reason, conversation_id: conversation.id },
-    });
     return {
       processed: true,
       leadId: lead.id,
@@ -429,77 +359,63 @@ export async function processIncomingWhatsAppMessage(
       replySent: false,
       replyText,
       decision: { allowed: false, ruleId: ruleResult.ruleId, reason: ruleResult.reason },
-      meetingBooked,
-      meetingId,
+      meetingIntentDetected,
+      latencyMs: timings,
     };
   }
 
+  const sendStartedAt = Date.now();
+  let sendError: string | null = null;
   try {
     await sendFn({ userId: input.userId, jid: input.remoteJid, message: replyText });
   } catch (error: any) {
-    await markWhatsAppProcessed(supabase, input, replyText);
-    await logAiDecision(supabase, {
-      user_id: input.userId,
-      lead_id: lead.id,
-      conversation_id: conversation.id,
-      task_type: "SEND_WHATSAPP_REPLY",
-      model: "deepseek-v4-flash",
-      model_version: "v4-flash",
-      prompt_version: "n/a",
-      input_context: { reply_text: replyText, message_id: input.messageId },
-      output: {},
-      ai_decision: "send_failed",
-      rule_result: ruleResult,
-      action: "SEND_WHATSAPP_REPLY",
-      action_status: "FAILED",
-      error_code: "WHATSAPP_SEND_ERROR",
-      error_message: error?.message ?? "send failed",
-    });
-    return {
-      processed: true,
-      leadId: lead.id,
-      conversationId: conversation.id,
-      replySent: false,
-      replyText,
-      decision: { allowed: true, reason: "reply generated but send failed" },
-      meetingBooked,
-      meetingId,
-    };
+    sendError = error?.message ?? "send failed";
   }
+  const sentAt = Date.now();
+  mark("send_complete", sentAt);
+  mark("total", sentAt);
+  timings.llm = (timings.llm_complete ?? 0) - (timings.context_load ?? 0);
+  timings.rules = (timings.rules_complete ?? 0) - (timings.llm_complete ?? 0);
+  timings.send = sentAt - sendStartedAt;
+
+  try {
+    await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "paused" });
+  } catch {}
 
   const outboundKey = idempotencyKey("wa:out", input.userId, input.messageId);
-  const { data: existingOutbound } = await supabase
-    .from("messages")
-    .select("id")
-    .eq("user_id", input.userId)
-    .eq("idempotency_key", outboundKey)
-    .maybeSingle();
-  if (!existingOutbound) {
-    await supabase.from("messages").insert({
-      conversation_id: conversation.id,
-      user_id: input.userId,
-      content: replyText,
-      sender: "ai",
-      idempotency_key: outboundKey,
+  if (!sendError) {
+    const { data: existingOutbound } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("user_id", input.userId)
+      .eq("idempotency_key", outboundKey)
+      .maybeSingle();
+    if (!existingOutbound) {
+      await supabase.from("messages").insert({
+        conversation_id: conversation.id,
+        user_id: input.userId,
+        content: replyText,
+        sender: "ai",
+        idempotency_key: outboundKey,
+      });
+    }
+    await supabase
+      .from("conversations")
+      .update({ last_message: replyText, updated_at: new Date().toISOString() })
+      .eq("id", conversation.id);
+
+    await recordFunnelEvent(supabase, {
+      userId: input.userId,
+      leadId: lead.id,
+      eventType: "WHATSAPP_AI_REPLY",
+      fromStage: lead.funnel_stage ?? null,
+      toStage: null,
+      metadata: { conversation_id: conversation.id, latency_ms: timings.total ?? 0, language },
+      idempotencyKey: outboundKey,
     });
   }
 
-  await supabase
-    .from("conversations")
-    .update({ last_message: replyText, updated_at: new Date().toISOString() })
-    .eq("id", conversation.id);
-
-  await markWhatsAppProcessed(supabase, input, replyText);
-
-  await recordFunnelEvent(supabase, {
-    userId: input.userId,
-    leadId: lead.id,
-    eventType: "WHATSAPP_AI_REPLY",
-    fromStage: leadAfterQualify?.funnel_stage ?? null,
-    toStage: null,
-    metadata: { conversation_id: conversation.id, ruleId: null },
-    idempotencyKey: outboundKey,
-  });
+  await markWhatsAppProcessed(supabase, input, sendError ? null : replyText);
 
   await logAiDecision(supabase, {
     user_id: input.userId,
@@ -509,24 +425,170 @@ export async function processIncomingWhatsAppMessage(
     model: "deepseek-v4-flash",
     model_version: "v4-flash",
     prompt_version: "n/a",
-    input_context: { reply_text: replyText, message_id: input.messageId },
-    output: { reply_text: replyText },
-    ai_decision: "sent",
+    input_context: { reply_text: replyText, message_id: input.messageId, language, timings },
+    output: sendError ? {} : { reply_text: replyText },
+    ai_decision: sendError ? "send_failed" : "sent",
     rule_result: ruleResult,
     action: "SEND_WHATSAPP_REPLY",
-    action_status: "SENT",
+    action_status: sendError ? "FAILED" : "SENT",
+    error_code: sendError ? "WHATSAPP_SEND_ERROR" : null,
+    error_message: sendError,
   });
 
   return {
     processed: true,
     leadId: lead.id,
     conversationId: conversation.id,
-    replySent: true,
+    replySent: !sendError,
     replyText,
-    decision: { allowed: true, reason: "reply sent" },
-    meetingBooked,
-    meetingId,
+    decision: {
+      allowed: true,
+      reason: sendError ? "reply generated but send failed" : "reply sent",
+    },
+    meetingIntentDetected,
+    latencyMs: timings,
   };
+}
+
+export async function runBackgroundWhatsAppIntelligence(
+  supabase: SupabaseClient,
+  input: BackgroundIntelligenceInput
+): Promise<void> {
+  const { userId, leadId, conversationId, messageId, text, meetingSignal } = input;
+
+  const { data: lead } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", leadId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!lead) return;
+
+  const messageCount = await messageCountForConversation(supabase, conversationId);
+
+  if (!lead.company && !lead.industry) {
+    try {
+      await runAiTask(supabase, {
+        userId,
+        taskType: "ENRICH_LEAD",
+        leadId,
+        conversationId,
+        payload: { message: text },
+        idempotencyKey: idempotencyKey("wa:enrich", userId, leadId, Math.floor(messageCount / 3)),
+      });
+    } catch {}
+  }
+
+  const { data: leadAfterEnrich } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", leadId)
+    .maybeSingle();
+  const leadNow = leadAfterEnrich ?? lead;
+
+  if (leadNow.funnel_stage === "DISCOVERED") {
+    try {
+      await transitionLead(supabase, {
+        leadId,
+        userId,
+        toStage: "ENRICHED",
+        eventType: "INBOUND_MESSAGE",
+        metadata: { channel: "whatsapp", conversation_id: conversationId },
+      });
+    } catch {}
+  }
+
+  const { data: intelligence } = await supabase
+    .from("lead_intelligence")
+    .select("id")
+    .eq("lead_id", leadId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const advancedStages = ["QUALIFIED", "PRIORITIZED", "OUTREACH_READY", "CONTACTED", "CONVERSATION", "MEETING_INTENT", "MEETING_BOOKED", "MEETING_HELD", "WON"];
+  const shouldRunQualification =
+    !intelligence ||
+    (!advancedStages.includes(leadNow.funnel_stage ?? "") && messageCount >= 3);
+
+  let qualificationPassed = false;
+  if (shouldRunQualification) {
+    try {
+      const result = await runAiTask(supabase, {
+        userId,
+        taskType: "QUALIFY_LEAD",
+        leadId,
+        conversationId,
+        idempotencyKey: idempotencyKey("wa:qualify", userId, leadId, Math.floor(messageCount / 5)),
+      });
+      qualificationPassed =
+        result.status === "COMPLETED" && result.output?.decision === "qualified";
+    } catch {}
+  }
+
+  if (qualificationPassed) {
+    const { data: freshIntelligence } = await supabase
+      .from("lead_intelligence")
+      .select("*")
+      .eq("lead_id", leadId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    for (const nextStage of ["PRIORITIZED", "OUTREACH_READY", "CONTACTED"] as const) {
+      try {
+        const transition = await transitionLead(supabase, {
+          leadId,
+          userId,
+          toStage: nextStage,
+          intelligence: freshIntelligence,
+          qualificationDecision: "qualified",
+          eventType: nextStage === "CONTACTED" ? "CONTACTED_VIA_WHATSAPP" : "STAGE_TRANSITION",
+          metadata: { channel: "whatsapp" },
+        });
+        if (!transition.allowed) break;
+      } catch {
+        break;
+      }
+    }
+  }
+
+  if (meetingSignal) {
+    try {
+      const intentTask = await runAiTask(supabase, {
+        userId,
+        taskType: "DETECT_MEETING_INTENT",
+        conversationId,
+        leadId,
+        payload: {},
+        idempotencyKey: idempotencyKey("wa:intent", userId, messageId),
+      });
+
+      if (intentTask.status === "COMPLETED" && intentTask.output?.meeting_intent === true) {
+        const schedule = parseScheduleFromText(text);
+        if (schedule && new Date(schedule.scheduledAt).getTime() > Date.now()) {
+          await bookMeeting(supabase, {
+            userId,
+            leadId,
+            conversationId,
+            scheduledAt: schedule.scheduledAt,
+            durationMinutes: schedule.durationMinutes,
+            medium: "call",
+            idempotencyKey: idempotencyKey("wa:meeting", userId, leadId, messageId),
+          });
+        }
+      }
+    } catch {}
+  }
+
+  if (messageCount > 0 && messageCount % 20 === 0) {
+    try {
+      await runAiTask(supabase, {
+        userId,
+        taskType: "SUMMARIZE_CONVERSATION",
+        conversationId,
+        leadId,
+        idempotencyKey: idempotencyKey("wa:summary", userId, conversationId, messageCount),
+      });
+    } catch {}
+  }
 }
 
 async function markWhatsAppProcessed(
@@ -563,7 +625,7 @@ export async function processPendingWhatsAppMessages(
   const results: ProcessWhatsAppResult[] = [];
   for (const row of pending) {
     if (!row.message_id || !row.message_text) continue;
-    const result = await processIncomingWhatsAppMessage(
+    const fast = await processIncomingWhatsAppMessage(
       supabase,
       {
         userId,
@@ -575,7 +637,17 @@ export async function processPendingWhatsAppMessages(
       },
       options
     );
-    results.push(result);
+    if (fast.processed && fast.leadId && fast.conversationId) {
+      await runBackgroundWhatsAppIntelligence(supabase, {
+        userId,
+        leadId: fast.leadId,
+        conversationId: fast.conversationId,
+        messageId: row.message_id,
+        text: row.message_text,
+        meetingSignal: fast.meetingIntentDetected === true,
+      });
+    }
+    results.push(fast);
   }
   return results;
 }

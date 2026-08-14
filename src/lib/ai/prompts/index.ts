@@ -12,6 +12,7 @@ export const PROMPT_VERSIONS: Record<AiTaskType, string> = {
   DETECT_MEETING_INTENT: "1.3.0",
   GENERATE_FOLLOWUP: "1.3.0",
   SUMMARIZE_CONVERSATION: "1.3.0",
+  GENERATE_WHATSAPP_REPLY: "1.1.0",
 };
 
 export const WEBSITE_SCAN_PROMPT_VERSION = "1.0.0";
@@ -243,6 +244,13 @@ export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTempl
           "Return JSON: { task: \"conversation_summary\", conversation_id, summary, key_points: [string], next_steps: [string], meeting_intent, confidence }.",
         ].join("\n\n"),
       };
+    case "GENERATE_WHATSAPP_REPLY":
+      return buildWhatsAppReplyPrompt(ctx);
+    default:
+      return {
+        system,
+        user: `No prompt template defined for task type ${taskType}.`,
+      };
   }
 }
 
@@ -402,6 +410,48 @@ export function buildWebsiteSynthesisPrompt(
       brand_voice: ["string"],
       tone: "string or null",
       confidence: 0.8,
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
+  const system = [
+    "You are the business owner responding to a WhatsApp message. You write like a real person, not a company bot.",
+    "RULES:",
+    "1. Keep it SHORT: 1-3 short sentences. One thought. WhatsApp style.",
+    "2. Respond to exactly what the person just said. Never restart the conversation or repeat yourself.",
+    "3. Ask at most ONE question at a time. Often none.",
+    "4. Never dump the business description. Use a relevant business fact ONLY when the message asks about it, and say it naturally.",
+    "5. Never invent pricing, timelines, client names, guarantees, availability, features, or discounts. If it is not in the provided context, do not state it. Say you need details instead.",
+    "6. NEVER use these phrases: Certainly!, Absolutely!, Great question!, I'd be happy to assist you!, We offer a wide range of, Our comprehensive solutions, Please feel free to, Let me know how I can assist, Based on your requirements.",
+    "7. No bullet points, no headings, no emojis, no marketing slogans, no generic CTA endings.",
+    "8. Match the person's language. English in -> English out. Hindi in -> natural Hindi (Devanagari). Hinglish in -> natural Hinglish (Latin script). Mixed -> mixed. Set the language field accordingly. Do not translate unnecessarily.",
+    "9. Match the person's tone: casual in -> casual out, formal in -> formal out. Never use slang or fake imperfections.",
+    "10. For a simple greeting (hi/hello/hey/good morning): reply briefly and naturally. No business intro unless asked.",
+    "11. Never fabricate customer intent. meeting_intent is true ONLY when the person clearly signals wanting to talk/meet/call (e.g. 'can we talk', 'call kar sakte hain', 'are you free tomorrow', 'demo'). Meeting intent must be backed by meeting_intent_evidence: an array of OBJECTS like {source: \"conversation\", signal: \"requested_call\"} quoting the actual message - never plain strings, and empty when meeting_intent is false.",
+    "12. needs_clarification is true when one short question genuinely moves the conversation forward. ask_one_question must be that exact question, in the same language as the reply.",
+    "13. used_business_fact: if the reply used a fact from the business context, put that fact here, otherwise null.",
+    "14. Respond ONLY with a single valid JSON object matching the requested schema. No markdown, no commentary.",
+    "15. All boolean fields must be JSON booleans (true or false), never the strings \"true\" or \"false\".",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    buildLeadBlock(ctx),
+    buildConversationBlock(ctx),
+    "Return JSON:",
+    JSON.stringify({
+      task: "whatsapp_reply",
+      conversation_id: ctx.conversation?.id ?? "00000000-0000-0000-0000-000000000000",
+      reply: "your short WhatsApp reply here",
+      language: "english|hindi|hinglish|other",
+      meeting_intent: false,
+      meeting_intent_evidence: [{ source: "conversation", signal: "requested_call" }],
+      needs_clarification: false,
+      ask_one_question: "string or null",
+      used_business_fact: "string or null",
     }),
   ].join("\n\n");
 

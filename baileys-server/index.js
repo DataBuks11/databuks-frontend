@@ -436,6 +436,30 @@ app.post("/send", async (req, res) => {
   }
 });
 
+// Typing/presence indicator (composing | paused | available)
+app.post("/presence", async (req, res) => {
+  const { userId, jid, presence } = req.body;
+  if (!userId || !jid || !presence) {
+    return res.status(400).json({ error: "userId, jid, and presence required" });
+  }
+  if (!["composing", "paused", "available"].includes(presence)) {
+    return res.status(400).json({ error: "presence must be composing, paused or available" });
+  }
+
+  const session = sessions.get(userId);
+  if (!session?.connected || !session?.socket) {
+    return res.json({ success: false, reason: "no_active_connection" });
+  }
+
+  try {
+    const formattedJid = jid.includes("@") ? jid : `${jid}@s.whatsapp.net`;
+    await session.socket.sendPresenceUpdate(presence, formattedJid);
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, reason: err.message });
+  }
+});
+
 // Send media message (image, video, document)
 app.post("/send-media", async (req, res) => {
   const { userId, jid, mediaUrl, caption, type } = req.body;

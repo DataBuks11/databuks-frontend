@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { processIncomingWhatsAppMessage } from "@/lib/ai/whatsapp/engine";
+import { processIncomingWhatsAppMessage, runBackgroundWhatsAppIntelligence } from "@/lib/ai/whatsapp/engine";
 
 export const maxDuration = 60;
 
@@ -40,6 +41,24 @@ export async function POST(request: NextRequest) {
       timestamp: message.timestamp ?? undefined,
       pushName: message.pushName ?? undefined,
     });
+
+    if (result.processed && result.leadId && result.conversationId) {
+      const backgroundInput = {
+        userId,
+        leadId: result.leadId,
+        conversationId: result.conversationId,
+        messageId: message.messageId,
+        text: message.text,
+        meetingSignal: result.meetingIntentDetected === true,
+      };
+      after(async () => {
+        try {
+          await runBackgroundWhatsAppIntelligence(supabase, backgroundInput);
+        } catch (err: any) {
+          console.error(`[API:ai/whatsapp/webhook] background intelligence failed: ${err?.message}`);
+        }
+      });
+    }
 
     return NextResponse.json(result);
   } catch (err: any) {

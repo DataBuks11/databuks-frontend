@@ -10,6 +10,7 @@ export const AI_TASK_TYPES = [
   "DETECT_MEETING_INTENT",
   "GENERATE_FOLLOWUP",
   "SUMMARIZE_CONVERSATION",
+  "GENERATE_WHATSAPP_REPLY",
 ] as const;
 
 export type AiTaskType = (typeof AI_TASK_TYPES)[number];
