@@ -306,8 +306,11 @@ export const RULE_CATALOG: Record<string, RuleDefinition> = {
   WA_001: {
     id: "WA_001",
     evaluate: (ctx) => {
-      const count = typeof ctx.aiReplyCountInWindow === "number" ? ctx.aiReplyCountInWindow : 0;
       const limit = whatsAppReplyLimit();
+      if (limit === null) {
+        return { passed: true, reason: "unlimited WhatsApp replies enabled (WA_HOURLY_REPLY_LIMIT not set)" };
+      }
+      const count = typeof ctx.aiReplyCountInWindow === "number" ? ctx.aiReplyCountInWindow : 0;
       if (count >= limit) {
         return { passed: false, reason: `WhatsApp AI reply rate limit reached for this conversation (${count}/${limit} in the last hour)` };
       }

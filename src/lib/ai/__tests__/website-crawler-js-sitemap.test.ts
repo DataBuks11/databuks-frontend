@@ -135,12 +135,13 @@ describe("WA_001 rate limit", () => {
     delete process.env.WA_HOURLY_REPLY_LIMIT;
   });
 
-  it("allows a normal active WhatsApp conversation (default 30/hour)", () => {
-    const result = evaluateRules(["WA_001"], { aiReplyCountInWindow: 12, lead: { opted_out: false } });
+  it("is unlimited by default (no WA_HOURLY_REPLY_LIMIT set)", () => {
+    const result = evaluateRules(["WA_001"], { aiReplyCountInWindow: 500, lead: { opted_out: false } });
     expect(result.allowed).toBe(true);
   });
 
-  it("blocks above the configured limit", () => {
+  it("blocks above the limit when WA_HOURLY_REPLY_LIMIT is configured", () => {
+    process.env.WA_HOURLY_REPLY_LIMIT = "30";
     const result = evaluateRules(["WA_001"], { aiReplyCountInWindow: 30, lead: { opted_out: false } });
     expect(result.allowed).toBe(false);
     expect(result.ruleId).toBe("WA_001");

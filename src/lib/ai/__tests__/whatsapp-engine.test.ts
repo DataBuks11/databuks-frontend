@@ -371,7 +371,8 @@ describe("WhatsApp fast reply path", () => {
     expect(state.funnelEvents.some((e) => e.event_type === "WHATSAPP_REPLY_BLOCKED")).toBe(true);
   });
 
-  it("blocks reply when rate limit reached (WA_001)", async () => {
+  it("blocks reply when WA_HOURLY_REPLY_LIMIT is configured and reached (WA_001)", async () => {
+    process.env.WA_HOURLY_REPLY_LIMIT = "30";
     const state = makeState();
     for (let i = 0; i < 30; i++) {
       state.messages.push({
@@ -398,6 +399,35 @@ describe("WhatsApp fast reply path", () => {
     expect(result.replySent).toBe(false);
     expect(result.decision?.ruleId).toBe("WA_001");
     expect(sendFn).not.toHaveBeenCalled();
+    delete process.env.WA_HOURLY_REPLY_LIMIT;
+  });
+
+  it("unlimited by default: many recent replies still allow a new reply", async () => {
+    const state = makeState();
+    for (let i = 0; i < 120; i++) {
+      state.messages.push({
+        id: `ai-${i}`,
+        conversation_id: "conv-existing",
+        user_id: USER_ID,
+        content: `reply ${i}`,
+        sender: "ai",
+        created_at: new Date().toISOString(),
+      });
+    }
+    state.conversations.push({
+      id: "conv-existing",
+      user_id: USER_ID,
+      lead_id: LEAD_ID,
+      platform: "whatsapp",
+      contact_name: "Priya",
+    });
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+
+    const result = await processIncomingWhatsAppMessage(supabase, baseInput, { sendFn });
+
+    expect(result.replySent).toBe(true);
+    expect(sendFn).toHaveBeenCalledTimes(1);
   });
 
   it("marks send failure without crashing when sendFn throws", async () => {
