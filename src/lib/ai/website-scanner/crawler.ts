@@ -307,11 +307,11 @@ function extractLinks($: cheerio.CheerioAPI, base: URL, pageUrl: string): string
 }
 
 const JS_CHUNK_PATTERN = /["']\/?(?:\.\/)?(?:assets\/)?([A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.js)["']/g;
-const JS_STRING_PATTERN = /"((?:[^"\\]|\\.){20,500})"/g;
+const JS_STRING_PATTERN = /"((?:[^"\\]|\\.){12,500})"/g;
 const JS_CODE_NOISE = /^(?:function|const|var|return|https?:\/\/|\.css|\.js|M\d|\d|import|export|[A-Za-z0-9._/-]+\(|.{0,3}\})/;
 
 function looksLikeCopy(text: string): boolean {
-  if (text.length < 20 || text.length > 500) return false;
+  if (text.length < 12 || text.length > 500) return false;
   if (!/[a-zA-Z]/.test(text)) return false;
   const wordCount = text.split(/\s+/).filter(Boolean).length;
   return wordCount >= 2 && JS_CODE_NOISE.test(text) === false && !/^[{}()[\]<>;,=+*/]+$/.test(text);
@@ -366,8 +366,9 @@ async function extractJsBundleContent(html: string, pageUrl: string, config: Cra
 
     const strings = new Set<string>();
     for (const bundle of bundleTexts) {
-      let match: RegExpExecArray | null;
       JS_STRING_PATTERN.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      let addedThisBundle = 0;
       while ((match = JS_STRING_PATTERN.exec(bundle)) !== null) {
         const decoded = match[1]
           .replace(/\\n/g, " ")
@@ -375,8 +376,11 @@ async function extractJsBundleContent(html: string, pageUrl: string, config: Cra
           .replace(/\\u([0-9a-fA-F]{4})/g, (_m, code) => String.fromCharCode(parseInt(code, 16)))
           .replace(/\\(.)/g, "$1")
           .trim();
-        if (looksLikeCopy(decoded)) strings.add(decoded);
-        if (strings.size >= 120) break;
+        if (looksLikeCopy(decoded) && !strings.has(decoded)) {
+          strings.add(decoded);
+          addedThisBundle += 1;
+        }
+        if (addedThisBundle >= 150) break;
       }
     }
 

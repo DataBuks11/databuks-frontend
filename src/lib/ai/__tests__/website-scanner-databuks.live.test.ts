@@ -82,6 +82,24 @@ describe.skipIf(!isConfigured)("Website scanner - databuks.org production verifi
         analysis_mode: scan.results?.analysis_mode,
         confidence: scan.results?.confidence,
         business_name: scan.results?.business_name,
+        sections: {
+          overview: typeof scan.results?.overview === "string" && scan.results.overview.length > 0,
+          services: (scan.results?.services ?? []).length,
+          products: (scan.results?.products ?? []).length,
+          target_customers: (scan.results?.target_customers ?? []).length,
+          industries: (scan.results?.industries ?? []).length,
+          problems_solved: (scan.results?.problems_solved ?? []).length,
+          value_proposition: typeof scan.results?.value_proposition === "string" && scan.results.value_proposition.length > 0,
+          offers: (scan.results?.offers ?? []).length,
+          pricing: (scan.results?.pricing ?? []).length,
+          locations: (scan.results?.locations ?? []).length,
+          social_profiles: (scan.results?.social_profiles ?? []).length,
+          case_studies: (scan.results?.case_studies ?? []).length,
+          testimonials: (scan.results?.testimonials ?? []).length,
+          content_themes: (scan.results?.content_themes ?? []).length,
+          business_signals: (scan.results?.business_signals ?? []).length,
+          brand_voice: (scan.results?.brand_voice ?? []).length,
+        },
       }));
 
       expect(["COMPLETED", "PARTIAL"]).toContain(scan.status);

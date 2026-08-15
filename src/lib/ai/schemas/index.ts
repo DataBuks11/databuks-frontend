@@ -213,6 +213,7 @@ export const websiteProblemSchema = z
     solution: z.string().max(1000).nullable(),
     source_url: z.string().max(500).nullable(),
     evidence: z.string().max(1000).nullable(),
+    confidence: confidence.nullable().optional(),
   })
   .strict();
 
@@ -222,6 +223,7 @@ export const websiteOfferSchema = z
     description: z.string().max(1000).nullable(),
     source_url: z.string().max(500).nullable(),
     evidence: z.string().max(1000).nullable(),
+    confidence: confidence.nullable().optional(),
   })
   .strict();
 
@@ -231,6 +233,7 @@ export const websitePricingSchema = z
     price: z.string().max(300).nullable(),
     source_url: z.string().max(500).nullable(),
     evidence: z.string().max(1000).nullable(),
+    confidence: confidence.nullable().optional(),
   })
   .strict();
 
@@ -274,6 +277,7 @@ export const websiteSignalSchema = z
     signal: z.string().min(1).max(300),
     evidence: z.string().max(1000).nullable(),
     source_url: z.string().max(500).nullable(),
+    confidence: confidence.nullable().optional(),
   })
   .strict();
 
