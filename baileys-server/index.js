@@ -210,7 +210,45 @@ async function connectWhatsApp(userId) {
   }
 
   const authDir = getAuthDir(userId);
+
+  if (!fs.existsSync(path.join(authDir, "creds.json"))) {
+    try {
+      if (supabase) {
+        const { data: savedSession } = await supabase
+          .from("whatsapp_sessions")
+          .select("auth_state")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (savedSession?.auth_state && Object.keys(savedSession.auth_state).length > 0) {
+          fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(savedSession.auth_state));
+          console.log(`[Auth] Restored session from Supabase for user: ${userId}`);
+        }
+      }
+    } catch (err) {
+      console.error("[Auth] Restore failed:", err.message);
+    }
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  const wrappedSaveCreds = async () => {
+    await saveCreds();
+    try {
+      if (supabase) {
+        const credsRaw = fs.readFileSync(path.join(authDir, "creds.json"), "utf8");
+        await supabase.from("whatsapp_sessions").upsert(
+          {
+            user_id: userId,
+            auth_state: JSON.parse(credsRaw),
+            connected: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+      }
+    } catch (err) {
+      console.error("[Auth] Persist failed:", err.message);
+    }
+  };
   const { version } = await fetchLatestBaileysVersion();
 
   return new Promise((resolve) => {
@@ -313,7 +351,7 @@ async function connectWhatsApp(userId) {
       }
     });
 
-    socket.ev.on("creds.update", saveCreds);
+    socket.ev.on("creds.update", wrappedSaveCreds);
 
     setTimeout(() => {
       if (!resolved) {
