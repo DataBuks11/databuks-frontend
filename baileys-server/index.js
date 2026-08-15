@@ -631,9 +631,31 @@ process.on("unhandledRejection", (reason) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🟢 Baileys server running on port ${PORT}`);
+  console.log(`Baileys server running on port ${PORT}`);
   console.log(`   Supabase: ${SUPABASE_URL ? "Connected" : "NOT configured"}`);
   console.log(`   Webhook: ${WEBHOOK_URL || "NOT configured"}`);
   console.log(`   API Key: ${API_KEY ? "Set" : "NOT set"}`);
   console.log(`   Health: http://0.0.0.0:${PORT}/health`);
+
+  autoRestoreSessions();
 });
+
+async function autoRestoreSessions() {
+  if (!supabase) return;
+  try {
+    const { data: savedSessions } = await supabase
+      .from("whatsapp_sessions")
+      .select("user_id")
+      .eq("connected", true)
+      .limit(20);
+    for (const row of savedSessions ?? []) {
+      const userId = row.user_id;
+      console.log(`[Auth] Auto-restoring session for user: ${userId}`);
+      connectWhatsApp(userId).catch((err) => {
+        console.error(`[Auth] Auto-restore failed for ${userId}:`, err.message);
+      });
+    }
+  } catch (err) {
+    console.error("[Auth] Auto-restore scan failed:", err.message);
+  }
+}
