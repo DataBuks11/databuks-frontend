@@ -66,4 +66,16 @@ describe("funnel state machine", () => {
     expect(isFunnelStage("not_a_stage")).toBe(false);
     expect(isFunnelStage(42)).toBe(false);
   });
+
+  it("allows inbound entry edges only with the inbound flag", () => {
+    expect(canTransition("DISCOVERED", "CONTACTED").allowed).toBe(false);
+    expect(canTransition("DISCOVERED", "CONTACTED", { inbound: true }).allowed).toBe(true);
+    expect(canTransition("ENRICHED", "CONTACTED").allowed).toBe(false);
+    expect(canTransition("ENRICHED", "CONTACTED", { inbound: true }).allowed).toBe(true);
+  });
+
+  it("inbound flag does not weaken other transition rules", () => {
+    expect(canTransition("DISCOVERED", "MEETING_BOOKED", { inbound: true }).allowed).toBe(false);
+    expect(canTransition("CONTACTED", "MEETING_INTENT", { inbound: true }).allowed).toBe(false);
+  });
 });

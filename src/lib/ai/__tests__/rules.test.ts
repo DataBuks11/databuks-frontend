@@ -190,4 +190,12 @@ describe("rule engine", () => {
     }));
     expect(result.ruleId).toBe("LEAD_001");
   });
+
+  it("LEAD_021 requires name, phone and at least 2 inbound messages", () => {
+    const lead = { ...baseLead, company: null, industry: null, phone: "919000000001" };
+    expect(evaluateRules(["LEAD_021"], ctx({ lead, inboundMessageCount: 2 })).allowed).toBe(true);
+    expect(evaluateRules(["LEAD_021"], ctx({ lead, inboundMessageCount: 1 })).allowed).toBe(false);
+    expect(evaluateRules(["LEAD_021"], ctx({ lead: { ...lead, phone: null }, inboundMessageCount: 5 })).allowed).toBe(false);
+    expect(evaluateRules(["LEAD_021"], ctx({ lead: { ...lead, opted_out: true }, inboundMessageCount: 5 })).allowed).toBe(false);
+  });
 });

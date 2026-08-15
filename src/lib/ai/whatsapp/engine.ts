@@ -155,11 +155,13 @@ async function findOrCreateConversation(
   return created;
 }
 
-async function messageCountForConversation(supabase: SupabaseClient, conversationId: string): Promise<number> {
-  const { count, error } = await supabase
+async function messageCountForConversation(supabase: SupabaseClient, conversationId: string, senderOnly?: string): Promise<number> {
+  let query = supabase
     .from("messages")
     .select("id", { count: "exact", head: true })
     .eq("conversation_id", conversationId);
+  if (senderOnly) query = query.eq("sender", senderOnly);
+  const { count, error } = await query;
   if (error) return 0;
   return count ?? 0;
 }
@@ -385,6 +387,13 @@ export async function processIncomingWhatsAppMessage(
     await sendFn({ userId: input.userId, jid: input.remoteJid, message: replyText });
   } catch (error: any) {
     sendError = error?.message ?? "send failed";
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      await sendFn({ userId: input.userId, jid: input.remoteJid, message: replyText });
+      sendError = null;
+    } catch (retryError: any) {
+      sendError = retryError?.message ?? "send failed";
+    }
   }
   const sentAt = Date.now();
   mark("send_complete", sentAt);
@@ -479,7 +488,7 @@ export async function runBackgroundWhatsAppIntelligence(
     .maybeSingle();
   if (!lead) return;
 
-  const messageCount = await messageCountForConversation(supabase, conversationId);
+  const messageCount = await messageCountForConversation(supabase, conversationId, "user");
 
   if (!lead.company && !lead.industry) {
     try {
@@ -511,6 +520,46 @@ export async function runBackgroundWhatsAppIntelligence(
         metadata: { channel: "whatsapp", conversation_id: conversationId },
       });
     } catch {}
+  }
+
+  const { data: leadAfterEnrichTransition } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", leadId)
+    .maybeSingle();
+  const stageNow = leadAfterEnrichTransition?.funnel_stage ?? leadNow.funnel_stage;
+
+  if (stageNow === "DISCOVERED" || stageNow === "ENRICHED") {
+    const inboundRule = evaluateRules(["LEAD_021"], {
+      lead: leadAfterEnrichTransition ?? leadNow,
+      inboundMessageCount: messageCount,
+    });
+    if (inboundRule.allowed) {
+      try {
+        const contacted = await transitionLead(supabase, {
+          leadId,
+          userId,
+          toStage: "CONTACTED",
+          inbound: true,
+          eventType: "INBOUND_CONTACTED",
+          metadata: {
+            channel: "whatsapp",
+            conversation_id: conversationId,
+            ruleId: "LEAD_021",
+            inbound_message_count: messageCount,
+          },
+        });
+        if (contacted.allowed) {
+          await transitionLead(supabase, {
+            leadId,
+            userId,
+            toStage: "CONVERSATION",
+            eventType: "INBOUND_CONVERSATION",
+            metadata: { channel: "whatsapp", conversation_id: conversationId },
+          });
+        }
+      } catch {}
+    }
   }
 
   const { data: intelligence } = await supabase

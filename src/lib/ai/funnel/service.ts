@@ -16,6 +16,7 @@ export interface TransitionLeadInput {
   eventType?: string;
   metadata?: Record<string, unknown>;
   actionType?: ActionType;
+  inbound?: boolean;
 }
 
 export interface TransitionLeadResult {
@@ -100,7 +101,7 @@ export async function transitionLead(
   const fromStage = normalizeFunnelStage(lead.funnel_stage ?? lead.status);
   const toStage = input.toStage;
 
-  const structural = canTransition(fromStage, toStage);
+  const structural = canTransition(fromStage, toStage, { inbound: input.inbound === true });
   if (!structural.allowed) {
     await recordFunnelEvent(supabase, {
       userId: input.userId,

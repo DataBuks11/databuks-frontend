@@ -27,6 +27,7 @@ export interface RuleContext {
   qualificationDecision?: string | null;
   aiReplyCountInWindow?: number;
   duplicateReplyDetected?: boolean;
+  inboundMessageCount?: number;
   actionType?: ActionType;
   now?: Date;
 }
@@ -322,6 +323,24 @@ export const RULE_CATALOG: Record<string, RuleDefinition> = {
     evaluate: (ctx) => {
       if (ctx.duplicateReplyDetected) return { passed: false, reason: "identical reply sent recently" };
       return { passed: true, reason: "no duplicate reply" };
+    },
+  },
+  LEAD_021: {
+    id: "LEAD_021",
+    evaluate: (ctx) => {
+      const name = asText(ctx.lead?.name);
+      const phone = asText(ctx.lead?.phone);
+      if (!name || !phone) {
+        return { passed: false, reason: "inbound contact requires name and phone" };
+      }
+      const messageCount = typeof ctx.inboundMessageCount === "number" ? ctx.inboundMessageCount : 0;
+      if (messageCount < 2) {
+        return { passed: false, reason: `inbound contact requires at least 2 inbound messages (has ${messageCount})` };
+      }
+      if (ctx.lead?.opted_out === true) {
+        return { passed: false, reason: "lead has opted out" };
+      }
+      return { passed: true, reason: `verified inbound contact (${messageCount} inbound messages)` };
     },
   },
 };

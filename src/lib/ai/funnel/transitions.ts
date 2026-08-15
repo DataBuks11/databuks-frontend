@@ -16,6 +16,11 @@ export const FUNNEL_TRANSITIONS: Record<FunnelStage, FunnelStage[]> = {
   LOST: ["DISCOVERED"],
 };
 
+export const INBOUND_TRANSITIONS: Partial<Record<FunnelStage, FunnelStage[]>> = {
+  DISCOVERED: ["CONTACTED"],
+  ENRICHED: ["CONTACTED"],
+};
+
 export const STAGE_GUARDS: Partial<Record<FunnelStage, string[]>> = {
   ENRICHED: ["LEAD_002"],
   QUALIFIED: ["LEAD_001", "LEAD_002", "LEAD_003", "LEAD_005", "LEAD_006", "LEAD_007", "LEAD_008"],
@@ -24,17 +29,22 @@ export const STAGE_GUARDS: Partial<Record<FunnelStage, string[]>> = {
   MEETING_BOOKED: ["LEAD_013", "LEAD_014", "LEAD_015", "LEAD_020"],
 };
 
-export function canTransition(currentStage: FunnelStage, nextStage: FunnelStage): TransitionDecision {
+export function canTransition(
+  currentStage: FunnelStage,
+  nextStage: FunnelStage,
+  options?: { inbound?: boolean }
+): TransitionDecision {
   if (currentStage === nextStage) {
     return { allowed: true, reason: "already in target stage" };
   }
   const allowedStages = FUNNEL_TRANSITIONS[currentStage] ?? [];
-  if (!allowedStages.includes(nextStage)) {
-    return {
-      allowed: false,
-      ruleId: "FUNNEL_001",
-      reason: `Invalid funnel transition ${currentStage} -> ${nextStage}`,
-    };
+  const inboundStages = (options?.inbound && INBOUND_TRANSITIONS[currentStage]) || [];
+  if (allowedStages.includes(nextStage) || inboundStages.includes(nextStage)) {
+    return { allowed: true, reason: "valid funnel transition" };
   }
-  return { allowed: true, reason: "valid funnel transition" };
+  return {
+    allowed: false,
+    ruleId: "FUNNEL_001",
+    reason: `Invalid funnel transition ${currentStage} -> ${nextStage}`,
+  };
 }

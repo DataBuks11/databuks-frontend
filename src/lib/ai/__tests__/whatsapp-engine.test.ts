@@ -459,6 +459,61 @@ describe("WhatsApp fast reply path", () => {
     expect(keys[0]).not.toBe(keys[1]);
   });
 
+  it("retries send once when the first send attempt fails transiently", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("WhatsApp send failed (400)"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await processIncomingWhatsAppMessage(supabase, baseInput, { sendFn });
+
+    expect(result.replySent).toBe(true);
+    expect(sendFn).toHaveBeenCalledTimes(2);
+    expect(state.decisions.some((d) => d.task_type === "SEND_WHATSAPP_REPLY" && d.action_status === "SENT")).toBe(true);
+  });
+
+  it("verified inbound contacts (2+ messages) advance DISCOVERED -> CONTACTED -> CONVERSATION", async () => {
+    const state = makeState();
+    state.leads = [{ ...state.leads[0], funnel_stage: "DISCOVERED", status: "new", company: null, industry: null }];
+    state.intelligence = [];
+    for (let i = 0; i < 2; i++) {
+      state.messages.push({
+        id: `u-${i}`,
+        conversation_id: "conv-inbound",
+        user_id: USER_ID,
+        content: `message ${i}`,
+        sender: "user",
+        created_at: new Date().toISOString(),
+      });
+    }
+    state.conversations.push({
+      id: "conv-inbound",
+      user_id: USER_ID,
+      lead_id: LEAD_ID,
+      platform: "whatsapp",
+      contact_name: "Priya",
+    });
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+
+    const fast = await processIncomingWhatsAppMessage(supabase, baseInput, { sendFn });
+
+    await runBackgroundWhatsAppIntelligence(supabase, {
+      userId: USER_ID,
+      leadId: LEAD_ID,
+      conversationId: fast.conversationId!,
+      messageId: baseInput.messageId,
+      text: baseInput.text,
+      meetingSignal: false,
+    });
+
+    expect(state.leads[0].funnel_stage).toBe("CONVERSATION");
+    expect(state.funnelEvents.some((e) => e.event_type === "INBOUND_CONTACTED" && e.to_stage === "CONTACTED")).toBe(true);
+    expect(state.funnelEvents.some((e) => e.event_type === "INBOUND_CONVERSATION" && e.to_stage === "CONVERSATION")).toBe(true);
+  });
+
   it("marks send failure without crashing when sendFn throws", async () => {
     const state = makeState();
     const supabase = makeMockSupabase(state);

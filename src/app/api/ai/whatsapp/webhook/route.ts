@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { processIncomingWhatsAppMessage, runBackgroundWhatsAppIntelligence } from "@/lib/ai/whatsapp/engine";
+import { processIncomingWhatsAppMessage } from "@/lib/ai/whatsapp/engine";
 
 export const maxDuration = 60;
 
@@ -43,7 +43,10 @@ export async function POST(request: NextRequest) {
     });
 
     if (result.processed && result.leadId && result.conversationId) {
-      const backgroundInput = {
+      const backgroundUrl = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}/api/ai/whatsapp/background`
+        : "https://databuks-frontend.vercel.app/api/ai/whatsapp/background";
+      const backgroundBody = {
         userId,
         leadId: result.leadId,
         conversationId: result.conversationId,
@@ -53,9 +56,16 @@ export async function POST(request: NextRequest) {
       };
       after(async () => {
         try {
-          await runBackgroundWhatsAppIntelligence(supabase, backgroundInput);
+          await fetch(backgroundUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": expectedKey,
+            },
+            body: JSON.stringify(backgroundBody),
+          });
         } catch (err: any) {
-          console.error(`[API:ai/whatsapp/webhook] background intelligence failed: ${err?.message}`);
+          console.error(`[API:ai/whatsapp/webhook] background trigger failed: ${err?.message}`);
         }
       });
     }
@@ -66,3 +76,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 }
+
