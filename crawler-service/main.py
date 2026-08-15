@@ -461,7 +461,7 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
     scan_id = payload.scan_id
     user_id = payload.user_id
     started = time.time()
-    timeout_s = 240.0
+    timeout_s = float(os.environ.get("CRAWL_TIMEOUT_S", "420"))
 
     await update_scan(sb, scan_id, {"status": "SCANNING", "updated_at": now_iso()})
 
@@ -486,6 +486,15 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
     rendered_rows = 0
     failed_rows = 0
     queue = sorted(queue_items, key=lambda item: item["priority"], reverse=True)
+    shared_crawler: Optional[Any] = None
+
+    async def get_shared_crawler() -> Any:
+        nonlocal shared_crawler
+        if shared_crawler is None:
+            from crawl4ai import AsyncWebCrawler
+            shared_crawler = AsyncWebCrawler()
+            await shared_crawler.__aenter__()
+        return shared_crawler
 
     async def process_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         nonlocal crawled_rows, rendered_rows, failed_rows
@@ -506,7 +515,7 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
             link_count = len(static_evidence["links"])
             heading_count = len(static_evidence["headings"])
             if looks_like_js_shell(static_evidence["text"], static_evidence["html_len"], link_count, heading_count):
-                evidence = await render_with_crawl4ai(url)
+                evidence = await render_with_crawl4ai(url, await get_shared_crawler())
                 if evidence is None:
                     evidence = static_evidence
                     evidence["rendered"] = False
@@ -516,7 +525,7 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
                 evidence["rendered"] = False
                 evidence["render_method"] = "static"
         else:
-            evidence = await render_with_crawl4ai(url)
+            evidence = await render_with_crawl4ai(url, await get_shared_crawler())
             if evidence is None:
                 failed_rows += 1
                 return {"url": url, "failed": True}
@@ -584,6 +593,12 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
                         continue
                     queue.append({"url": normalized, "depth": result.get("_depth", 1) + 1, "priority": page_priority(normalized), "source": "links"})
 
+    if shared_crawler is not None:
+        try:
+            await shared_crawler.__aexit__(None, None, None)
+        except Exception:
+            pass
+
     await update_scan(
         sb,
         scan_id,
@@ -619,23 +634,22 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
         )
 
 
-async def render_with_crawl4ai(url: str) -> Optional[Dict[str, Any]]:
+async def render_with_crawl4ai(url: str, crawler: Any) -> Optional[Dict[str, Any]]:
     try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
+        from crawl4ai import CrawlerRunConfig, CacheMode
 
         config = CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             wait_for="js:() => document.body && document.body.innerText.trim().length > 200",
             page_timeout=20000,
         )
-        async with AsyncWebCrawler() as crawler:
-            result = await crawler.arun(url=url, config=config)
-            if result is None or not getattr(result, "success", False):
-                return None
-            text = (getattr(result, "markdown", "") or "").strip()
-            if len(text) < 80:
-                return None
-            return extract_rendered_evidence(result, url, 0)
+        result = await crawler.arun(url=url, config=config)
+        if result is None or not getattr(result, "success", False):
+            return None
+        text = (getattr(result, "markdown", "") or "").strip()
+        if len(text) < 80:
+            return None
+        return extract_rendered_evidence(result, url, 0)
     except Exception as exc:
         print(f"[render] crawl4ai failed for {url}: {exc}")
         return None
