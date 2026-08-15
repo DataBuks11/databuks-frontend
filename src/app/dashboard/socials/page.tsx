@@ -317,8 +317,15 @@ export default function SocialsPage() {
     setQrModalOpen(true); setQrLoading(true); setQrCode(null); setError("");
     try {
       if (!userId) { setError("Not authenticated"); return; }
-      const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
-      const data = await res.json();
+      const attempt = async () => {
+        const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
+        return await res.json();
+      };
+      let data = await attempt();
+      if (data.error && /Logged out/i.test(data.error)) {
+        TRACE("WA_CONNECT", "logged-out error, retrying once for fresh QR");
+        data = await attempt();
+      }
       if (data.qrCode) { setQrCode(data.qrCode); pollQr(); }
       else if (data.error) { setError(data.error); setQrModalOpen(false); }
       else { setWhatsAppStatus(true); setQrModalOpen(false); }

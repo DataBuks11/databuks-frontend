@@ -331,6 +331,18 @@ async function connectWhatsApp(userId) {
           sessions.delete(userId);
           const authDir = getAuthDir(userId);
           try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
+          try {
+            if (supabase) {
+              await supabase
+                .from("whatsapp_sessions")
+                .upsert(
+                  { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
+                  { onConflict: "user_id" }
+                );
+            }
+          } catch (err) {
+            console.error("[Supabase] Failed to clear session on logout:", err.message);
+          }
           await updateSupabaseStatus(userId, false);
 
           if (!resolved) {
