@@ -230,20 +230,29 @@ async function connectWhatsApp(userId) {
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  const wrappedSaveCreds = async () => {
+  const wrappedSaveCreds = async (creds) => {
     await saveCreds();
     try {
       if (supabase) {
-        const credsRaw = fs.readFileSync(path.join(authDir, "creds.json"), "utf8");
-        await supabase.from("whatsapp_sessions").upsert(
-          {
-            user_id: userId,
-            auth_state: JSON.parse(credsRaw),
-            connected: true,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        );
+        let credsToPersist = creds;
+        if (!credsToPersist) {
+          try {
+            credsToPersist = JSON.parse(fs.readFileSync(path.join(authDir, "creds.json"), "utf8"));
+          } catch {
+            credsToPersist = null;
+          }
+        }
+        if (credsToPersist && Object.keys(credsToPersist).length > 0) {
+          await supabase.from("whatsapp_sessions").upsert(
+            {
+              user_id: userId,
+              auth_state: credsToPersist,
+              connected: true,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" }
+          );
+        }
       }
     } catch (err) {
       console.error("[Auth] Persist failed:", err.message);
