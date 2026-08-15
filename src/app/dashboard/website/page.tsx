@@ -102,14 +102,18 @@ interface ScanResults {
   scanned_url?: string;
   pages_crawled?: number;
   pages_discovered?: number;
+  pages_rendered?: number;
   partial?: boolean;
   model?: string;
   analysis_mode?: string;
   js_rendered?: boolean;
+  site_type?: string;
+  word_count?: number;
   crawl_stats?: {
     discovered?: number;
     scanned?: number;
     failed?: number;
+    rendered?: number;
     robotsSkipped?: number;
     duplicates?: number;
   };
@@ -445,6 +449,9 @@ export default function WebsiteIntelligencePage() {
               <Badge variant="info">{results?.pages_crawled ?? 0} pages scanned</Badge>
               {typeof results?.pages_discovered === "number" && results.pages_discovered > 0 && (
                 <Badge variant="info">{results.pages_discovered} pages discovered</Badge>
+              )}
+              {typeof results?.pages_rendered === "number" && results.pages_rendered > 0 && (
+                <Badge variant="success">{results.pages_rendered} rendered</Badge>
               )}
               {typeof (results as any)?.crawl_stats?.failed === "number" && (results as any).crawl_stats.failed > 0 && (
                 <Badge variant="warning">{(results as any).crawl_stats.failed} failed</Badge>

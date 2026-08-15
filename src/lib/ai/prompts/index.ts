@@ -253,15 +253,16 @@ export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTempl
       };
   }
 }
-export function buildWebsiteScanPrompt(pages: { url: string; title: string; description?: string; text: string }[], socialLinks: { platform: string; url: string; source_url: string }[]): PromptTemplate {
+export function buildWebsiteScanPrompt(pages: { url: string; title: string; description?: string; text: string }[], socialLinks: { platform: string; url: string; source_url: string }[], siteType: string = "business"): PromptTemplate {
   const system = [
     "You are a website business intelligence analyzer.",
     "Analyze the crawled PUBLIC web content provided below and produce a structured business profile.",
     "Never fabricate information. Only include facts that are present in the crawled content.",
     "When information is not available, use null or an empty array. Do not guess.",
+    "Adapt your analysis to the detected website type. Do not force agency/business categories onto content, blog, ecommerce or documentation sites. Only fill categories that the content genuinely supports.",
     "Some page text may be marked as recovered from JavaScript bundles: it is fragmentary but REAL site copy (headlines, offerings, pricing labels). Treat coherent phrases from it as genuine site content with medium confidence (0.5-0.75). Map offering names into products or services, and offering descriptions into pricing items where a price-like value is present.",
-    "Fill every section you have genuine evidence for: products, services, target customers (who the site says it serves), industries, problems solved, value proposition (headline copy), offers, pricing, locations, testimonials (quoted statements), content themes (blog/article titles), business signals, brand voice.",
-    "Do not leave a section empty when the crawled content clearly supports it.",
+    "Fill every section you have genuine evidence for: products, services, target customers (who the site says it serves), industries, problems solved, value proposition (headline copy), offers, pricing, locations, testimonials (quoted statements), content themes (repeated substantive topics across pages), business signals, brand voice.",
+    "Do not leave a section empty when the crawled content clearly supports it. Do not invent competitors - only include competitor mentions explicitly present on the site.",
     "Every important extracted item (services, products, target customers, problems, offers, pricing, case studies, testimonials, content themes, signals, contact info) must include its source_url (the page it was found on) and, where useful, a short evidence quote from the page text.",
     "Respond ONLY with a single valid JSON object matching the requested schema. No markdown, no commentary.",
     "All boolean fields must be JSON booleans (true or false). Confidence is a number from 0 to 1.",
@@ -269,7 +270,7 @@ export function buildWebsiteScanPrompt(pages: { url: string; title: string; desc
   ].join("\n");
 
   const pageBlocks = pages
-    .map((page) => `--- PAGE: ${page.url}\nTITLE: ${page.title}\nDESCRIPTION: ${page.description}\nTEXT:\n${page.text}`)
+    .map((page) => `--- PAGE: ${page.url}\nTITLE: ${page.title}\nDESCRIPTION: ${page.description ?? ""}\nTEXT:\n${page.text}`)
     .join("\n\n");
 
   const socialBlock =
@@ -278,7 +279,7 @@ export function buildWebsiteScanPrompt(pages: { url: string; title: string; desc
       : "SOCIAL LINKS FOUND: none";
 
   const user = [
-    "Task: build a business profile from the crawled website content.",
+    `Task: build a business profile from the crawled website content. Detected website type: ${siteType}.`,
     socialBlock,
     "CRAWLED CONTENT:",
     pageBlocks,
@@ -329,7 +330,7 @@ function buildCorpusBlock(pages: CorpusPage[]): string {
     .join("\n\n");
 }
 
-export function buildWebsiteFactsPrompt(pages: CorpusPage[]): PromptTemplate {
+export function buildWebsiteFactsPrompt(pages: CorpusPage[], siteType: string = "business"): PromptTemplate {
   const system = [
     "You extract verifiable business facts from crawled public website pages.",
     "Never fabricate. Every fact must come from the provided page content.",
@@ -341,7 +342,7 @@ export function buildWebsiteFactsPrompt(pages: CorpusPage[]): PromptTemplate {
   ].join("\n");
 
   const user = [
-    "Task: extract business facts from the crawled pages below.",
+    `Task: extract business facts from the crawled pages below. Detected website type: ${siteType}.`,
     buildCorpusBlock(pages),
     "Return JSON:",
     JSON.stringify({
@@ -365,12 +366,14 @@ export function buildWebsiteFactsPrompt(pages: CorpusPage[]): PromptTemplate {
 
 export function buildWebsiteSynthesisPrompt(
   facts: Record<string, any>[],
-  socialLinks: { platform: string; url: string; source_url: string }[]
+  socialLinks: { platform: string; url: string; source_url: string }[],
+  siteType: string = "business"
 ): PromptTemplate {
   const system = [
     "You synthesize verified business facts into a structured business profile.",
     "Never fabricate. Only use the facts provided. If information is missing, use null or empty arrays.",
-    "Fill every section you have facts for: products, services, target customers, industries, problems solved, value proposition, offers, pricing, locations, testimonials, content themes, business signals, brand voice. Do not leave a section empty when facts support it.",
+    "Adapt the profile to the detected website type. Do not force agency categories onto content, ecommerce or documentation sites.",
+    "Fill every section you have facts for: products, services, target customers, industries, problems solved, value proposition, offers, pricing, locations, testimonials, content themes, business signals, brand voice. Do not leave a section empty when facts support it. Do not invent competitors.",
     "Each extracted item must keep its original source_url and evidence_quote from the facts it came from.",
     "Respond ONLY with a single valid JSON object matching the requested schema. No markdown, no commentary.",
     "All boolean fields must be JSON booleans. Confidence is a number from 0 to 1.",
@@ -382,7 +385,7 @@ export function buildWebsiteSynthesisPrompt(
       : "SOCIAL LINKS FOUND: none";
 
   const user = [
-    "Task: synthesize the business profile from the verified facts below.",
+    `Task: synthesize the business profile from the verified facts below. Detected website type: ${siteType}.`,
     socialBlock,
     "VERIFIED FACTS:",
     facts

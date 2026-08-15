@@ -50,13 +50,43 @@ export async function POST(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    after(async () => {
-      try {
-        await runWebsiteScan(scan.id, user.id);
-      } catch (err: any) {
-        console.error(`[API:ai/website/scan] background scan failed: ${err?.message}`);
-      }
-    });
+    const crawlerServiceUrl = process.env.CRAWLER_SERVICE_URL;
+    if (crawlerServiceUrl) {
+      const crawlerKey = process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+      after(async () => {
+        try {
+          await fetch(`${crawlerServiceUrl.replace(/\/+$/, "")}/crawl`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": crawlerKey,
+            },
+            body: JSON.stringify({
+              scan_id: scan.id,
+              user_id: user.id,
+              url: normalized,
+              max_pages: Number(process.env.WEBSITE_MAX_PAGES ?? 100),
+              max_depth: Number(process.env.WEBSITE_MAX_DEPTH ?? 8),
+            }),
+          });
+        } catch (err: any) {
+          console.error(`[API:ai/website/scan] crawler service trigger failed: ${err?.message}`);
+          try {
+            await runWebsiteScan(scan.id, user.id);
+          } catch (fallbackErr: any) {
+            console.error(`[API:ai/website/scan] static fallback failed: ${fallbackErr?.message}`);
+          }
+        }
+      });
+    } else {
+      after(async () => {
+        try {
+          await runWebsiteScan(scan.id, user.id);
+        } catch (err: any) {
+          console.error(`[API:ai/website/scan] background scan failed: ${err?.message}`);
+        }
+      });
+    }
 
     return NextResponse.json({ scan_id: scan.id, status: "QUEUED" }, { status: 202 });
   } catch (err: any) {

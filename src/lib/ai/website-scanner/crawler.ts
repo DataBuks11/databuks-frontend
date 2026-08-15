@@ -86,6 +86,47 @@ const ASSET_EXTENSIONS = /\.(jpg|jpeg|png|webp|gif|svg|ico|css|js|mp4|mp3|zip|wo
 const PDF_EXTENSION = /\.pdf(\?.*)?$/i;
 const IGNORED_SCHEMES = /^(mailto|tel|javascript|data|file):/i;
 
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,
+  /^10\./,
+  /^0\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+  /^::1$/,
+  /^fc/i,
+  /^fd/i,
+  /^fe80:/i,
+];
+
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    return true;
+  }
+  if (host === "metadata.google.internal" || host.includes("metadata")) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(host));
+  }
+  if (host.includes(":")) {
+    return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(host));
+  }
+  return false;
+}
+
+export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason: string } {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!/^https?:$/.test(parsed.protocol)) return { safe: false, reason: "unsupported protocol" };
+    if (IGNORED_SCHEMES.test(parsed.protocol)) return { safe: false, reason: "unsupported scheme" };
+    if (isPrivateHost(parsed.hostname)) return { safe: false, reason: "private/internal host blocked (SSRF)" };
+    return { safe: true, reason: "public url" };
+  } catch {
+    return { safe: false, reason: "invalid url" };
+  }
+}
+
 const PATH_KEYWORDS: { pattern: RegExp; type: string; priority: number }[] = [
   { pattern: /^\/$/i, type: "home", priority: 100 },
   { pattern: /pricing|plans|packages/i, type: "pricing", priority: 95 },
@@ -209,7 +250,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: "GET",
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; DataBuksScanner/2.0; +https://databuks-frontend.vercel.app)",
@@ -218,8 +259,19 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
       signal: controller.signal,
       redirect: "follow",
     });
+    const finalUrl = response.url ?? url;
+    try {
+      const finalHost = new URL(finalUrl).hostname;
+      if (isPrivateHost(finalHost)) {
+        throw new Error("REDIRECT_TO_PRIVATE");
+      }
+    } catch (err: any) {
+      if (err?.message === "REDIRECT_TO_PRIVATE") throw err;
+    }
+    return response;
   } catch (error: any) {
     if (error?.name === "AbortError") throw new Error("TIMEOUT");
+    if (error?.message === "REDIRECT_TO_PRIVATE") throw new Error("REDIRECT_TO_PRIVATE");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -527,6 +579,10 @@ export async function crawlWebsite(rawUrl: string): Promise<CrawlResult> {
       return;
     }
     if (IGNORED_SCHEMES.test(normalized)) return;
+    if (isPrivateHost(parsed.hostname)) {
+      stats.externalRejected += 1;
+      return;
+    }
     if (!allowedDomain(baseUrl, parsed, config) && !options?.trustedSitemap) {
       stats.externalRejected += 1;
       return;

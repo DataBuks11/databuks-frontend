@@ -97,13 +97,14 @@ function chunkCorpus(pages: CorpusPage[]): CorpusPage[][] {
 async function analyzeWebsite(
   provider: ReturnType<typeof getActiveProvider>,
   pages: CorpusPage[],
-  socialLinks: { platform: string; url: string; source_url: string }[]
+  socialLinks: { platform: string; url: string; source_url: string }[],
+  siteType: string = "business"
 ): Promise<{ analysis: Record<string, any>; mode: string }> {
   const totalChars = pages.reduce((sum, page) => sum + page.text.length, 0);
   const needsMultiStage = totalChars > SINGLE_STAGE_MAX_CHARS || pages.length > SINGLE_STAGE_MAX_PAGES;
 
   if (!needsMultiStage) {
-    const prompt = buildWebsiteScanPrompt(pages, socialLinks);
+    const prompt = buildWebsiteScanPrompt(pages, socialLinks, siteType);
     const raw = await provider.completeJson(prompt);
     const validation = validateAiOutput(websiteAnalysisSchema, raw);
     if (!validation.success) {
@@ -115,7 +116,7 @@ async function analyzeWebsite(
   const chunks = chunkCorpus(pages);
   const allFacts: Record<string, any>[] = [];
   for (const chunk of chunks) {
-    const factsPrompt = buildWebsiteFactsPrompt(chunk);
+    const factsPrompt = buildWebsiteFactsPrompt(chunk, siteType);
     const rawFacts = await provider.completeJson(factsPrompt);
     const factsValidation = validateAiOutput(websiteFactsSchema, rawFacts);
     if (!factsValidation.success) {
@@ -132,7 +133,7 @@ async function analyzeWebsite(
     return true;
   });
 
-  const synthesisPrompt = buildWebsiteSynthesisPrompt(dedupedFacts, socialLinks);
+  const synthesisPrompt = buildWebsiteSynthesisPrompt(dedupedFacts, socialLinks, siteType);
   const rawAnalysis = await provider.completeJson(synthesisPrompt);
   const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
   if (!analysisValidation.success) {
@@ -197,25 +198,106 @@ export async function runWebsiteScan(scanId: string, userId: string): Promise<vo
 
     await storeScanPages(supabase, scanId, userId, crawl.pages);
 
-    await setScanStatus(supabase, scanId, "ANALYZING");
+    await finalizeScanFromStoredPages(supabase, scanId, userId);
+  } catch (error: any) {
+    await setScanStatus(supabase, scanId, "FAILED", {
+      error_message: error?.message ?? "Scan failed",
+      completed_at: new Date().toISOString(),
+    });
+  }
+}
+
+export function detectSiteType(pages: { page_type: string }[]): string {
+  const counts: Record<string, number> = {};
+  for (const page of pages) {
+    const type = page.page_type ?? "other";
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  const has = (type: string) => (counts[type] ?? 0) > 0;
+  if (has("product") || has("collection") || has("category")) return "ecommerce";
+  if (has("documentation") || has("reference") || has("docs")) return "documentation";
+  if (has("blog") || has("article") || has("news")) return "content";
+  if (has("portfolio") || has("case_study") || has("work")) return "portfolio";
+  if (has("pricing") || has("services") || has("solution") || has("product")) return "business";
+  return "business";
+}
+
+export async function finalizeScanFromStoredPages(
+  supabase: any,
+  scanId: string,
+  userId: string
+): Promise<void> {
+  const { data: scan } = await supabase
+    .from("website_scans")
+    .select("*")
+    .eq("id", scanId)
+    .maybeSingle();
+  if (!scan) return;
+
+  try {
+    const { data: pageRows, error: pageError } = await supabase
+      .from("website_scan_pages")
+      .select("*")
+      .eq("scan_id", scanId)
+      .eq("status", "crawled")
+      .order("depth", { ascending: true });
+
+    if (pageError) throw new Error(pageError.message);
+    const pages = pageRows ?? [];
+    if (pages.length === 0) {
+      await setScanStatus(supabase, scanId, "FAILED", {
+        error_message: "No page content available for analysis",
+        completed_at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const renderedCount = pages.filter((page: any) => page.rendered === true).length;
+    const wordCount = pages.reduce((sum: number, page: any) => sum + (page.word_count ?? 0), 0);
+    await setScanStatus(supabase, scanId, "ANALYZING", {
+      pages_rendered: renderedCount,
+      pages_scanned: pages.length,
+      pages_discovered: (scan.pages_discovered ?? 0) > 0 ? scan.pages_discovered : pages.length,
+    });
+
     const provider = getActiveProvider();
-    const corpus = toCorpusPages(crawl.pages);
-    const { analysis, mode } = await analyzeWebsite(provider, corpus, crawl.socialLinks);
+    const siteType = detectSiteType(pages);
+    const corpus = toCorpusPages(
+      pages.map((page: any) => ({
+        url: page.url,
+        title: page.page_title ?? page.title ?? "",
+        page_type: page.page_type ?? "other",
+        headings: [],
+        text: typeof page.content === "string" ? page.content : "",
+      }))
+    );
+    const socialLinks: { platform: string; url: string; source_url: string }[] = [];
+    const { analysis, mode } = await analyzeWebsite(provider, corpus, socialLinks, siteType);
 
     const results = {
       ...analysis,
-      scanned_url: crawl.url,
-      pages_crawled: crawl.stats.scanned,
-      pages_discovered: crawl.stats.discovered,
-      crawl_stats: crawl.stats,
-      social_links: crawl.socialLinks,
-      documents: crawl.documents,
-      js_rendered: crawl.jsRendered,
+      scanned_url: scan.url,
+      pages_crawled: pages.length,
+      pages_discovered: scan.pages_discovered ?? pages.length,
+      pages_rendered: renderedCount,
+      site_type: siteType,
+      word_count: wordCount,
+      crawl_stats: {
+        discovered: scan.pages_discovered ?? pages.length,
+        scanned: pages.length,
+        rendered: renderedCount,
+        failed: (scan.results?.crawl_stats?.failed as number) ?? 0,
+        robotsSkipped: (scan.results?.crawl_stats?.robotsSkipped as number) ?? 0,
+        duplicates: (scan.results?.crawl_stats?.duplicates as number) ?? 0,
+      },
+      social_links: scan.results?.social_links ?? socialLinks,
+      documents: scan.results?.documents ?? [],
+      js_rendered: renderedCount > 0,
       model: provider.model,
       model_version: provider.modelVersion,
       prompt_version: WEBSITE_SCAN_PROMPT_VERSION,
       analysis_mode: mode,
-      partial: crawl.partial,
+      partial: false,
     };
 
     let contextSyncError: string | null = null;
@@ -226,17 +308,18 @@ export async function runWebsiteScan(scanId: string, userId: string): Promise<vo
       contextSyncError = error?.message ?? "unknown context sync error";
     }
 
-    await setScanStatus(supabase, scanId, crawl.partial ? "PARTIAL" : "COMPLETED", {
+    await setScanStatus(supabase, scanId, "COMPLETED", {
       results,
-      pages_crawled: crawl.stats.scanned,
-      pages_discovered: crawl.stats.discovered,
-      error_message: crawl.partial ? "Some pages could not be scanned. Results may be incomplete." : null,
+      pages_crawled: pages.length,
+      pages_discovered: scan.pages_discovered ?? pages.length,
+      pages_rendered: renderedCount,
+      error_message: null,
       context_synced_at: contextUpdated ? new Date().toISOString() : null,
       completed_at: new Date().toISOString(),
     });
   } catch (error: any) {
     await setScanStatus(supabase, scanId, "FAILED", {
-      error_message: error?.message ?? "Scan failed",
+      error_message: error?.message ?? "Analysis failed",
       completed_at: new Date().toISOString(),
     });
   }
