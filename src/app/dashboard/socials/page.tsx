@@ -91,6 +91,7 @@ export default function SocialsPage() {
       TRACE("INIT", { userFromAuth: user?.id, email: user?.email, resolvedId });
       setUserId(resolvedId ?? "");
       await loadAndVerify();
+      await syncFromComposio();
       await checkWhatsAppStatus();
       await checkTelegramStatus();
 
@@ -112,10 +113,24 @@ export default function SocialsPage() {
             TRACE("POLLING", connected ? "STOPPED: connection found" : "STOPPED: max attempts reached");
             if (pollingRef.current) clearInterval(pollingRef.current);
             window.history.replaceState({}, "", "/dashboard/socials");
+            if (!connected) {
+              await syncFromComposio();
+            }
           }
         }, 2000);
       }
     } catch(e:any) { TRACE("INIT", `ERROR: ${e.message}`); }
+  }
+
+  async function syncFromComposio() {
+    try {
+      const res = await fetch("/api/composio/sync");
+      if (res.ok) {
+        const json = await res.json();
+        TRACE("SYNC", { summary: json.summary });
+        await loadAndVerify();
+      }
+    } catch {}
   }
 
   async function verifyAndSync(connId: string, platform: string, uid: string) {
