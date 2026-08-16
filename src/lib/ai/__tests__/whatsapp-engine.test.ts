@@ -514,6 +514,23 @@ describe("WhatsApp fast reply path", () => {
     expect(state.funnelEvents.some((e) => e.event_type === "INBOUND_CONVERSATION" && e.to_stage === "CONVERSATION")).toBe(true);
   });
 
+  it("skips group messages (@g.us) without creating leads or replies", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+
+    const result = await processIncomingWhatsAppMessage(
+      supabase,
+      { ...baseInput, remoteJid: "120363123456789@g.us", messageId: "group-1" },
+      { sendFn }
+    );
+
+    expect(result.processed).toBe(false);
+    expect(result.skippedReason).toBe("group_message");
+    expect(sendFn).not.toHaveBeenCalled();
+    expect(runAiTaskMock).not.toHaveBeenCalled();
+  });
+
   it("marks send failure without crashing when sendFn throws", async () => {
     const state = makeState();
     const supabase = makeMockSupabase(state);

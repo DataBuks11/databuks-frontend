@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { websiteAnalysisSchema } from "@/lib/ai/schemas";
 
 const validAnalysis = {
@@ -63,6 +63,7 @@ const validAnalysis = {
   business_signals: [{ signal: "Hiring now", evidence: "Careers page lists 5 roles", source_url: "https://example.com/careers" }],
   brand_voice: ["professional", "confident"],
   tone: "friendly",
+  competitors: [],
   confidence: 0.85,
 };
 
@@ -94,6 +95,7 @@ describe("websiteAnalysisSchema", () => {
       business_signals: [],
       brand_voice: [],
       tone: null,
+      competitors: [],
       confidence: 0.1,
     };
     expect(websiteAnalysisSchema.safeParse(minimal).success).toBe(true);
@@ -131,5 +133,35 @@ describe("websiteAnalysisSchema", () => {
       services: [{ ...validAnalysis.services[0], name: 42 }],
     };
     expect(websiteAnalysisSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("accepts evidence-backed competitors", () => {
+    const withCompetitors = {
+      ...validAnalysis,
+      competitors: [
+        {
+          name: "Acme SaaS",
+          website_url: "https://acme.example",
+          reason: "Site compares itself to Acme on its comparison page",
+          source_url: "https://example.com/compare/acme",
+          evidence_quote: "How we compare to Acme",
+          evidence_type: "comparison_page",
+          confidence: 0.85,
+        },
+      ],
+    };
+    expect(websiteAnalysisSchema.safeParse(withCompetitors).success).toBe(true);
+  });
+
+  it("rejects competitors with invalid evidence_type", () => {
+    const bad = {
+      ...validAnalysis,
+      competitors: [{ name: "X", evidence_type: "guessed", confidence: 0.9 }],
+    };
+    expect(websiteAnalysisSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("accepts empty competitors array (honest empty)", () => {
+    expect(websiteAnalysisSchema.safeParse({ ...validAnalysis, competitors: [] }).success).toBe(true);
   });
 });

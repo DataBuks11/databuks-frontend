@@ -95,7 +95,16 @@ interface ScanResults {
   testimonials?: { quote: string; author?: string | null; source_url?: string | null }[];
   contact_info?: { email?: string | null; phone?: string | null; address?: string | null; source_url?: string | null } | null;
   content_themes?: { title: string; description?: string | null; source_url?: string | null }[];
-  business_signals?: { signal: string; evidence?: string | null; source_url?: string | null }[];
+  business_signals?: { signal: string; evidence?: string | null; source_url?: string | null; confidence?: number | null }[];
+  competitors?: {
+    name: string;
+    website_url?: string | null;
+    reason?: string | null;
+    source_url?: string | null;
+    evidence_quote?: string | null;
+    evidence_type?: string | null;
+    confidence?: number | null;
+  }[];
   brand_voice?: string[];
   tone?: string | null;
   confidence?: number;
@@ -192,7 +201,16 @@ function buildView(results: ScanResults | null | undefined): WebsiteData {
       content: theme.description ?? "",
       category: "Content Theme",
     })),
-    competitors: [],
+    competitors: (results.competitors ?? []).map((competitor) => ({
+      name: competitor.name,
+      url: competitor.website_url ?? (competitor.source_url ?? ""),
+      strengths: competitor.reason ? [competitor.reason] : [],
+      weaknesses: [
+        `Source: ${competitor.source_url ?? "website"}`,
+        ...(competitor.evidence_quote ? [`"${competitor.evidence_quote}"`] : []),
+        ...(typeof competitor.confidence === "number" ? [`Confidence: ${Math.round(competitor.confidence * 100)}%`] : []),
+      ],
+    })),
     products: (results.products ?? []).map((p) => {
       const priceItem = (results.pricing ?? []).find(
         (item) =>
@@ -1064,7 +1082,7 @@ export default function WebsiteIntelligencePage() {
               ) : (
                 <CardContent className="py-8 text-center text-sm text-white/40">
                   <Shield className="h-6 w-6 mx-auto mb-3 text-white/20" />
-                  No competitor data available.
+                  No reliable competitor data found.
                 </CardContent>
               )}
             </Card>

@@ -42,8 +42,10 @@ describe.skipIf(!isConfigured)("Website scanner honesty - any real business site
         content_themes: (analysis.content_themes ?? []).length,
         business_signals: (analysis.business_signals ?? []).length,
         brand_voice: (analysis.brand_voice ?? []).length,
+        competitors: (analysis.competitors ?? []).length,
       };
       console.log(`[SECTIONS] ${JSON.stringify(sections)}`);
+      console.log(`[COMPETITORS] ${JSON.stringify(analysis.competitors ?? [])}`);
       console.log(`[EVIDENCE] sample service: ${JSON.stringify(analysis.services?.[0] ?? null)}`);
       console.log(`[HONESTY] confidence=${analysis.confidence} (empty sections stay empty when site lacks that content)`);
     },

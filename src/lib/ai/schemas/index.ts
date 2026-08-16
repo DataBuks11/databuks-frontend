@@ -304,6 +304,18 @@ export const whatsappReplySchema = z
   })
   .strict();
 
+export const websiteCompetitorSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    website_url: z.string().max(500).nullable(),
+    reason: z.string().max(500).nullable(),
+    source_url: z.string().max(500).nullable(),
+    evidence_quote: z.string().max(800).nullable(),
+    evidence_type: z.enum(["mentioned_on_website", "comparison_page", "outbound_link"]),
+    confidence: confidence,
+  })
+  .strict();
+
 export const websiteAnalysisSchema = z
   .object({
     task: z.literal("website_analysis"),
@@ -327,6 +339,7 @@ export const websiteAnalysisSchema = z
     business_signals: z.array(websiteSignalSchema).max(30),
     brand_voice: z.array(z.string().min(1).max(300)).max(20),
     tone: z.string().max(300).nullable(),
+    competitors: z.array(websiteCompetitorSchema).max(20),
     confidence: confidence,
     hiring_signals: z.array(websiteSignalSchema).max(10).optional(),
     technology_signals: z.array(websiteSignalSchema).max(10).optional(),
@@ -362,6 +375,7 @@ export const websiteFactSchema = z
       "announcement",
       "buying_signal",
       "business_maturity",
+      "competitor",
       "other",
     ]),
     source_url: z.string().max(500).nullable(),
