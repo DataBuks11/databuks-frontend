@@ -1,10 +1,11 @@
-export interface SocialProviderAdapter {
+﻿export interface SocialProviderAdapter {
   readonly provider: string;
-  getAccountInfo(accountId: string): Promise<{ valid: boolean; status: string; accountId: string }>;
-  syncRecentEvents(accountId: string, limit?: number): Promise<SocialEventInput[]>;
+  getAccountInfo(accountId: string, entityId?: string): Promise<{ valid: boolean; status: string; accountId: string }>;
+  syncRecentEvents(accountId: string, entityId?: string, limit?: number): Promise<SocialEventInput[]>;
   executeAction(action: {
     actionType: string;
     accountId: string;
+    entityId?: string;
     targetId?: string | null;
     content?: string | null;
   }): Promise<{ success: boolean; providerResponse: Record<string, any>; errorCode?: string; errorMessage?: string }>;

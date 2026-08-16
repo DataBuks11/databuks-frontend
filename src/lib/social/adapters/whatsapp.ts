@@ -1,4 +1,4 @@
-import type { SocialEventInput, SocialProviderAdapter } from "./types";
+﻿import type { SocialEventInput, SocialProviderAdapter } from "./types";
 
 const BAILEYS_URL = process.env.BAILEYS_SERVER_URL;
 const BAILEYS_KEY = process.env.BAILEYS_API_KEY || "dev-key";
@@ -6,7 +6,7 @@ const BAILEYS_KEY = process.env.BAILEYS_API_KEY || "dev-key";
 export const whatsappAdapter: SocialProviderAdapter = {
   provider: "whatsapp",
 
-  async getAccountInfo(accountId: string) {
+  async getAccountInfo(accountId: string, _entityId?: string) {
     if (!BAILEYS_URL) return { valid: false, status: "unconfigured", accountId };
     try {
       const res = await fetch(`${BAILEYS_URL.replace(/\/+$/, "")}/status/${accountId}`, {
@@ -19,7 +19,7 @@ export const whatsappAdapter: SocialProviderAdapter = {
     }
   },
 
-  async syncRecentEvents(accountId: string, limit = 25): Promise<SocialEventInput[]> {
+  async syncRecentEvents(accountId: string, _entityId?: string, limit = 25): Promise<SocialEventInput[]> {
     if (!BAILEYS_URL) return [];
     try {
       const res = await fetch(

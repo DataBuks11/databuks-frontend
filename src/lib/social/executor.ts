@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+﻿import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAdapterForProvider } from "./adapters/registry";
 import { capabilitySupports, getCapabilitiesForConnection } from "./capabilities";
 import { idempotencyKey } from "../ai/utils/idempotency";
@@ -172,6 +172,7 @@ export async function executeSocialAction(
   const result = await adapter.executeAction({
     actionType: input.actionType,
     accountId: connection.connection_id ?? input.userId,
+    entityId: input.userId,
     targetId: input.targetId ?? null,
     content: input.content ?? null,
   });

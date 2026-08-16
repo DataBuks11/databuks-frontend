@@ -1,7 +1,18 @@
-import type { SocialEventInput, SocialProviderAdapter } from "./types";
+﻿import type { SocialEventInput, SocialProviderAdapter } from "./types";
 
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY;
-const COMPOSIO_BASE = "https://backend.composio.dev";
+const COMPOSIO_BASE = "https://backend.composio.dev/api/v3.1";
+
+const TOOL_SLUGS: Record<string, string> = {
+  READ_POSTS: "INSTAGRAM_GET_USER_MEDIA",
+  READ_COMMENTS: "INSTAGRAM_GET_IG_MEDIA_COMMENTS",
+  COMMENT_REPLY: "INSTAGRAM_REPLY_TO_COMMENT",
+  CREATE_COMMENT: "INSTAGRAM_POST_IG_MEDIA_COMMENTS",
+  PUBLISH: "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
+  SEND_MESSAGE: "INSTAGRAM_SEND_TEXT_MESSAGE",
+  READ_MESSAGES: "INSTAGRAM_LIST_ALL_MESSAGES",
+  GET_USER_INFO: "INSTAGRAM_GET_USER_INFO",
+};
 
 interface ComposioResponse {
   ok: boolean;
@@ -9,18 +20,27 @@ interface ComposioResponse {
   data: any;
 }
 
-async function composioRequest(path: string, method: "GET" | "POST", body?: Record<string, any>): Promise<ComposioResponse> {
+async function composioExecute(
+  toolSlug: string,
+  connectedAccountId: string,
+  entityId: string,
+  instruction: string
+): Promise<ComposioResponse> {
   if (!COMPOSIO_API_KEY) {
     return { ok: false, status: 0, data: { error: "COMPOSIO_API_KEY not configured" } };
   }
   try {
-    const response = await fetch(`${COMPOSIO_BASE}${path}`, {
-      method,
+    const response = await fetch(`${COMPOSIO_BASE}/tools/execute/${toolSlug}`, {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": COMPOSIO_API_KEY,
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      body: JSON.stringify({
+        connected_account_id: connectedAccountId,
+        entity_id: entityId,
+        text: instruction,
+      }),
     });
     let data: any = null;
     try {
@@ -34,65 +54,83 @@ async function composioRequest(path: string, method: "GET" | "POST", body?: Reco
   }
 }
 
-const ACTION_NAMES: Record<string, string> = {
-  READ_POSTS: "INSTAGRAM_LIST_POSTS",
-  READ_COMMENTS: "INSTAGRAM_GET_COMMENTS",
-  COMMENT_REPLY: "INSTAGRAM_REPLY_COMMENT",
-  CREATE_COMMENT: "INSTAGRAM_CREATE_COMMENT",
-  PUBLISH: "INSTAGRAM_CREATE_MEDIA_POST",
-  SEND_MESSAGE: "INSTAGRAM_SEND_MESSAGE",
-  READ_MESSAGES: "INSTAGRAM_LIST_MESSAGES",
-};
-
 export const composioInstagramAdapter: SocialProviderAdapter = {
   provider: "instagram",
 
-  async getAccountInfo(accountId: string) {
-    const res = await composioRequest(`/api/v3.1/connected_accounts?user_id=${accountId}`, "GET");
-    if (!res.ok) return { valid: false, status: "unavailable", accountId };
-    const items = Array.isArray(res.data?.items) ? res.data.items : Array.isArray(res.data) ? res.data : [];
-    const active = items.find((a: any) => a?.status === "ACTIVE" && a?.toolkit?.slug === "instagram");
+  async getAccountInfo(accountId: string, entityId: string = "databuks-workspace") {
+    const res = await composioExecute(
+      TOOL_SLUGS.GET_USER_INFO,
+      accountId,
+      entityId,
+      "Get my Instagram account user info"
+    );
+    const info = res.data?.data ?? res.data ?? {};
+    const successFlag = res.data?.successful ?? res.data?.data?.successful;
+    if (process.env.DEBUG_COMPOSIO === "1") {
+      console.log("[COMPOSIO_DEBUG] getAccountInfo res:", JSON.stringify(res).slice(0, 500));
+    }
+    if (!res.ok || info?.error || (successFlag !== undefined && successFlag !== true) || (successFlag === undefined && Object.keys(info).length === 0)) {
+      return { valid: false, status: info?.error?.message ?? res.data?.error?.message ?? "execution_failed", accountId };
+    }
     return {
-      valid: !!active,
-      status: active?.status ?? "not_found",
-      accountId: active?.id ?? accountId,
-    };
+      valid: true,
+      status: "active",
+      accountId,
+      accountType: info.account_type ?? null,
+      username: info.username ?? null,
+      followers: info.followers_count ?? null,
+    } as any;
   },
 
-  async syncRecentEvents(accountId: string, limit = 25): Promise<SocialEventInput[]> {
-    const res = await composioRequest(
-      `/api/v3/actions/${encodeURIComponent(ACTION_NAMES.READ_COMMENTS)}/execute`,
-      "POST",
-      { connectedAccountId: accountId, input: { limit } }
+  async syncRecentEvents(accountId: string, entityId: string = "databuks-workspace", limit = 10): Promise<SocialEventInput[]> {
+    const mediaRes = await composioExecute(
+      TOOL_SLUGS.READ_POSTS,
+      accountId,
+      entityId,
+      `List my most recent Instagram media posts (limit ${limit})`
     );
-    if (!res.ok || !res.data?.successful) {
-      return [];
-    }
-    const comments = Array.isArray(res.data.data) ? res.data.data : [];
+    if (!mediaRes.ok || (mediaRes.data?.successful ?? mediaRes.data?.data?.successful) !== true) return [];
+
+    const media = mediaRes.data?.data ?? [];
+    const mediaList = Array.isArray(media) ? media : Array.isArray(media?.data) ? media.data : [];
     const events: SocialEventInput[] = [];
-    for (const comment of comments.slice(0, limit)) {
-      const raw = typeof comment === "string" ? { text: comment } : comment;
-      events.push({
-        provider: "instagram",
-        account_id: accountId,
-        external_event_id: String(raw?.id ?? `ig-comment-${events.length}`),
-        event_type: "comment",
-        author_id: raw?.user?.id ?? raw?.username ?? null,
-        author_name: raw?.user?.username ?? null,
-        comment_id: raw?.id ?? null,
-        post_id: raw?.media?.id ?? null,
-        content: raw?.text ?? null,
-        url: raw?.permalink ?? null,
-        timestamp: raw?.timestamp ?? null,
-        raw_reference: raw,
-      });
+
+    for (const item of mediaList.slice(0, 5)) {
+      const mediaId = item?.id ?? item?.media_id ?? null;
+      if (!mediaId) continue;
+      const commentsRes = await composioExecute(
+        TOOL_SLUGS.READ_COMMENTS,
+        accountId,
+        entityId,
+        `Get comments on my Instagram media with id ${mediaId}`
+      );
+      if (!commentsRes.ok || (commentsRes.data?.successful ?? commentsRes.data?.data?.successful) !== true) continue;
+      const comments = commentsRes.data?.data ?? [];
+      for (const comment of Array.isArray(comments) ? comments : []) {
+        const commentId = comment?.id ?? comment?.comment_id ?? null;
+        if (!commentId) continue;
+        events.push({
+          provider: "instagram",
+          account_id: accountId,
+          external_event_id: `ig-comment-${commentId}`,
+          event_type: "comment",
+          author_id: comment?.user?.id ?? comment?.username ?? null,
+          author_name: comment?.user?.username ?? comment?.username ?? null,
+          post_id: mediaId,
+          comment_id: commentId,
+          content: comment?.text ?? comment?.content ?? null,
+          url: null,
+          timestamp: comment?.timestamp ?? null,
+          raw_reference: comment,
+        });
+      }
     }
     return events;
   },
 
   async executeAction(action) {
-    const actionName = ACTION_NAMES[action.actionType];
-    if (!actionName) {
+    const toolSlug = TOOL_SLUGS[action.actionType];
+    if (!toolSlug) {
       return {
         success: false,
         providerResponse: {},
@@ -100,31 +138,52 @@ export const composioInstagramAdapter: SocialProviderAdapter = {
         errorMessage: `Instagram adapter does not support ${action.actionType}`,
       };
     }
-    const input: Record<string, any> = {};
-    if (action.targetId) input.targetId = action.targetId;
-    if (action.content) input.text = action.content;
-    const res = await composioRequest(
-      `/api/v3/actions/${encodeURIComponent(actionName)}/execute`,
-      "POST",
-      { connectedAccountId: action.accountId, input }
-    );
+
+    let instruction: string;
+    switch (action.actionType) {
+      case "COMMENT_REPLY":
+        instruction = `Reply to the Instagram comment with comment id ${action.targetId ?? ""}: "${action.content ?? ""}"`;
+        break;
+      case "CREATE_COMMENT":
+        instruction = `Post this comment on the Instagram media: "${action.content ?? ""}"`;
+        break;
+      case "SEND_MESSAGE":
+        instruction = `Send this message to the Instagram user (target: ${action.targetId ?? ""}): "${action.content ?? ""}"`;
+        break;
+      case "PUBLISH":
+        instruction = `Publish this as an Instagram post: "${action.content ?? ""}"`;
+        break;
+      default:
+        instruction = action.content ?? "Execute the requested action";
+    }
+
+    const res = await composioExecute(toolSlug, action.accountId, action.entityId ?? "databuks-workspace", instruction);
     if (!res.ok) {
       return {
         success: false,
         providerResponse: res.data ?? {},
         errorCode: `COMPOSIO_HTTP_${res.status}`,
-        errorMessage:
-          res.data?.message ?? res.data?.error ?? `Composio action ${actionName} failed (HTTP ${res.status})`,
+        errorMessage: res.data?.error?.message ?? `Composio tool ${toolSlug} failed (HTTP ${res.status})`,
       };
     }
-    if (res.data?.successful === false) {
+    const successFlag = res.data?.successful ?? res.data?.data?.successful;
+    const executed = res.data?.data ?? res.data ?? {};
+    if (successFlag === false) {
+      return {
+        success: false,
+        providerResponse: executed,
+        errorCode: "PROVIDER_ERROR",
+        errorMessage: executed?.error?.message ?? executed?.error ?? "Provider rejected the action",
+      };
+    }
+    if (successFlag !== true) {
       return {
         success: false,
         providerResponse: res.data,
         errorCode: "PROVIDER_ERROR",
-        errorMessage: res.data?.error ?? "Provider rejected the action",
+        errorMessage: res.data?.error?.message ?? "Provider execution returned no success",
       };
     }
-    return { success: true, providerResponse: res.data ?? {} };
+    return { success: true, providerResponse: executed };
   },
 };

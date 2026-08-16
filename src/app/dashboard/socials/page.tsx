@@ -4,13 +4,13 @@ import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   RefreshCw, ExternalLink, Unlink, Link2, Instagram, Facebook,
-  MessageCircle, Send, QrCode, Bot, Key, Check, X
+  MessageCircle, Send, QrCode, Bot, Key, Check, X, Sparkles, Activity
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
 
@@ -72,6 +72,8 @@ export default function SocialsPage() {
   const [tgToken, setTgToken] = useState("");
   const [tgLoading, setTgLoading] = useState(false);
   const [tgVerify, setTgVerify] = useState<{ valid: boolean; name?: string; error?: string } | null>(null);
+  const [capabilities, setCapabilities] = useState<any[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
 
   const supabase = createClient();
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -94,6 +96,12 @@ export default function SocialsPage() {
       await syncFromComposio();
       await checkWhatsAppStatus();
       await checkTelegramStatus();
+      fetch("/api/social/capabilities").then((r) => r.json()).then((json) => {
+        if (!json.error) setCapabilities(json.accounts ?? []);
+      }).catch(() => {});
+      fetch("/api/ai/social/activity").then((r) => r.json()).then((json) => {
+        if (!json.error) setActivity(json.feed ?? []);
+      }).catch(() => {});
 
       const params = new URLSearchParams(window.location.search);
       const platform = params.get("platform");
@@ -473,6 +481,63 @@ export default function SocialsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-violet-400" />AI Capabilities</CardTitle>
+            <CardDescription>What the connected accounts actually support</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {capabilities.length === 0 ? (
+              <p className="text-sm text-white/40">Connect an account to see its AI capabilities.</p>
+            ) : (
+              capabilities.map((cap: any) => (
+                <div key={`${cap.provider}:${cap.account_id ?? "session"}`} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium capitalize">{cap.provider}</span>
+                    <Badge variant={cap.token_status === "valid" ? "success" : "warning"}>{cap.token_status}</Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cap.can_publish && <Badge variant="info">publish</Badge>}
+                    {cap.can_reply_comments && <Badge variant="info">reply comments</Badge>}
+                    {cap.can_read_comments && <Badge variant="info">read comments</Badge>}
+                    {cap.can_send_messages && <Badge variant="info">DMs</Badge>}
+                    {cap.can_read_engagement && <Badge variant="info">engagement</Badge>}
+                    {!cap.can_publish && !cap.can_reply_comments && !cap.can_send_messages && (
+                      <span className="text-xs text-white/40">Read-only connection</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Activity className="w-4 h-4 text-sky-400" />AI Activity</CardTitle>
+            <CardDescription>Decisions and actions from the social AI engine</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {activity.length === 0 ? (
+              <p className="text-sm text-white/40 text-center py-6">No AI activity yet. Comments and messages will appear here once processed.</p>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {activity.map((item: any, i: number) => (
+                  <div key={i} className="flex items-start justify-between gap-3 rounded-lg border border-white/[0.05] bg-white/[0.02] px-3 py-2">
+                    <div>
+                      <p className="text-sm text-white/70 capitalize">{item.message}</p>
+                      {item.error && <p className="text-xs text-amber-400/80 mt-0.5">{item.error}</p>}
+                    </div>
+                    <span className="text-xs text-white/30 shrink-0">{new Date(item.at).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
