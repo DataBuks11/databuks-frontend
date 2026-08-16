@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { finalizeScanFromStoredPages } from "@/lib/ai/website-scanner/scanner";
 
@@ -26,8 +27,15 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = adminClient();
-    await finalizeScanFromStoredPages(supabase, scanId, userId);
-    return NextResponse.json({ ok: true });
+    after(async () => {
+      try {
+        await finalizeScanFromStoredPages(supabase, scanId, userId);
+      } catch (err: any) {
+        console.error(`[API:ai/website/analyze] ${err?.message}`);
+      }
+    });
+
+    return NextResponse.json({ accepted: true }, { status: 202 });
   } catch (err: any) {
     console.error(`[API:ai/website/analyze] ${err?.message}`);
     return NextResponse.json({ error: "Analysis failed" }, { status: 500 });
