@@ -373,7 +373,8 @@ export function buildWebsiteFactsPrompt(pages: CorpusPage[], siteType: string = 
 export function buildWebsiteSynthesisPrompt(
   facts: Record<string, any>[],
   socialLinks: { platform: string; url: string; source_url: string }[],
-  siteType: string = "business"
+  siteType: string = "business",
+  coverageNote?: string
 ): PromptTemplate {
   const system = [
     "You synthesize verified business facts into a structured business profile.",
@@ -393,6 +394,7 @@ export function buildWebsiteSynthesisPrompt(
 
   const user = [
     `Task: synthesize the business profile from the verified facts below. Detected website type: ${siteType}.`,
+    coverageNote ? `COVERAGE: ${coverageNote}` : "",
     socialBlock,
     "VERIFIED FACTS:",
     facts

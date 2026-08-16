@@ -31,8 +31,7 @@ export const SCAN_PROGRESS_LABELS: Record<WebsiteScanStatus, string> = {
 
 const SINGLE_STAGE_MAX_CHARS = 90000;
 const SINGLE_STAGE_MAX_PAGES = 60;
-const FULL_CORPUS_MAX_CHARS = 1400000;
-const MAX_ANALYSIS_CHUNKS = 2;
+const FULL_CORPUS_MAX_CHARS = 500000;
 const MAX_CHARS_PER_PAGE_IN_CORPUS = 10000;
 
 function adminClient() {
@@ -82,16 +81,14 @@ function chunkCorpus(pages: CorpusPage[]): CorpusPage[][] {
   let current: CorpusPage[] = [];
   let currentChars = 0;
   for (const page of pages) {
-    if (currentChars + page.text.length > FULL_CORPUS_MAX_CHARS / MAX_ANALYSIS_CHUNKS && current.length > 0) {
-      chunks.push(current);
-      current = [];
-      currentChars = 0;
+    if (currentChars + page.text.length > FULL_CORPUS_MAX_CHARS && current.length > 0) {
+      break;
     }
     current.push(page);
     currentChars += page.text.length;
   }
   if (current.length > 0) chunks.push(current);
-  return chunks.slice(0, MAX_ANALYSIS_CHUNKS);
+  return chunks;
 }
 
 async function analyzeWebsite(
@@ -115,6 +112,7 @@ async function analyzeWebsite(
 
   const chunks = chunkCorpus(pages);
   const allFacts: Record<string, any>[] = [];
+  const pagesUsed = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   for (const chunk of chunks) {
     const factsPrompt = buildWebsiteFactsPrompt(chunk, siteType);
     const rawFacts = await provider.completeJson(factsPrompt);
@@ -124,6 +122,7 @@ async function analyzeWebsite(
     }
     allFacts.push(...(factsValidation.data.facts as Record<string, any>[]));
   }
+  const corpusCoverage = pagesUsed < pages.length ? { pages_used: pagesUsed, pages_total: pages.length } : null;
 
   const seenFacts = new Set<string>();
   const dedupedFacts = allFacts.filter((fact) => {
@@ -133,7 +132,12 @@ async function analyzeWebsite(
     return true;
   });
 
-  const synthesisPrompt = buildWebsiteSynthesisPrompt(dedupedFacts, socialLinks, siteType);
+  const synthesisPrompt = buildWebsiteSynthesisPrompt(
+    dedupedFacts,
+    socialLinks,
+    siteType,
+    corpusCoverage ? ` (coverage: ${corpusCoverage.pages_used}/${corpusCoverage.pages_total} pages analyzed)` : undefined
+  );
   const rawAnalysis = await provider.completeJson(synthesisPrompt);
   const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
   if (!analysisValidation.success) {
