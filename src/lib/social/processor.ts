@@ -36,6 +36,12 @@ export async function getRecentEventsForAuthor(
     .map((e: any) => ({ author_name: e.author_name ?? null, content: e.content ?? "", at: e.created_at ?? null }));
 }
 
+async function trySetStatus(supabase: SupabaseClient, eventId: string, status: string): Promise<void> {
+  try {
+    await supabase.from("social_events").update({ processing_status: status }).eq("id", eventId);
+  } catch {}
+}
+
 export async function processSocialEvent(
   supabase: SupabaseClient,
   userId: string,
@@ -43,7 +49,7 @@ export async function processSocialEvent(
 ): Promise<ProcessedEventResult> {
   const { data: existing } = await supabase
     .from("social_events")
-    .select("id, processing_status")
+    .select("id")
     .eq("user_id", userId)
     .eq("provider", event.provider)
     .eq("external_event_id", String(event.external_event_id))
@@ -52,7 +58,8 @@ export async function processSocialEvent(
     return { status: "DUPLICATE", eventId: existing.id };
   }
 
-  const { data: created, error: insertError } = await supabase
+  let created: any = null;
+  const { data: inserted, error: insertError } = await supabase
     .from("social_events")
     .insert({
       user_id: userId,
@@ -73,17 +80,41 @@ export async function processSocialEvent(
     .select()
     .single();
   if (insertError) {
-    return { status: "FAILED", eventId: undefined };
+    const { data: retried, error: retryError } = await supabase
+      .from("social_events")
+      .insert({
+        user_id: userId,
+        provider: event.provider,
+        account_id: event.account_id ?? null,
+        external_event_id: String(event.external_event_id),
+        event_type: event.event_type ?? "comment",
+        author_id: event.author_id ?? null,
+        author_name: event.author_name ?? null,
+        post_id: event.post_id ?? null,
+        comment_id: event.comment_id ?? null,
+        content: event.content ?? null,
+        url: event.url ?? null,
+        timestamp: event.timestamp ?? null,
+        raw_reference: event.raw_reference ?? {},
+      })
+      .select()
+      .single();
+    if (retryError || !retried) {
+      return { status: "FAILED", eventId: undefined };
+    }
+    created = retried;
+  } else {
+    created = inserted;
   }
   const eventId = created.id;
   const content = typeof event.content === "string" ? event.content : "";
 
   if (content.trim().length === 0) {
-    await supabase.from("social_events").update({ processing_status: "IGNORED" }).eq("id", eventId);
+    await trySetStatus(supabase, eventId, "IGNORED");
     return { status: "IGNORED", eventId };
   }
 
-  await supabase.from("social_events").update({ processing_status: "PROCESSING" }).eq("id", eventId);
+  await trySetStatus(supabase, eventId, "PROCESSING");
 
   try {
     const business = await buildBusinessContext(supabase, userId);
@@ -117,7 +148,10 @@ export async function processSocialEvent(
     });
 
     if (result.status !== "COMPLETED" || !result.output) {
-      await supabase.from("social_events").update({ processing_status: "FAILED" }).eq("id", eventId);
+      if (process.env.DEBUG_PROCESSOR === "1") {
+        console.log("[PROCESSOR_DEBUG] classification failed:", JSON.stringify(result));
+      }
+      await trySetStatus(supabase, eventId, "FAILED");
       return { status: "FAILED", eventId };
     }
 
@@ -186,7 +220,7 @@ export async function processSocialEvent(
       if (!actionError && action) actionId = action.id;
     }
 
-    await supabase.from("social_events").update({ processing_status: "PROCESSED" }).eq("id", eventId);
+    await trySetStatus(supabase, eventId, "PROCESSED");
     return {
       status: "PROCESSED",
       eventId,
@@ -196,7 +230,10 @@ export async function processSocialEvent(
       escalated,
     };
   } catch (error: any) {
-    await supabase.from("social_events").update({ processing_status: "FAILED" }).eq("id", eventId);
+    if (process.env.DEBUG_PROCESSOR === "1") {
+      console.log("[PROCESSOR_DEBUG] exception:", error?.message ?? String(error), error?.stack?.split("\n")?.slice(0, 4)?.join(" | "));
+    }
+    await trySetStatus(supabase, eventId, "FAILED");
     return { status: "FAILED", eventId, classification: null };
   }
 }

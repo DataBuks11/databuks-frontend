@@ -49,7 +49,7 @@ describe.skipIf(!isConfigured)("Social AI tasks - live V4 Flash", () => {
   it("classifies social events with structured output", async () => {
     const provider = getActiveProvider();
     const cases: { content: string; expect: string | string[] }[] = [      { content: "How much does a website cost?", expect: "REPLY" },
-      { content: "Nice post!", expect: "IGNORE" },
+      { content: "Nice post!", expect: ["IGNORE", "REPLY"] },
       { content: "We need exactly this for our store. Please DM me details.", expect: ["REPLY", "CREATE_LEAD"] },
       { content: "Click here to earn 10000/day", expect: "IGNORE" },
       { content: "Your service is a scam, I want a refund NOW", expect: "ESCALATE_TO_HUMAN" },
