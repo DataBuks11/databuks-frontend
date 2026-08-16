@@ -388,7 +388,7 @@ export const websiteFactSchema = z
 export const websiteFactsSchema = z
   .object({
     task: z.literal("page_facts"),
-    facts: z.array(websiteFactSchema).max(60),
+    facts: z.array(websiteFactSchema).max(150),
     missing_info: z.array(z.string().min(1).max(300)).max(15),
   })
   .strict();
