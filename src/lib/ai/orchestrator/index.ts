@@ -34,6 +34,9 @@ function buildRuleContext(
   const message =
     (typeof validated.body === "string" && validated.body) ||
     (typeof validated.suggested_reply === "string" && validated.suggested_reply) ||
+    (typeof validated.reply === "string" && validated.reply) ||
+    (typeof validated.reply_draft === "string" && validated.reply_draft) ||
+    (typeof validated.caption === "string" && validated.caption) ||
     (typeof input.payload?.message === "string" && input.payload.message) ||
     null;
 

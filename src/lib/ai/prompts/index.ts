@@ -13,6 +13,9 @@ export const PROMPT_VERSIONS: Record<AiTaskType, string> = {
   GENERATE_FOLLOWUP: "1.3.0",
   SUMMARIZE_CONVERSATION: "1.3.0",
   GENERATE_WHATSAPP_REPLY: "1.2.0",
+  CLASSIFY_SOCIAL_EVENT: "1.0.0",
+  GENERATE_SOCIAL_REPLY: "1.0.0",
+  GENERATE_SOCIAL_CONTENT: "1.0.0",
 };
 
 export const WEBSITE_SCAN_PROMPT_VERSION = "1.1.0";
@@ -465,6 +468,96 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
       needs_clarification: false,
       ask_one_question: "string or null",
       used_business_fact: "string or null",
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildSocialEventPrompt(ctx: TaskContext, event: { content: string; author_name?: string | null; event_type: string }): PromptTemplate {
+  const system = [
+    "You classify a single social media event (comment/message) for a business.",
+    "Classify honestly from the content. Never invent intent or urgency that the words do not support.",
+    "lead_score: 0-100 evidence-based interest in the business offering. A pricing question or explicit need is strong; a vague compliment is weak; spam/irrelevant is ~0.",
+    "recommended_action: REPLY only when a genuine question or meaningful engagement deserves a public reply. CREATE_LEAD when buying/service intent is clear. ESCALATE_TO_HUMAN for angry customers, legal/payment disputes, or sensitive situations. IGNORE for spam/irrelevant.",
+    "reply_draft: a short, natural, brand-appropriate reply in the author's language. Never fabricate pricing, offers, or promises. Null when no reply is needed.",
+    "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Scores are integers 0-100. Confidence is 0-1.",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `SOCIAL EVENT TYPE: ${event.event_type}`,
+    `AUTHOR: ${event.author_name ?? "unknown"}`,
+    `CONTENT: ${event.content}`,
+    "Return JSON:",
+    JSON.stringify({
+      task: "social_event_classification",
+      classification: "question",
+      intent_score: 70,
+      lead_score: 65,
+      sentiment: "positive",
+      urgency: 50,
+      recommended_action: "REPLY",
+      reply_draft: "string or null",
+      reason: "short explanation",
+      confidence: 0.9,
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildSocialContentPrompt(ctx: TaskContext, request: { topic?: string | null; content_type: string }): PromptTemplate {
+  const system = [
+    "You generate social media content drafts for the business.",
+    "Use the business context: services, brand voice, audience, themes. Never invent facts, statistics, client counts, pricing, or guarantees.",
+    "Content must sound human and specific to this business - no generic marketing filler.",
+    "If the requested topic is not supported by the business context, pick the closest real theme and note it in the topic.",
+    "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Confidence is 0-1.",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `REQUESTED CONTENT TYPE: ${request.content_type}${request.topic ? `\nREQUESTED TOPIC: ${request.topic}` : ""}`,
+    "Return JSON:",
+    JSON.stringify({
+      task: "social_content_draft",
+      content_type: request.content_type,
+      topic: "string",
+      caption: "string",
+      hashtags: ["string"],
+      cta: "string or null",
+      hook: "string or null",
+      platform_variants: { instagram: "string", linkedin: "string" },
+      contains_unverified_claim: false,
+      confidence: 0.9,
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildSocialReplyPrompt(ctx: TaskContext, event: { content: string; author_name?: string | null; post_topic?: string | null }): PromptTemplate {
+  const system = [
+    "You write a public comment reply for a business owner. Short, natural, human.",
+    "Never fabricate pricing, offers, timelines or promises. Never use: Certainly!, Absolutely!, We offer a wide range of.",
+    "Match the commenter's language (English/Hindi/Hinglish). Max 2-3 short sentences. At most one question.",
+    "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Confidence is 0-1.",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `COMMENTER: ${event.author_name ?? "unknown"}`,
+    event.post_topic ? `POST TOPIC: ${event.post_topic}` : "",
+    `COMMENT: ${event.content}`,
+    "Return JSON:",
+    JSON.stringify({
+      task: "social_reply",
+      reply: "your short reply",
+      tone: "friendly",
+      language: "english",
+      contains_claim: false,
+      confidence: 0.9,
     }),
   ].join("\n\n");
 

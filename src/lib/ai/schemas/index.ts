@@ -316,6 +316,71 @@ export const websiteCompetitorSchema = z
   })
   .strict();
 
+export const socialEventClassificationSchema = z
+  .object({
+    task: z.literal("social_event_classification"),
+    classification: z.enum([
+      "positive",
+      "neutral",
+      "negative",
+      "question",
+      "praise",
+      "compliment",
+      "complaint",
+      "buying_intent",
+      "service_interest",
+      "pricing_interest",
+      "partnership",
+      "spam",
+      "irrelevant",
+      "competitor_related",
+      "support_request",
+    ]),
+    intent_score: score,
+    lead_score: score,
+    sentiment: z.enum(["positive", "neutral", "negative"]),
+    urgency: score,
+    recommended_action: z.enum([
+      "IGNORE",
+      "SAVE",
+      "CREATE_LEAD",
+      "UPDATE_LEAD",
+      "REPLY",
+      "CREATE_DM",
+      "ESCALATE_TO_HUMAN",
+    ]),
+    reply_draft: z.string().max(600).nullable(),
+    reason: z.string().max(500),
+    confidence,
+  })
+  .strict();
+
+export const socialReplySchema = z
+  .object({
+    task: z.literal("social_reply"),
+    reply: z.string().min(1).max(600),
+    tone: z.string().max(100),
+    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    contains_claim: z.boolean(),
+    confidence,
+  })
+  .strict();
+
+export const socialContentDraftSchema = z
+  .object({
+    task: z.literal("social_content_draft"),
+    content_type: z.enum(["post", "carousel", "story", "reel_concept"]),
+    topic: z.string().min(1).max(200),
+    caption: z.string().min(1).max(2200),
+    hashtags: z.array(z.string().min(1).max(100)).max(30),
+    cta: z.string().max(300).nullable(),
+    hook: z.string().max(300).nullable(),
+    platform_variants: z.record(z.string().max(2200)).optional(),
+    contains_unverified_claim: z.boolean(),
+    confidence,
+  })
+  .strict();
+
 export const websiteAnalysisSchema = z
   .object({
     task: z.literal("website_analysis"),
@@ -388,7 +453,7 @@ export const websiteFactSchema = z
 export const websiteFactsSchema = z
   .object({
     task: z.literal("page_facts"),
-    facts: z.array(websiteFactSchema).max(150),
+    facts: z.array(websiteFactSchema).max(500),
     missing_info: z.array(z.string().min(1).max(300)).max(15),
   })
   .strict();

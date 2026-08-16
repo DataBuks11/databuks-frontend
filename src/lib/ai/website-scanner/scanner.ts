@@ -31,8 +31,8 @@ export const SCAN_PROGRESS_LABELS: Record<WebsiteScanStatus, string> = {
 
 const SINGLE_STAGE_MAX_CHARS = 90000;
 const SINGLE_STAGE_MAX_PAGES = 60;
-const CHUNK_MAX_CHARS = 45000;
-const MAX_ANALYSIS_CHUNKS = 3;
+const FULL_CORPUS_MAX_CHARS = 1400000;
+const MAX_ANALYSIS_CHUNKS = 2;
 const MAX_CHARS_PER_PAGE_IN_CORPUS = 10000;
 
 function adminClient() {
@@ -82,7 +82,7 @@ function chunkCorpus(pages: CorpusPage[]): CorpusPage[][] {
   let current: CorpusPage[] = [];
   let currentChars = 0;
   for (const page of pages) {
-    if (currentChars + page.text.length > CHUNK_MAX_CHARS && current.length > 0) {
+    if (currentChars + page.text.length > FULL_CORPUS_MAX_CHARS / MAX_ANALYSIS_CHUNKS && current.length > 0) {
       chunks.push(current);
       current = [];
       currentChars = 0;

@@ -1,7 +1,14 @@
 import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
 import type { TaskAction } from "../actions";
 import { TASK_ACTIONS } from "../actions";
-import { buildPrompt, buildWhatsAppReplyPrompt, type PromptTemplate } from "../prompts";
+import {
+  buildPrompt,
+  buildSocialContentPrompt,
+  buildSocialEventPrompt,
+  buildSocialReplyPrompt,
+  buildWhatsAppReplyPrompt,
+  type PromptTemplate,
+} from "../prompts";
 import {
   buyingSignalSchema,
   enrichSchema,
@@ -11,6 +18,9 @@ import {
   outreachSchema,
   qualificationSchema,
   replyAnalysisSchema,
+  socialContentDraftSchema,
+  socialEventClassificationSchema,
+  socialReplySchema,
   summarizeSchema,
   urgencySchema,
   whatsappReplySchema,
@@ -131,5 +141,27 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
+  },
+  CLASSIFY_SOCIAL_EVENT: {
+    schema: socialEventClassificationSchema,
+    rules: [],
+    buildPrompt: (ctx) => buildSocialEventPrompt(ctx, (ctx as any).socialEvent ?? { content: "", event_type: "comment" }),
+    action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
+    decisionOf: (validated) => validated.recommended_action ?? "classified",
+  },
+  GENERATE_SOCIAL_REPLY: {
+    schema: socialReplySchema,
+    rules: ["LEAD_018"],
+    buildPrompt: (ctx) => buildSocialReplyPrompt(ctx, (ctx as any).socialEvent ?? { content: "" }),
+    action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
+    decisionOf: () => "social_reply",
+  },
+  GENERATE_SOCIAL_CONTENT: {
+    schema: socialContentDraftSchema,
+    rules: [],
+    buildPrompt: (ctx) =>
+      buildSocialContentPrompt(ctx, (ctx as any).contentRequest ?? { topic: null, content_type: "post" }),
+    action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
+    decisionOf: () => "content_draft",
   },
 };
