@@ -56,6 +56,10 @@ export function normalizeWhatsAppPhone(remoteJid: string): string | null {
   return cleaned.length >= 8 ? cleaned : null;
 }
 
+export function isGroupJid(remoteJid: string): boolean {
+  return /@g\.us$/i.test(remoteJid);
+}
+
 async function defaultSendReply(input: { userId: string; jid: string; message: string }): Promise<void> {
   const baseUrl = process.env.BAILEYS_SERVER_URL;
   const apiKey = process.env.BAILEYS_API_KEY;
@@ -180,6 +184,10 @@ export async function processIncomingWhatsAppMessage(
   const sendReply = options.sendReply ?? true;
   const sendFn = options.sendFn ?? defaultSendReply;
   const presenceFn = options.presenceFn ?? defaultSendPresence;
+
+  if (isGroupJid(input.remoteJid)) {
+    return { processed: false, skippedReason: "group_message", replySent: false };
+  }
 
   const phone = normalizeWhatsAppPhone(input.remoteJid);
   if (!phone) return { processed: false, skippedReason: "invalid_jid", replySent: false };

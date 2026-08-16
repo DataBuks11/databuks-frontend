@@ -1,130 +1,123 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Eye,
-  Zap,
-  Activity,
-  DollarSign,
-  TrendingUp,
-  TrendingDown,
-  Download,
   Users,
   MessageSquare,
   Target,
   Calendar,
+  Globe,
+  Zap,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChartArea } from "@/components/charts/area-chart";
-import { ChartLine } from "@/components/charts/line-chart";
-import { useAnalytics } from "@/hooks/use-analytics";
 import { cn, formatNumber } from "@/lib/utils";
 
-const dateRanges = ["7d", "30d", "90d", "12m"] as const;
+const dateRanges = ["7d", "30d", "90d"] as const;
 type DateRange = (typeof dateRanges)[number];
 
-const statCards = [
-  {
-    title: "Reach",
-    value: "184.2K",
-    change: "+12.3%",
-    icon: Eye,
-    trend: "up" as const,
-  },
-  {
-    title: "Impressions",
-    value: "492.1K",
-    change: "+18.7%",
-    icon: Zap,
-    trend: "up" as const,
-  },
-  {
-    title: "Engagement Rate",
-    value: "13.5%",
-    change: "+2.1%",
-    icon: Activity,
-    trend: "up" as const,
-  },
-  {
-    title: "Revenue",
-    value: "$284.5K",
-    change: "+22.4%",
-    icon: DollarSign,
-    trend: "up" as const,
-  },
-];
-
-const channelPerformance = [
-  { platform: "Instagram", value: 38, color: "bg-blue-500" },
-  { platform: "LinkedIn", value: 27, color: "bg-sky-400" },
-  { platform: "Facebook", value: 18, color: "bg-indigo-500" },
-  { platform: "WhatsApp", value: 12, color: "bg-emerald-500" },
-  { platform: "Telegram", value: 5, color: "bg-cyan-400" },
-];
-
-function ChartSkeleton() {
-  return (
-    <Card className="glass-card rounded-2xl border-white/[0.08]">
-      <CardHeader>
-        <Skeleton className="h-5 w-32" />
-        <Skeleton className="h-3.5 w-48 mt-1" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton className="h-[260px] w-full rounded-xl" />
-      </CardContent>
-    </Card>
-  );
+interface AnalyticsResponse {
+  overview: {
+    totalLeads: number;
+    newLeads7d: number;
+    qualifiedLeads: number;
+    conversations: number;
+    totalMessages: number;
+    meetingsBooked: number;
+    meetingsHeld: number;
+    websiteScans: number;
+    conversionRate: number | null;
+  };
+  buckets: { day: string; leads: number; conversations: number; messages: number; meetings: number }[];
+  hasData: boolean;
 }
 
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState<DateRange>("30d");
-  const rangeParam = dateRange === "12m" ? "90d" : dateRange;
-  const { data: analyticsData, loading, error, refetch } = useAnalytics(rangeParam);
+  const [data, setData] = useState<AnalyticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const miniCards = useMemo(() => {
-    const followers = analyticsData?.followers ?? 0;
-    const replies = analyticsData?.replies ?? 0;
-    const qualifiedLeads = analyticsData?.qualifiedLeads ?? 0;
-    const meetings = analyticsData?.meetings ?? 0;
+  useEffect(() => {
+    let cancelled = false;
+    const days = dateRange === "7d" ? 7 : dateRange === "30d" ? 30 : 90;
+    setLoading(true);
+    fetch(`/api/analytics?days=${days}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json.error) throw new Error(json.error);
+        setData(json);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dateRange]);
+
+  const cards = useMemo(() => {
+    const o = data?.overview;
     return [
-      {
-        title: "Followers",
-        value: formatNumber(followers),
-        icon: Users,
-        color: "text-blue-400",
-        bg: "bg-blue-400/10",
-      },
-      {
-        title: "Replies",
-        value: formatNumber(replies),
-        icon: MessageSquare,
-        color: "text-violet-400",
-        bg: "bg-violet-400/10",
-      },
-      {
-        title: "Qualified Leads",
-        value: formatNumber(qualifiedLeads),
-        icon: Target,
-        color: "text-emerald-400",
-        bg: "bg-emerald-400/10",
-      },
-      {
-        title: "Meetings",
-        value: meetings,
-        icon: Calendar,
-        color: "text-amber-400",
-        bg: "bg-amber-400/10",
-      },
+      { title: "Total Leads", value: o?.totalLeads ?? 0, sub: `${o?.newLeads7d ?? 0} new in last 7 days`, icon: Users, color: "text-blue-400", bg: "bg-blue-400/10" },
+      { title: "Qualified Leads", value: o?.qualifiedLeads ?? 0, sub: o && o.conversionRate !== null ? `${o.conversionRate}% converted to meetings` : "no qualified leads yet", icon: Target, color: "text-emerald-400", bg: "bg-emerald-400/10" },
+      { title: "Conversations", value: o?.conversations ?? 0, sub: `${o?.totalMessages ?? 0} total messages`, icon: MessageSquare, color: "text-violet-400", bg: "bg-violet-400/10" },
+      { title: "Meetings Booked", value: o?.meetingsBooked ?? 0, sub: `${o?.meetingsHeld ?? 0} held`, icon: Calendar, color: "text-amber-400", bg: "bg-amber-400/10" },
+      { title: "Website Scans", value: o?.websiteScans ?? 0, sub: "completed scans", icon: Globe, color: "text-sky-400", bg: "bg-sky-400/10" },
     ];
-  }, [analyticsData]);
+  }, [data]);
+
+  const leadChart = useMemo(
+    () =>
+      (data?.buckets ?? []).map((b) => ({
+        day: b.day.slice(5).replace("-", "/"),
+        value: b.leads,
+      })),
+    [data]
+  );
+
+  const conversationChart = useMemo(
+    () =>
+      (data?.buckets ?? []).map((b) => ({
+        day: b.day.slice(5).replace("-", "/"),
+        value: b.messages,
+      })),
+    [data]
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-40" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-28 rounded-2xl" />
+          ))}
+        </div>
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="glass-card">
+        <CardContent className="py-10 text-center">
+          <p className="text-sm text-white/60">Could not load analytics: {error}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-8">
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -132,298 +125,79 @@ export default function AnalyticsPage() {
         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
       >
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-            Analytics
-          </h1>
-          <p className="text-white/50 mt-1 text-sm">
-            Track your performance and growth metrics
-          </p>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Analytics</h1>
+          <p className="text-white/50 mt-1 text-sm">Real activity from your workspace</p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.02] p-0.5">
-            {dateRanges.map((range) => (
-              <button
-                key={range}
-                onClick={() => setDateRange(range)}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200",
-                  dateRange === range
-                    ? "bg-white/10 text-white shadow-sm"
-                    : "text-white/50 hover:text-white/80"
-                )}
-              >
-                {range}
-              </button>
-            ))}
-          </div>
-          <Button variant="outline" size="sm" className="gap-2">
-            <Download className="w-4 h-4" />
-            Export Report
-          </Button>
+        <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.02] p-0.5">
+          {dateRanges.map((range) => (
+            <button
+              key={range}
+              onClick={() => setDateRange(range)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200",
+                dateRange === range ? "bg-white/10 text-white shadow-sm" : "text-white/50 hover:text-white/80"
+              )}
+            >
+              {range}
+            </button>
+          ))}
         </div>
       </motion.div>
 
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((stat, index) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {cards.map((card, index) => (
           <motion.div
-            key={stat.title}
+            key={card.title}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: index * 0.08 }}
+            transition={{ duration: 0.4, delay: index * 0.06 }}
           >
-            <Card className="glass-card p-5 rounded-2xl border-white/[0.08] relative overflow-hidden">
+            <Card className="glass-card p-5 rounded-2xl border-white/[0.08]">
               <div className="flex items-start justify-between mb-3">
-                <p className="text-sm text-white/50 font-medium">
-                  {stat.title}
-                </p>
-                <div className="w-9 h-9 rounded-full glass-card flex items-center justify-center">
-                  <stat.icon className="w-4 h-4 text-white/70" />
+                <p className="text-sm text-white/50 font-medium">{card.title}</p>
+                <div className={cn("w-9 h-9 rounded-full flex items-center justify-center", card.bg)}>
+                  <card.icon className={cn("w-4 h-4", card.color)} />
                 </div>
               </div>
-              <div className="text-3xl font-bold text-white mb-2 tabular-nums">
-                {stat.value}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded",
-                    stat.trend === "up"
-                      ? "bg-emerald-400/10 text-emerald-400"
-                      : "bg-red-400/10 text-red-400"
-                  )}
-                >
-                  <TrendingUp className="w-3 h-3" />
-                  {stat.change}
-                </span>
-                <span className="text-xs text-white/40">vs last period</span>
-              </div>
+              <div className="text-3xl font-bold text-white tabular-nums">{formatNumber(card.value)}</div>
+              <p className="text-xs text-white/40 mt-1">{card.sub}</p>
             </Card>
           </motion.div>
         ))}
       </div>
 
-      {/* Charts - Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {loading ? (
-          <>
-            <ChartSkeleton />
-            <ChartSkeleton />
-          </>
-        ) : error ? (
-          <div className="lg:col-span-2 glass-card rounded-2xl border border-white/[0.08] flex flex-col items-center justify-center py-16 text-white/30">
-            <Activity className="h-10 w-10 mb-3" />
-            <p className="text-sm text-red-400/60">Failed to load analytics</p>
-            <Button variant="ghost" size="sm" className="mt-2 text-white/50" onClick={() => refetch()}>
-              Retry
-            </Button>
-          </div>
-        ) : (
-          <>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-            >
-              <Card className="glass-card rounded-2xl border-white/[0.08]">
-                <CardHeader>
-                  <CardTitle>Reach Growth</CardTitle>
-                  <p className="text-sm text-white/40 mt-1">
-                    Daily reach across all platforms
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <ChartArea
-                    data={analyticsData?.reachChart ?? []}
-                    dataKey="value"
-                    xKey="date"
-                    color="#3b82f6"
-                    gradientId="reach-growth-gradient"
-                    height={260}
-                  />
-                </CardContent>
-              </Card>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-            >
-              <Card className="glass-card rounded-2xl border-white/[0.08]">
-                <CardHeader>
-                  <CardTitle>Impressions</CardTitle>
-                  <p className="text-sm text-white/40 mt-1">
-                    Daily impression trends
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <ChartArea
-                    data={analyticsData?.impressionsChart ?? []}
-                    dataKey="value"
-                    xKey="date"
-                    color="#8b5cf6"
-                    gradientId="impressions-gradient"
-                    height={260}
-                  />
-                </CardContent>
-              </Card>
-            </motion.div>
-          </>
-        )}
-      </div>
-
-      {/* Charts - Row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {loading ? (
-          <>
-            <ChartSkeleton />
-            <ChartSkeleton />
-          </>
-        ) : !error ? (
-          <>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.35 }}
-            >
-              <Card className="glass-card rounded-2xl border-white/[0.08]">
-                <CardHeader>
-                  <CardTitle>Follower Growth</CardTitle>
-                  <p className="text-sm text-white/40 mt-1">
-                    Daily follower count
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <ChartArea
-                    data={analyticsData?.followersChart ?? []}
-                    dataKey="value"
-                    xKey="date"
-                    color="#10b981"
-                    gradientId="followers-gradient"
-                    height={260}
-                  />
-                </CardContent>
-              </Card>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
-            >
-              <Card className="glass-card rounded-2xl border-white/[0.08]">
-                <CardHeader>
-                  <CardTitle>Engagement Rate</CardTitle>
-                  <p className="text-sm text-white/40 mt-1">
-                    Daily engagement rate %
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <ChartLine
-                    data={analyticsData?.engagementChart ?? []}
-                    dataKey="value"
-                    xKey="date"
-                    color="#f59e0b"
-                    height={260}
-                  />
-                </CardContent>
-              </Card>
-            </motion.div>
-          </>
-        ) : null}
-      </div>
-
-      {/* Channel Performance */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.5 }}
-      >
-        <Card className="glass-card rounded-2xl border-white/[0.08]">
-          <CardHeader>
-            <CardTitle>Channel Performance</CardTitle>
-            <p className="text-sm text-white/40 mt-1">
-              Distribution of reach across platforms
+      {!data?.hasData ? (
+        <Card className="glass-card">
+          <CardContent className="py-12 text-center">
+            <Zap className="w-8 h-8 text-white/20 mx-auto mb-3" />
+            <p className="text-sm text-white/50">Not enough activity data yet.</p>
+            <p className="text-xs text-white/30 mt-1">
+              Leads, conversations, messages and meetings will appear here as they happen.
             </p>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {channelPerformance.map((channel) => (
-                <div key={channel.platform} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-white/80">
-                      {channel.platform}
-                    </span>
-                    <span className="text-sm font-semibold text-white/90">
-                      {channel.value}%
-                    </span>
-                  </div>
-                  <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${channel.value}%` }}
-                      transition={{ duration: 1, delay: 0.6, ease: "easeOut" }}
-                      className={cn(
-                        "h-full rounded-full",
-                        channel.color
-                      )}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
           </CardContent>
         </Card>
-      </motion.div>
-
-      {/* Mini Cards Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i} className="glass-card p-4 rounded-2xl border-white/[0.08]">
-              <div className="flex items-center gap-3">
-                <Skeleton className="w-10 h-10 rounded-xl" />
-                <div className="space-y-1.5 flex-1">
-                  <Skeleton className="h-3 w-16" />
-                  <Skeleton className="h-5 w-20" />
-                </div>
-              </div>
-            </Card>
-          ))
-        ) : (
-          miniCards.map((card, index) => (
-            <motion.div
-              key={card.title}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: 0.6 + index * 0.08 }}
-            >
-              <Card className="glass-card p-4 rounded-2xl border-white/[0.08]">
-                <div className="flex items-center gap-3">
-                  <div
-                    className={cn(
-                      "w-10 h-10 rounded-xl flex items-center justify-center",
-                      card.bg
-                    )}
-                  >
-                    <card.icon className={cn("w-5 h-5", card.color)} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-white/50 font-medium">
-                      {card.title}
-                    </p>
-                    <p className="text-xl font-bold text-white tabular-nums">
-                      {card.value}
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            </motion.div>
-          ))
-        )}
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>New Leads</CardTitle>
+              <p className="text-sm text-white/40 mt-1">Leads created per day</p>
+            </CardHeader>
+            <CardContent>
+              <ChartArea data={leadChart} dataKey="value" xKey="day" color="#3b82f6" gradientId="real-leads-gradient" height={260} />
+            </CardContent>
+          </Card>
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>Messages</CardTitle>
+              <p className="text-sm text-white/40 mt-1">Conversation messages per day</p>
+            </CardHeader>
+            <CardContent>
+              <ChartArea data={conversationChart} dataKey="value" xKey="day" color="#8b5cf6" gradientId="real-messages-gradient" height={260} />
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

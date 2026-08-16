@@ -37,15 +37,12 @@ import { useSettings, useSettingsMutations } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
 import type { ApiKey as ApiKeyType, SettingsData } from "@/types";
 
-const tabs = [
+type TabId = "business-profile" | "notifications" | "integrations" | "api-keys" | "security";
+
+const tabs: { id: TabId; label: string; icon: any }[] = [
   { id: "business-profile", label: "Business Profile", icon: Building2 },
   { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "integrations", label: "Integrations", icon: Plug },
-  { id: "api-keys", label: "API Keys", icon: Key },
-  { id: "security", label: "Security", icon: Shield },
-] as const;
-
-type TabId = (typeof tabs)[number]["id"];
+];
 
 const notificationSettings = [
   {
@@ -332,65 +329,15 @@ export default function SettingsPage() {
                       <Bell className="w-5 h-5 text-amber-400" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-semibold text-white">
-                        Notifications
-                      </h2>
-                      <p className="text-sm text-white/50">
-                        Manage how you receive alerts and updates
-                      </p>
+                      <h2 className="text-lg font-semibold text-white">Notifications</h2>
+                      <p className="text-sm text-white/50">Manage how you receive alerts and updates</p>
                     </div>
                   </div>
-
-                  <div className="divide-y divide-white/[0.06]">
-                    {notificationSettings.map((setting) => (
-                      <div
-                        key={setting.key}
-                        className="flex items-center justify-between py-4 first:pt-0 last:pb-0"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div
-                            className={cn(
-                              "w-10 h-10 rounded-xl flex items-center justify-center",
-                              setting.bg
-                            )}
-                          >
-                            <setting.icon
-                              className={cn("w-5 h-5", setting.color)}
-                            />
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-white">
-                              {setting.label}
-                            </p>
-                            <p className="text-xs text-white/50">
-                              {setting.description}
-                            </p>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={notifications[setting.key]}
-                          onCheckedChange={() =>
-                            handleToggleNotification(setting.key)
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-6 pt-6 border-t border-white/[0.08] flex items-center gap-3">
-                    <Button onClick={handleSaveNotifications} disabled={saveSettingsLoading}>
-                      {saveSettingsLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : null}
-                      Save Notifications
-                    </Button>
-                    {notificationsSaved && (
-                      <span className="flex items-center gap-1.5 text-sm text-emerald-400">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Saved
-                      </span>
-                    )}
-                  </div>
+                  <p className="text-sm text-white/50 py-4">
+                    Email and push notification delivery is not set up yet. Important events
+                    (new leads, meeting bookings, WhatsApp activity) are always available in
+                    your dashboard Activity feed.
+                  </p>
                 </Card>
               )}
 

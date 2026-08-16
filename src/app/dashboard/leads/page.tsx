@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -82,10 +82,10 @@ export default function LeadsPage() {
   }, [leads]);
 
   const statCards = [
-    { label: "Total Leads", value: total, icon: Users, trend: "up", change: "+12.5%", color: "text-sky-400", bg: "bg-sky-400/10" },
-    { label: "Qualified", value: stats.qualified, icon: Star, trend: "up", change: "+8.3%", color: "text-emerald-400", bg: "bg-emerald-400/10" },
-    { label: "Converted", value: stats.converted, icon: CheckCircle2, trend: "up", change: "+22.4%", color: "text-violet-400", bg: "bg-violet-400/10" },
-    { label: "Avg Lead Score", value: stats.avgScore, icon: TrendingUp, trend: "up", change: "+5.1pts", color: "text-amber-400", bg: "bg-amber-400/10" },
+    { label: "Total Leads", value: total, icon: Users, trend: "up", change: "this period", color: "text-sky-400", bg: "bg-sky-400/10" },
+    { label: "Qualified", value: stats.qualified, icon: Star, trend: "up", change: "this period", color: "text-emerald-400", bg: "bg-emerald-400/10" },
+    { label: "Converted", value: stats.converted, icon: CheckCircle2, trend: "up", change: "this period", color: "text-violet-400", bg: "bg-violet-400/10" },
+    { label: "Avg Lead Score", value: stats.avgScore, icon: TrendingUp, trend: "up", change: "this period", color: "text-amber-400", bg: "bg-amber-400/10" },
   ];
 
   async function handleCreate(data: any) {
@@ -261,18 +261,18 @@ export default function LeadsPage() {
                                 <span className="font-medium text-sm text-white">{lead.name}</span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-sm text-white/70">{lead.company || "-"}</TableCell>
+                            <TableCell className="text-sm text-white/70">{lead.company || "Not provided"}</TableCell>
                             <TableCell>
                               {lead.industry ? <Badge variant="outline" className="text-[10px]">{lead.industry}</Badge> : <span className="text-xs text-white/30">-</span>}
                             </TableCell>
-                            <TableCell className="text-sm text-white/60">{lead.email || "-"}</TableCell>
-                            <TableCell className="text-sm text-white/60">{lead.phone || "-"}</TableCell>
+                            <TableCell className="text-sm text-white/60">{lead.email || "Not provided"}</TableCell>
+                            <TableCell className="text-sm text-white/60">{lead.phone || "Not provided"}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2 min-w-[100px]">
                                 <div className="h-1.5 flex-1 rounded-full bg-white/[0.06] overflow-hidden">
                                   <div className={`h-full rounded-full transition-all duration-500 ${getScoreColor(lead.leadScore)}`} style={{ width: `${lead.leadScore}%` }} />
                                 </div>
-                                <span className={`text-xs font-bold ${getScoreTextColor(lead.leadScore)}`}>{lead.leadScore}</span>
+                                <span className={`text-xs font-bold ${getScoreTextColor(lead.leadScore)}`}>{lead.leadScore > 0 ? lead.leadScore : "Not scored"}</span>
                               </div>
                             </TableCell>
                             <TableCell>
@@ -295,7 +295,7 @@ export default function LeadsPage() {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-1.5 text-xs text-white/50">
-                                <MapPin className="h-3 w-3" />{lead.location || "-"}
+                                <MapPin className="h-3 w-3" />{lead.location || "Not available"}
                               </div>
                             </TableCell>
                             <TableCell className="text-xs text-white/40">{lead.lastContact ? new Date(lead.lastContact).toLocaleDateString() : "-"}</TableCell>
@@ -368,11 +368,11 @@ export default function LeadsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Email</span>
-                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-white/40" />{selectedLead.email || "-"}</span>
+                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-white/40" />{selectedLead.email || "Not provided"}</span>
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Phone</span>
-                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-white/40" />{selectedLead.phone || "-"}</span>
+                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-white/40" />{selectedLead.phone || "Not provided"}</span>
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Industry</span>
@@ -380,7 +380,7 @@ export default function LeadsPage() {
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Location</span>
-                    <span className="text-sm text-white/70 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-white/40" />{selectedLead.location || "-"}</span>
+                    <span className="text-sm text-white/70 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-white/40" />{selectedLead.location || "Not available"}</span>
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Created</span>
@@ -389,7 +389,7 @@ export default function LeadsPage() {
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Lead Score</span>
                     <div className="flex items-center gap-2">
-                      <span className={`text-lg font-bold ${getScoreTextColor(selectedLead.leadScore)}`}>{selectedLead.leadScore}</span>
+                      <span className={`text-lg font-bold ${getScoreTextColor(selectedLead.leadScore)}`}>{selectedLead.leadScore > 0 ? selectedLead.leadScore : "Not scored"}</span>
                       <div className="h-2 flex-1 rounded-full bg-white/[0.06] overflow-hidden max-w-[80px]">
                         <div className={`h-full rounded-full ${getScoreColor(selectedLead.leadScore)}`} style={{ width: `${selectedLead.leadScore}%` }} />
                       </div>

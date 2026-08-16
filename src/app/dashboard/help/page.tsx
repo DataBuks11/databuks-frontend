@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -78,7 +78,7 @@ const faqItems = [
   {
     question: "Is there a free trial?",
     answer:
-      "We offer a 14-day free trial on all plans, including DataBuks Pro. No credit card required to get started. Explore all features and see the impact on your outreach before committing.",
+      "The current platform is in early access. Pricing and plans will be introduced when payments are enabled.",
   },
   {
     question: "How does the approval workflow work?",

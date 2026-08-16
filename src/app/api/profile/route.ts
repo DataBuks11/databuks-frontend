@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     const { data: profile, error } = await supabase
       .from("profiles")
       .select("*")
-      .eq("user_id", user.id)
+      .eq("id", user.id)
       .single();
 
     if (error && error.code !== "PGRST116") {
@@ -55,7 +55,7 @@ export async function PATCH(request: NextRequest) {
     const { data: existing } = await supabase
       .from("profiles")
       .select("user_id")
-      .eq("user_id", user.id)
+      .eq("id", user.id)
       .single();
 
     let data;
@@ -64,7 +64,7 @@ export async function PATCH(request: NextRequest) {
       const result = await supabase
         .from("profiles")
         .update(updates)
-        .eq("user_id", user.id)
+        .eq("id", user.id)
         .select("*")
         .single();
       if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
