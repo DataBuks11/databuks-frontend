@@ -1,4 +1,4 @@
-"""DataBuks crawler service - Crawl4AI/Playwright based public website crawling.
+﻿"""DataBuks crawler service - Crawl4AI/Playwright based public website crawling.
 
 Renders JS-heavy pages with Playwright, extracts clean evidence, persists
 per-page rows to Supabase, then calls back to the Next.js API which runs
@@ -23,6 +23,11 @@ from pydantic import BaseModel
 from supabase import create_client
 
 app = FastAPI(title="DataBuks Crawler Service")
+
+
+@app.on_event("startup")
+async def start_monitor_loop():
+    asyncio.create_task(social_monitor_loop())
 
 API_KEY = os.environ.get("CRAWLER_SERVICE_KEY", os.environ.get("BAILEYS_API_KEY", "dev-key"))
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -657,6 +662,27 @@ async def render_with_crawl4ai(url: str, crawler: Any) -> Optional[Dict[str, Any
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def social_monitor_loop() -> None:
+    """Poll the Vercel social monitor endpoint on a fixed interval."""
+    monitor_url = os.environ.get("SOCIAL_MONITOR_URL")
+    monitor_key = os.environ.get("SOCIAL_MONITOR_KEY")
+    interval_s = float(os.environ.get("SOCIAL_MONITOR_INTERVAL_S", "600"))
+    if not monitor_url:
+        print("[monitor] SOCIAL_MONITOR_URL not set - social monitor loop disabled")
+        return
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                response = await client.post(
+                    monitor_url,
+                    headers={"x-api-key": monitor_key or "dev-key"},
+                )
+                print(f"[monitor] run -> HTTP {response.status_code}")
+        except Exception as exc:
+            print(f"[monitor] run failed: {exc}")
+        await asyncio.sleep(interval_s)
 
 
 if __name__ == "__main__":

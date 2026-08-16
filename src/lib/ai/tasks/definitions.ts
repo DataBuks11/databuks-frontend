@@ -1,4 +1,4 @@
-import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
+﻿import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
 import type { TaskAction } from "../actions";
 import { TASK_ACTIONS } from "../actions";
 import {
@@ -145,7 +145,7 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
   CLASSIFY_SOCIAL_EVENT: {
     schema: socialEventClassificationSchema,
     rules: [],
-    buildPrompt: (ctx) => buildSocialEventPrompt(ctx, (ctx as any).socialEvent ?? { content: "", event_type: "comment" }),
+    buildPrompt: (ctx) => buildSocialEventPrompt(ctx, (ctx as any).socialEvent ?? { content: "", event_type: "comment" }, (ctx as any).socialRecentMessages),
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => validated.recommended_action ?? "classified",
   },

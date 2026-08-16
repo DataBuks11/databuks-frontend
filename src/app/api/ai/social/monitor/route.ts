@@ -1,0 +1,79 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { getAdapterForProvider } from "@/lib/social/adapters/registry";
+import { processSocialEvent } from "@/lib/social/processor";
+
+export const maxDuration = 120;
+
+function adminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase admin credentials are not configured");
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+export async function GET(request: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const auth = request.headers.get("authorization") ?? "";
+  if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!cronSecret && auth !== `Bearer ${process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key"}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return NextResponse.json({ ok: true, note: "Use POST for monitoring runs" });
+}
+
+export async function POST(request: NextRequest) {
+  const expectedKey =
+    process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  const providedKey =
+    request.headers.get("x-api-key") ??
+    (request.headers.get("authorization")?.startsWith("Bearer ")
+      ? request.headers.get("authorization")?.slice(7)
+      : null);
+  if (providedKey !== expectedKey) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const supabase = adminClient();
+  const { data: connections, error: connError } = await supabase
+    .from("social_connections")
+    .select("user_id, platform, connection_id")
+    .eq("status", "connected")
+    .eq("platform", "instagram");
+
+  if (connError) {
+    return NextResponse.json({ error: connError.message }, { status: 500 });
+  }
+
+  let pulled = 0;
+  let processed = 0;
+  let duplicates = 0;
+  let proposed = 0;
+  const errors: string[] = [];
+
+  for (const connection of connections ?? []) {
+    const adapter = getAdapterForProvider(connection.platform);
+    if (!adapter || !connection.connection_id) continue;
+    try {
+      const events = await adapter.syncRecentEvents(connection.connection_id, connection.user_id, 10);
+      pulled += events.length;
+      for (const event of events) {
+        const result = await processSocialEvent(supabase, connection.user_id, event);
+        if (result.status === "PROCESSED") processed += 1;
+        if (result.status === "DUPLICATE") duplicates += 1;
+        if (result.actionId) proposed += 1;
+      }
+      await supabase
+        .from("social_connections")
+        .update({ last_sync: new Date().toISOString() })
+        .eq("user_id", connection.user_id)
+        .eq("connection_id", connection.connection_id);
+    } catch (error: any) {
+      errors.push(`${connection.platform}:${error?.message}`);
+    }
+  }
+
+  return NextResponse.json({ pulled, processed, duplicates, proposed, errors });
+}

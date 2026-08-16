@@ -1,7 +1,7 @@
 ﻿import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { getAdapterForProvider } from "@/lib/social/adapters/registry";
-import { ingestAndClassifySocialEvent } from "@/lib/social/ingest";
+import { processSocialEvent } from "@/lib/social/processor";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -60,8 +60,8 @@ describe.skipIf(!isConfigured)("Instagram adapter - real account sync (live)", (
       let ingested = 0;
       let classified = 0;
       for (const event of events) {
-        const result = await ingestAndClassifySocialEvent(admin, userId, event);
-        if (result.ingested) ingested += 1;
+        const result = await processSocialEvent(admin, userId, event);
+        if (result.status === "PROCESSED") ingested += 1;
         if (result.classification) {
           classified += 1;
           console.log("[E2E-instagram] comment classified:", JSON.stringify({

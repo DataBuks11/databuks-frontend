@@ -476,21 +476,36 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
   return { system, user };
 }
 
-export function buildSocialEventPrompt(ctx: TaskContext, event: { content: string; author_name?: string | null; event_type: string }): PromptTemplate {
+export function buildSocialEventPrompt(
+  ctx: TaskContext,
+  event: { content: string; author_name?: string | null; event_type: string },
+  recentMessages?: { author_name?: string | null; content: string; at?: string | null }[]
+): PromptTemplate {
   const system = [
     "You classify a single social media event (comment/message) for a business.",
     "Classify honestly from the content. Never invent intent or urgency that the words do not support.",
+    "classification: pick the closest of the allowed categories. Use pricing/pricing_interest for price questions, service_interest for service needs, purchase_intent for explicit buying, meeting_intent for call/meeting requests, support/support_request for help requests, complaint + escalation_required=true for serious complaints/refunds/legal, spam for spam, irrelevant for unrelated chatter, general for plain greetings.",
     "lead_score: 0-100 evidence-based interest in the business offering. A pricing question or explicit need is strong; a vague compliment is weak; spam/irrelevant is ~0.",
-    "recommended_action: REPLY only when a genuine question or meaningful engagement deserves a public reply. CREATE_LEAD when buying/service intent is clear. ESCALATE_TO_HUMAN for angry customers, legal/payment disputes, or sensitive situations. IGNORE for spam/irrelevant.",
+    "recommended_action: REPLY for genuine engagement deserving a public reply. CREATE_LEAD when buying/service intent is clear. ASK_QUESTION when a clarification moves the conversation forward. ESCALATE_TO_HUMAN for angry customers, legal/payment disputes, or sensitive situations. IGNORE for spam/irrelevant.",
+    "should_reply: true only when a reply is genuinely useful and safe. escalation_required: true when a human must handle it.",
     "reply_draft: a short, natural, brand-appropriate reply in the author's language. Never fabricate pricing, offers, or promises. Null when no reply is needed.",
+    "Use the recent conversation (if provided) to avoid repeating questions the user already answered.",
     "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Scores are integers 0-100. Confidence is 0-1.",
   ].join("\n");
+
+  const recentBlock =
+    recentMessages && recentMessages.length > 0
+      ? `RECENT CONVERSATION WITH THIS AUTHOR (oldest first):\n${recentMessages
+          .map((m) => `- ${m.author_name ?? "unknown"}: ${m.content}`)
+          .join("\n")}`
+      : "RECENT CONVERSATION: none";
 
   const user = [
     buildBusinessBlock(ctx.business),
     `SOCIAL EVENT TYPE: ${event.event_type}`,
     `AUTHOR: ${event.author_name ?? "unknown"}`,
     `CONTENT: ${event.content}`,
+    recentBlock,
     "Return JSON:",
     JSON.stringify({
       task: "social_event_classification",
@@ -500,6 +515,8 @@ export function buildSocialEventPrompt(ctx: TaskContext, event: { content: strin
       sentiment: "positive",
       urgency: 50,
       recommended_action: "REPLY",
+      should_reply: true,
+      escalation_required: false,
       reply_draft: "string or null",
       reason: "short explanation",
       confidence: 0.9,

@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdapterForProvider } from "@/lib/social/adapters/registry";
-import { ingestAndClassifySocialEvent } from "@/lib/social/ingest";
+import { processSocialEvent } from "@/lib/social/processor";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,17 +32,17 @@ export async function POST(request: NextRequest) {
 
     const results = [];
     for (const event of events) {
-      results.push(await ingestAndClassifySocialEvent(supabase, user.id, event));
+      results.push(await processSocialEvent(supabase, user.id, event));
     }
 
     return NextResponse.json({
       pulled: events.length,
-      ingested: results.filter((r) => r.ingested).length,
-      duplicates: results.filter((r) => r.duplicate).length,
+      ingested: results.filter((r) => r.status === "PROCESSED").length,
+      duplicates: results.filter((r) => r.status === "DUPLICATE").length,
       results: results.map((r) => ({
         eventId: r.eventId,
-        ingested: r.ingested,
-        duplicate: r.duplicate,
+        ingested: r.status === "PROCESSED",
+        duplicate: r.status === "DUPLICATE",
         classification: r.classification ? {
           classification: r.classification.classification,
           intent_score: r.classification.intent_score,
