@@ -31,20 +31,28 @@ const industries = ["SaaS", "FinTech", "Healthcare", "E-commerce", "Real Estate"
 /** Format raw phone/JID digits into a readable number */
 function formatPhone(phone: string | null | undefined): string {
   if (!phone) return "Not provided";
-  let digits = phone.replace(/\D/g, "");
+  const clean = phone.replace(/^\+/, "");
+  const digits = clean.replace(/\D/g, "");
   if (!digits || digits.length < 8) return phone;
-  // Already formatted with +
-  if (phone.startsWith("+")) return phone;
+  // Real phone numbers with country code are 10-13 digits max
+  // Anything 14+ digits is a WhatsApp internal/business ID
+  if (digits.length > 13) {
+    return `WA ID: ...${digits.slice(-6)}`;
+  }
+  // Already has + prefix
+  if (phone.startsWith("+")) {
+    // Indian: +91 XXXXX XXXXX
+    if (digits.startsWith("91") && digits.length === 12) {
+      return `+${digits.slice(0, 2)} ${digits.slice(2, 7)} ${digits.slice(7)}`;
+    }
+    return phone;
+  }
   // Indian numbers: 91XXXXXXXXXX
   if (digits.startsWith("91") && digits.length === 12) {
     return `+${digits.slice(0, 2)} ${digits.slice(2, 7)} ${digits.slice(7)}`;
   }
-  // Other numbers: add + prefix and basic grouping
-  if (digits.length <= 15) {
-    return `+${digits}`;
-  }
-  // Internal WhatsApp IDs (>15 digits) — show last 10 digits
-  return `WA: ...${digits.slice(-10)}`;
+  // Other real numbers
+  return `+${digits}`;
 }
 
 function getScoreColor(score: number) { return score >= 91 ? "bg-emerald-400" : score >= 71 ? "bg-blue-400" : score >= 41 ? "bg-amber-400" : "bg-red-400"; }

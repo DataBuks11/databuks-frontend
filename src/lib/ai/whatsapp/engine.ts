@@ -56,13 +56,13 @@ export function normalizeWhatsAppPhone(remoteJid: string): string | null {
   const digits = raw.replace(/\D/g, "");
   const cleaned = digits.replace(/^0+/, "");
   if (cleaned.length < 8) return null;
-  // Format as international phone number with + prefix
-  // WhatsApp JIDs for real phone numbers are typically 10-15 digits (country code + number)
-  // Internal/business IDs can be longer
-  if (cleaned.length <= 15) {
+  // Real international phone numbers are max 13 digits (country code + number)
+  // E.g. +91 99999 99999 = 12 digits, +1 555 123 4567 = 11 digits
+  // Anything 14+ digits is a WhatsApp internal/business ID
+  if (cleaned.length <= 13) {
     return `+${cleaned}`;
   }
-  // For very long IDs (internal WhatsApp IDs), keep as-is
+  // Internal WhatsApp IDs — store raw digits
   return cleaned;
 }
 
