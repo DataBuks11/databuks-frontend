@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -27,6 +27,25 @@ const statusVariant: Record<Lead["status"], "info" | "secondary" | "success" | "
 };
 
 const industries = ["SaaS", "FinTech", "Healthcare", "E-commerce", "Real Estate", "Legal", "Education", "Manufacturing", "Logistics", "Marketing"];
+
+/** Format raw phone/JID digits into a readable number */
+function formatPhone(phone: string | null | undefined): string {
+  if (!phone) return "Not provided";
+  let digits = phone.replace(/\D/g, "");
+  if (!digits || digits.length < 8) return phone;
+  // Already formatted with +
+  if (phone.startsWith("+")) return phone;
+  // Indian numbers: 91XXXXXXXXXX
+  if (digits.startsWith("91") && digits.length === 12) {
+    return `+${digits.slice(0, 2)} ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  }
+  // Other numbers: add + prefix and basic grouping
+  if (digits.length <= 15) {
+    return `+${digits}`;
+  }
+  // Internal WhatsApp IDs (>15 digits) — show last 10 digits
+  return `WA: ...${digits.slice(-10)}`;
+}
 
 function getScoreColor(score: number) { return score >= 91 ? "bg-emerald-400" : score >= 71 ? "bg-blue-400" : score >= 41 ? "bg-amber-400" : "bg-red-400"; }
 function getScoreBg(score: number) { return score >= 91 ? "bg-emerald-400/10" : score >= 71 ? "bg-blue-400/10" : score >= 41 ? "bg-amber-400/10" : "bg-red-400/10"; }
@@ -266,7 +285,7 @@ export default function LeadsPage() {
                               {lead.industry ? <Badge variant="outline" className="text-[10px]">{lead.industry}</Badge> : <span className="text-xs text-white/30">-</span>}
                             </TableCell>
                             <TableCell className="text-sm text-white/60">{lead.email || "Not provided"}</TableCell>
-                            <TableCell className="text-sm text-white/60">{lead.phone || "Not provided"}</TableCell>
+                            <TableCell className="text-sm text-white/60">{formatPhone(lead.phone)}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2 min-w-[100px]">
                                 <div className="h-1.5 flex-1 rounded-full bg-white/[0.06] overflow-hidden">
@@ -372,7 +391,7 @@ export default function LeadsPage() {
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Phone</span>
-                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-white/40" />{selectedLead.phone || "Not provided"}</span>
+                    <span className="text-sm text-white/70 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-white/40" />{formatPhone(selectedLead.phone)}</span>
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-3">
                     <span className="text-xs text-white/30 block mb-1">Industry</span>

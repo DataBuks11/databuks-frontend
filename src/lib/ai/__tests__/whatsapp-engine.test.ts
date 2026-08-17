@@ -102,6 +102,19 @@ function makeMockSupabase(state: MockState) {
   }
 
   function matches(row: Record<string, any>, filter: Record<string, any>): boolean {
+    if (filter._or) {
+      // Parse "col.ilike.%val%,col.ilike.%val2%"
+      const clauses = (filter.filterStr as string).split(",");
+      return clauses.some((clause) => {
+        const parts = clause.split(".");
+        if (parts.length >= 3 && parts[1] === "ilike") {
+          const col = parts[0];
+          const val = parts.slice(2).join(".").replace(/%/g, "").toLowerCase();
+          return String(row[col] ?? "").toLowerCase().includes(val);
+        }
+        return false;
+      });
+    }
     if (filter.neq) return row[filter.col] !== filter.val;
     if (filter.gte) return new Date(row[filter.col] ?? 0) >= new Date(filter.val);
     if (filter.in) return filter.vals.includes(row[filter.col]);
@@ -174,6 +187,11 @@ function makeMockSupabase(state: MockState) {
     },
     ilike(col: string, val: any) {
       pending.filters.push({ col, val, ilike: true });
+      return mock;
+    },
+    or(filterStr: string) {
+      // Parse PostgREST-style or filter: "col.op.val,col.op.val"
+      pending.filters.push({ _or: true, filterStr });
       return mock;
     },
     gte(col: string, val: any) {

@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
-  RefreshCw, ExternalLink, Unlink, Link2, Instagram, Facebook,
+  RefreshCw, ExternalLink, Unlink, Link2, Instagram, Facebook, Linkedin,
   MessageCircle, Send, QrCode, Bot, Key, Check, X, Sparkles, Activity
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,12 @@ const platformConfig: Record<string, {
     borderColor: "border-l-sky-500/50", type: "telegram",
     connectLabel: "Connect Telegram Bot",
     desc: "Create a bot via @BotFather, paste the token here. Enables automated Telegram messaging.",
+  },
+  linkedin: {
+    name: "LinkedIn", icon: Linkedin, color: "from-blue-700 to-cyan-500",
+    borderColor: "border-l-blue-700/50", type: "composio",
+    connectLabel: "Connect LinkedIn",
+    desc: "Connect LinkedIn to enable AI-powered lead discovery, outreach, and professional networking.",
   },
 };
 

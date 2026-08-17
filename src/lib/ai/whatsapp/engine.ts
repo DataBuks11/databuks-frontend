@@ -51,9 +51,19 @@ export interface BackgroundIntelligenceInput {
 }
 
 export function normalizeWhatsAppPhone(remoteJid: string): string | null {
-  const digits = remoteJid.replace(/\D/g, "");
+  // Strip the @s.whatsapp.net or @c.us suffix
+  const raw = remoteJid.replace(/@.*$/, "");
+  const digits = raw.replace(/\D/g, "");
   const cleaned = digits.replace(/^0+/, "");
-  return cleaned.length >= 8 ? cleaned : null;
+  if (cleaned.length < 8) return null;
+  // Format as international phone number with + prefix
+  // WhatsApp JIDs for real phone numbers are typically 10-15 digits (country code + number)
+  // Internal/business IDs can be longer
+  if (cleaned.length <= 15) {
+    return `+${cleaned}`;
+  }
+  // For very long IDs (internal WhatsApp IDs), keep as-is
+  return cleaned;
 }
 
 export function isGroupJid(remoteJid: string): boolean {
@@ -96,11 +106,13 @@ async function defaultSendPresence(input: { userId: string; jid: string; presenc
 }
 
 async function findOrCreateLead(supabase: SupabaseClient, userId: string, phone: string, pushName: string): Promise<Record<string, any>> {
+  // Search with both formats — phone might be stored with or without + prefix
+  const phoneDigits = phone.replace(/^\+/, "");
   const { data: existing } = await supabase
     .from("leads")
     .select("*")
     .eq("user_id", userId)
-    .ilike("phone", `%${phone}%`)
+    .or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${phone}%`)
     .maybeSingle();
   if (existing) return existing;
 
