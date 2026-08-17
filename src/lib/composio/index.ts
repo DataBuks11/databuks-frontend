@@ -14,6 +14,7 @@ const BASE_URL = process.env.VERCEL_URL
 const AUTH_CONFIGS: Record<string, string> = {
   instagram: process.env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID || "",
   facebook: process.env.COMPOSIO_FACEBOOK_AUTH_CONFIG_ID || "",
+  linkedin: process.env.COMPOSIO_LINKEDIN_AUTH_CONFIG_ID || "",
 };
 
 export interface ComposioConnection {
