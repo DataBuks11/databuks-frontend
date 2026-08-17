@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/ai/discovery/scan/cron",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 6 * * *"
     }
   ]
 }
