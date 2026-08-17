@@ -394,6 +394,120 @@ export const socialContentDraftSchema = z
   })
   .strict();
 
+export const opportunityAnalysisSchema = z
+  .object({
+    task: z.literal("opportunity_analysis"),
+    relevance_score: score,
+    intent: z.enum([
+      "NO_INTENT",
+      "GENERAL_INTEREST",
+      "RESEARCH",
+      "SERVICE_INTEREST",
+      "PROBLEM_AWARE",
+      "PURCHASE_INTENT",
+      "URGENT_NEED",
+      "PRICING_INTENT",
+      "COMPARISON",
+      "READY_TO_TALK",
+      "MEETING_INTENT",
+      "NOT_A_LEAD",
+      "SPAM",
+      "IRRELEVANT",
+    ]),
+    intent_score: score,
+    urgency_score: score,
+    lead_score: score,
+    confidence,
+    detected_requirement: z.string().max(500).nullable(),
+    evidence: z.array(evidenceItemSchema).max(10),
+    should_engage: z.boolean(),
+    recommended_next_action: z.enum([
+      "IGNORE",
+      "SAVE",
+      "ENGAGE_COMMENT",
+      "SEND_DM",
+      "CREATE_LEAD",
+      "QUALIFY",
+      "NURTURE",
+      "BOOK_MEETING",
+      "HANDOFF_WHATSAPP",
+      "ESCALATE_TO_HUMAN",
+    ]),
+    reason: z.string().max(500),
+  })
+  .strict();
+
+export const discoveryAnalysisSchema = z
+  .object({
+    task: z.literal("discovery_analysis"),
+    relevance_score: score,
+    intent: z.enum([
+      "NO_INTENT",
+      "GENERAL_INTEREST",
+      "RESEARCH",
+      "SERVICE_INTEREST",
+      "PROBLEM_AWARE",
+      "PURCHASE_INTENT",
+      "URGENT_NEED",
+      "PRICING_INTENT",
+      "COMPARISON",
+      "READY_TO_TALK",
+      "MEETING_INTENT",
+      "NOT_A_LEAD",
+      "SPAM",
+      "IRRELEVANT",
+    ]),
+    intent_score: score,
+    urgency_score: score,
+    lead_score: score,
+    confidence,
+    detected_requirement: z.string().max(500).nullable(),
+    business_context_match: z.string().max(500).nullable(),
+    signals: z.array(z.string().max(100)).max(10),
+    evidence: z.array(evidenceItemSchema).max(10),
+    should_engage: z.boolean(),
+    recommended_next_action: z.enum([
+      "IGNORE",
+      "SAVE",
+      "ENGAGE_COMMENT",
+      "SEND_DM",
+      "CREATE_LEAD",
+      "QUALIFY",
+      "NURTURE",
+      "BOOK_MEETING",
+      "HANDOFF_WHATSAPP",
+      "ESCALATE_TO_HUMAN",
+    ]),
+    reason: z.string().max(500),
+  })
+  .strict();
+
+export const nurtureReplySchema = z
+  .object({
+    task: z.literal("nurture_reply"),
+    reply: z.string().min(1).max(1200),
+    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    tone: z.string().max(100),
+    meeting_intent_detected: z.boolean(),
+    interest_confirmed: z.boolean(),
+    prospect_disinterested: z.boolean(),
+    needs_clarification: z.boolean(),
+    ask_one_question: z.string().max(300).nullable(),
+    used_business_fact: z.string().max(300).nullable(),
+    escalation_required: z.boolean(),
+    conversation_stage_suggestion: z.enum([
+      "CONVERSATION",
+      "NURTURE",
+      "INTEREST_CONFIRMED",
+      "MEETING_INTENT",
+      "WHATSAPP_HANDOFF",
+      "CLOSED",
+    ]),
+    close_reason: z.string().max(300).nullable(),
+    confidence,
+  })
+  .strict();
+
 export const websiteAnalysisSchema = z
   .object({
     task: z.literal("website_analysis"),

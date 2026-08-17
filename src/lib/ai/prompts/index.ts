@@ -1,4 +1,4 @@
-﻿import type { AiTaskType, BusinessContext, TaskContext } from "../types";
+import type { AiTaskType, BusinessContext, TaskContext } from "../types";
 
 export const PROMPT_VERSIONS: Record<AiTaskType, string> = {
   ENRICH_LEAD: "1.3.0",
@@ -16,6 +16,9 @@ export const PROMPT_VERSIONS: Record<AiTaskType, string> = {
   CLASSIFY_SOCIAL_EVENT: "1.0.0",
   GENERATE_SOCIAL_REPLY: "1.0.0",
   GENERATE_SOCIAL_CONTENT: "1.0.0",
+  ANALYZE_OPPORTUNITY: "1.0.0",
+  ANALYZE_DISCOVERY: "1.0.0",
+  GENERATE_NURTURE_REPLY: "1.0.0",
 };
 
 export const WEBSITE_SCAN_PROMPT_VERSION = "1.1.0";
@@ -579,6 +582,179 @@ export function buildSocialReplyPrompt(ctx: TaskContext, event: { content: strin
       confidence: 0.9,
     }),
   ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildOpportunityAnalysisPrompt(
+  ctx: TaskContext,
+  opportunity: { content: string; channel: string; actor_name?: string | null; parent_content?: string | null }
+): PromptTemplate {
+  const system = [
+    "You analyze a potential business opportunity signal for a business.",
+    "Determine whether this signal is RELEVANT to the business context provided.",
+    "relevance_score: 0-100 how well this person/content matches the business services, audience and industries. Generic compliments or unrelated entertainment are 0-20. Explicit needs matching services are 80-100.",
+    "intent: pick EXACTLY ONE of the allowed enum values. Weak keyword-only mentions are NOT intent - require actual meaning.",
+    "lead_score: 0-100 combined evidence-based lead strength (relevance + intent + urgency).",
+    "should_engage: true only when relevance_score >= 60 AND intent indicates real interest/need. Do not engage spam or irrelevant content.",
+    "detected_requirement: the person's actual need in their own words, or null if none exists.",
+    "evidence: quote the actual words that support your scores (source=conversation for social content).",
+    "recommended_next_action: IGNORE for irrelevant/spam, ENGAGE_COMMENT for a useful public reply, CREATE_LEAD for clear buying/service intent, QUALIFY when more questions are needed, BOOK_MEETING only for explicit meeting intent, HANDOFF_WHATSAPP when a qualified lead should move to WhatsApp, ESCALATE_TO_HUMAN for sensitive situations.",
+    "Never fabricate intent, budget or urgency. Never invent requirements the words do not show.",
+    "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Scores are integers 0-100. Confidence is 0-1.",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `CHANNEL: ${opportunity.channel}`,
+    `AUTHOR: ${opportunity.actor_name ?? "unknown"}`,
+    opportunity.parent_content ? `PARENT CONTENT: ${opportunity.parent_content.slice(0, 800)}` : "",
+    `SIGNAL CONTENT: ${opportunity.content}`,
+    "Return JSON:",
+    JSON.stringify({
+      task: "opportunity_analysis",
+      relevance_score: 70,
+      intent: "SERVICE_INTEREST",
+      intent_score: 70,
+      urgency_score: 50,
+      lead_score: 70,
+      confidence: 0.9,
+      detected_requirement: "string or null",
+      evidence: [{ source: "conversation", signal: "explicit_need", quote: "their words" }],
+      should_engage: true,
+      recommended_next_action: "CREATE_LEAD",
+      reason: "short explanation",
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildDiscoveryAnalysisPrompt(
+  ctx: TaskContext,
+  discovery: { content: string; platform: string; author_name?: string | null; parent_content?: string | null; content_type?: string | null }
+): PromptTemplate {
+  const system = [
+    "You analyze a potential lead discovery signal for a business.",
+    "Your job is to determine whether this content/person is RELEVANT to the business and represents a genuine business opportunity.",
+    "CRITICAL: Do NOT rely on simple keyword matching. Analyze the actual MEANING and CONTEXT of the content.",
+    "relevance_score: 0-100 how well this person/content matches the business services, audience and industries. Generic compliments or unrelated entertainment are 0-20. Explicit needs matching services are 80-100.",
+    "intent: pick EXACTLY ONE enum value. Weak keyword-only mentions are NOT intent. Require actual evidence of need, interest, or buying behavior.",
+    "signals: list the specific discovery signals detected (e.g., EXPLICIT_REQUIREMENT, BUYING_INTENT, VENDOR_SEARCH, etc.)",
+    "detected_requirement: the person's actual need in their own words, or null if none.",
+    "business_context_match: explain how this matches the business's services/audience/ICP, or null.",
+    "evidence: quote the actual words supporting your scores. source=conversation for social content.",
+    "should_engage: true ONLY when relevance_score >= 60 AND intent indicates real interest/need. Do NOT engage spam, irrelevant content, or weak keyword matches.",
+    "No evidence = no lead. Never fabricate intent, budget, urgency, or requirements.",
+    "Respond ONLY with a single valid JSON object. No markdown. Booleans must be JSON booleans. Scores are integers 0-100. Confidence is 0-1.",
+  ].join("\n");
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `PLATFORM: ${discovery.platform}`,
+    `CONTENT TYPE: ${discovery.content_type ?? "unknown"}`,
+    `AUTHOR: ${discovery.author_name ?? "unknown"}`,
+    discovery.parent_content ? `PARENT CONTENT: ${discovery.parent_content.slice(0, 800)}` : "",
+    `SIGNAL CONTENT: ${discovery.content}`,
+    "Return JSON:",
+    JSON.stringify({
+      task: "discovery_analysis",
+      relevance_score: 70,
+      intent: "SERVICE_INTEREST",
+      intent_score: 70,
+      urgency_score: 50,
+      lead_score: 70,
+      confidence: 0.9,
+      detected_requirement: "string or null",
+      business_context_match: "string or null",
+      signals: ["EXPLICIT_REQUIREMENT"],
+      evidence: [{ source: "conversation", signal: "explicit_need", quote: "their words" }],
+      should_engage: true,
+      recommended_next_action: "CREATE_LEAD",
+      reason: "short explanation",
+    }),
+  ].join("\n\n");
+
+  return { system, user };
+}
+
+export function buildNurtureReplyPrompt(
+  ctx: TaskContext,
+  conversation: {
+    prospect_name: string | null;
+    detected_requirement: string | null;
+    conversation_history: Array<{ role: string; content: string }>;
+    platform: string;
+    lead_memory: Record<string, any> | null;
+    previous_questions: string[];
+  }
+): PromptTemplate {
+  const system = [
+    "You are generating a natural conversation reply for a business.",
+    "Your goal is to have a genuine, useful conversation — NOT dump a sales pitch.",
+    "CONVERSATION RULES:",
+    "- Understand the person's requirement first.",
+    "- Answer only what is necessary.",
+    "- Ask ONE useful question when needed — never ask multiple questions at once.",
+    "- Do NOT force a meeting. Do NOT create fake urgency.",
+    "- Do NOT use repetitive sales language or generic AI phrases.",
+    "- Do NOT say: 'Certainly!', 'Absolutely!', 'I'd be happy to!', 'We offer a wide range of'.",
+    "- Match the person's language (English/Hindi/Hinglish). Be natural and concise.",
+    "- Max 2-4 short sentences. Sound like a real person, not a chatbot.",
+    "- Do NOT repeat questions already asked in the conversation history.",
+    "- Do NOT pretend to be a human. Do NOT misrepresent the business.",
+    "- If the person is clearly not interested, politely acknowledge and suggest closing.",
+    "- If the person shows genuine interest, continue qualification naturally.",
+    "- If the person wants a meeting, move toward handoff.",
+    "IMPORTANT: Review previous_questions and conversation history to avoid repeating anything.",
+    "Respond ONLY with a single valid JSON object. No markdown.",
+  ].join("\n");
+
+  const historyBlock = conversation.conversation_history.length > 0
+    ? `CONVERSATION HISTORY:\n${conversation.conversation_history
+        .slice(-10)
+        .map((m) => `${m.role === "agent" ? "AGENT" : "PROSPECT"}: ${m.content}`)
+        .join("\n")}`
+    : "CONVERSATION HISTORY: This is the first message.";
+
+  const memoryBlock = conversation.lead_memory
+    ? `LEAD MEMORY:\n${JSON.stringify(conversation.lead_memory)}`
+    : "LEAD MEMORY: none";
+
+  const prevQuestionsBlock = conversation.previous_questions.length > 0
+    ? `ALREADY ASKED QUESTIONS (DO NOT repeat these):\n${conversation.previous_questions.join("\n")}`
+    : "";
+
+  const user = [
+    buildBusinessBlock(ctx.business),
+    `PLATFORM: ${conversation.platform}`,
+    `PROSPECT: ${conversation.prospect_name ?? "unknown"}`,
+    conversation.detected_requirement
+      ? `DETECTED REQUIREMENT: ${conversation.detected_requirement}`
+      : "",
+    historyBlock,
+    memoryBlock,
+    prevQuestionsBlock,
+    "Return JSON:",
+    JSON.stringify({
+      task: "nurture_reply",
+      reply: "your natural reply",
+      language: "english",
+      tone: "friendly",
+      meeting_intent_detected: false,
+      interest_confirmed: false,
+      prospect_disinterested: false,
+      needs_clarification: false,
+      ask_one_question: "string or null",
+      used_business_fact: "string or null",
+      escalation_required: false,
+      conversation_stage_suggestion: "CONVERSATION",
+      close_reason: null,
+      confidence: 0.9,
+    }),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   return { system, user };
 }

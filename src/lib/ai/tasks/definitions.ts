@@ -1,8 +1,11 @@
-﻿import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
+import type { AiTaskInput, AiTaskType, TaskContext } from "../types";
 import type { TaskAction } from "../actions";
 import { TASK_ACTIONS } from "../actions";
 import {
   buildPrompt,
+  buildDiscoveryAnalysisPrompt,
+  buildNurtureReplyPrompt,
+  buildOpportunityAnalysisPrompt,
   buildSocialContentPrompt,
   buildSocialEventPrompt,
   buildSocialReplyPrompt,
@@ -11,10 +14,13 @@ import {
 } from "../prompts";
 import {
   buyingSignalSchema,
+  discoveryAnalysisSchema,
   enrichSchema,
   followupSchema,
   intentSchema,
   meetingIntentSchema,
+  nurtureReplySchema,
+  opportunityAnalysisSchema,
   outreachSchema,
   qualificationSchema,
   replyAnalysisSchema,
@@ -163,5 +169,39 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
       buildSocialContentPrompt(ctx, (ctx as any).contentRequest ?? { topic: null, content_type: "post" }),
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: () => "content_draft",
+  },
+  ANALYZE_OPPORTUNITY: {
+    schema: opportunityAnalysisSchema,
+    rules: [],
+    buildPrompt: (ctx) =>
+      buildOpportunityAnalysisPrompt(ctx, (ctx as any).opportunity ?? { content: "", channel: "UNKNOWN" }),
+    action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
+    decisionOf: (validated) => validated.intent ?? "opportunity_analyzed",
+  },
+  ANALYZE_DISCOVERY: {
+    schema: discoveryAnalysisSchema,
+    rules: [],
+    buildPrompt: (ctx) =>
+      buildDiscoveryAnalysisPrompt(ctx, (ctx as any).discovery ?? { content: "", platform: "unknown" }),
+    decisionOf: (validated) => validated.recommended_next_action ?? "discovery_analyzed",
+  },
+  GENERATE_NURTURE_REPLY: {
+    schema: nurtureReplySchema,
+    rules: ["LEAD_018"],
+    buildPrompt: (ctx) =>
+      buildNurtureReplyPrompt(ctx, (ctx as any).nurtureConversation ?? {
+        prospect_name: null,
+        detected_requirement: null,
+        conversation_history: [],
+        platform: "unknown",
+        lead_memory: null,
+        previous_questions: [],
+      }),
+    decisionOf: (validated) =>
+      validated.meeting_intent_detected === true
+        ? "nurture_meeting_intent"
+        : validated.prospect_disinterested === true
+          ? "nurture_prospect_disinterested"
+          : "nurture_reply",
   },
 };

@@ -1,0 +1,135 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+
+/**
+ * GET /api/ai/discovery/handoff — List pending handoff requests
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get("status") || "pending";
+
+    let query = supabase
+      .from("handoff_requests")
+      .select("*, discovered_leads!handoff_requests_discovered_lead_id_fkey(*)")
+      .eq("user_id", user.id);
+
+    if (status !== "all") {
+      query = query.eq("status", status);
+    }
+
+    const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
+
+    if (error) {
+      // If the FK join fails (table might not have the column yet), fallback
+      const { data: fallback, error: fallbackError } = await supabase
+        .from("handoff_requests")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("status", status === "all" ? undefined! : status)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
+      return NextResponse.json({ handoff_requests: fallback ?? [] });
+    }
+
+    return NextResponse.json({ handoff_requests: data ?? [] });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/ai/discovery/handoff — Create a WhatsApp handoff request
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const body = await request.json();
+
+    if (!body.discovered_lead_id) {
+      return NextResponse.json({ error: "discovered_lead_id is required" }, { status: 400 });
+    }
+
+    // Get the discovered lead
+    const { data: lead } = await supabase
+      .from("discovered_leads")
+      .select("*")
+      .eq("id", body.discovered_lead_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!lead) {
+      return NextResponse.json({ error: "Discovered lead not found" }, { status: 404 });
+    }
+
+    // Get conversation thread
+    const { data: thread } = await supabase
+      .from("conversation_threads")
+      .select("messages, total_messages")
+      .eq("discovered_lead_id", lead.id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const messages = Array.isArray(thread?.messages) ? thread.messages : [];
+    const latestMessages = messages.slice(-10);
+
+    // Build handoff context
+    const handoffContext = {
+      discovered_lead_id: lead.id,
+      lead_id: lead.lead_id,
+      opportunity_id: lead.opportunity_id,
+      platform: lead.source_platform,
+      prospect_name: lead.author_name ?? lead.author_handle ?? null,
+      profile_url: lead.author_profile_url,
+      original_requirement: lead.detected_requirement,
+      detected_intent: lead.recommended_next_action,
+      lead_score: lead.lead_score,
+      intent_score: lead.intent_score,
+      confidence: lead.confidence,
+      evidence: lead.evidence,
+      conversation_summary: lead.conversation_summary,
+      latest_messages: latestMessages,
+      objections: body.objections ?? [],
+      why_qualified: body.why_qualified ?? lead.evidence?.reason ?? "AI qualified based on discovery signals",
+      recommended_next_step: body.recommended_next_step ?? "Schedule a call to discuss requirements",
+    };
+
+    // Create handoff request
+    const { data: handoff, error } = await supabase
+      .from("handoff_requests")
+      .insert({
+        user_id: user.id,
+        lead_id: lead.lead_id,
+        opportunity_id: lead.opportunity_id,
+        source: "discovery",
+        status: "pending",
+        context: handoffContext,
+        reason: `Discovery handoff: ${lead.detected_requirement ?? "Meeting intent detected"}`,
+      })
+      .select()
+      .single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Update discovered lead stage
+    await supabase
+      .from("discovered_leads")
+      .update({
+        conversation_stage: "WHATSAPP_HANDOFF",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", lead.id);
+
+    return NextResponse.json({ handoff_request: handoff, context: handoffContext }, { status: 201 });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
