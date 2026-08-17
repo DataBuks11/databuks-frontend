@@ -4,6 +4,10 @@
     {
       "path": "/api/ai/social/monitor",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/ai/discovery/scan/cron",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

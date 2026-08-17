@@ -100,6 +100,7 @@ export default function DiscoveryPage() {
   const [handoffModalOpen, setHandoffModalOpen] = useState(false);
   const [handoffLead, setHandoffLead] = useState<DiscoveredLead | null>(null);
   const [handoffLoading, setHandoffLoading] = useState(false);
+  const [scanResults, setScanResults] = useState<Record<string, any> | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [filterPlatform, setFilterPlatform] = useState("all");
@@ -147,16 +148,19 @@ export default function DiscoveryPage() {
 
   const handleScan = async () => {
     setScanning(true);
+    setScanResults(null);
     try {
       const res = await fetch("/api/ai/discovery/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      await res.json();
+      const json = await res.json();
+      setScanResults(json.scan_results ?? null);
       await loadLeads();
     } catch (err) {
       console.error("Scan failed:", err);
+      setScanResults({ _error: "Scan failed" });
     } finally {
       setScanning(false);
     }
@@ -290,6 +294,48 @@ export default function DiscoveryPage() {
         </CardContent>
       </Card>
 
+      {/* Scan Results Banner */}
+      <AnimatePresence>
+        {scanResults && !scanning && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <Card className="bg-zinc-900/50 border-zinc-800">
+              <CardContent className="py-3 px-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xs font-medium text-zinc-300">Scan Results:</span>
+                    {Object.entries(scanResults).map(([platform, result]: [string, any]) => {
+                      if (platform === "_error") return <span key={platform} className="text-xs text-red-400">{result}</span>;
+                      const Icon = PLATFORM_ICONS[platform] ?? Globe;
+                      return (
+                        <div key={platform} className="flex items-center gap-1.5 text-xs">
+                          <Icon className="h-3 w-3 text-zinc-400" />
+                          <span className="text-zinc-400 capitalize">{platform}:</span>
+                          {result.status === "completed" ? (
+                            <span className="text-emerald-400">
+                              {result.processed} new, {result.duplicates} dup, {result.events_found} found
+                            </span>
+                          ) : result.status === "skipped" ? (
+                            <span className="text-zinc-500">{result.reason?.replace(/_/g, " ")}</span>
+                          ) : (
+                            <span className="text-red-400">{result.error ?? result.status}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button onClick={() => setScanResults(null)} className="text-zinc-500 hover:text-zinc-300 text-xs">✕</button>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <select
@@ -406,6 +452,42 @@ export default function DiscoveryPage() {
                   <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
                     <p className="text-xs text-zinc-400 mb-1">Detected Requirement</p>
                     <p className="text-sm text-zinc-200">{selectedLead.detected_requirement}</p>
+                  </div>
+                )}
+                {/* Why this lead was discovered */}
+                {selectedLead.evidence && (
+                  <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 rounded-lg p-3 border border-purple-700/30">
+                    <p className="text-xs font-medium text-purple-300 mb-2 flex items-center gap-1.5">
+                      <Eye className="h-3.5 w-3.5" />
+                      Why this lead was discovered
+                    </p>
+                    {selectedLead.evidence.reason && (
+                      <p className="text-xs text-zinc-300 mb-2">{selectedLead.evidence.reason}</p>
+                    )}
+                    {Array.isArray(selectedLead.evidence.signals) && selectedLead.evidence.signals.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {selectedLead.evidence.signals.map((sig: string, i: number) => (
+                          <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            {sig.replace(/_/g, " ")}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {Array.isArray(selectedLead.evidence.quotes) && selectedLead.evidence.quotes.length > 0 && (
+                      <div className="space-y-1">
+                        {selectedLead.evidence.quotes.map((quote: string, i: number) => (
+                          <p key={i} className="text-xs text-zinc-400 italic border-l-2 border-purple-500/40 pl-2">
+                            &ldquo;{quote}&rdquo;
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-3 mt-2 text-[10px] text-zinc-500">
+                      <span>Relevance: {selectedLead.evidence.relevance_score ?? "—"}</span>
+                      <span>Intent: {selectedLead.evidence.intent_score ?? "—"}</span>
+                      <span>Urgency: {selectedLead.evidence.urgency_score ?? "—"}</span>
+                      <span>Confidence: {selectedLead.evidence.confidence ? `${Math.round(selectedLead.evidence.confidence * 100)}%` : "—"}</span>
+                    </div>
                   </div>
                 )}
                 {/* Source Content */}

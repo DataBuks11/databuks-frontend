@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const platforms: string[] = Array.isArray(body.platforms)
       ? body.platforms
-      : ["instagram", "facebook", "linkedin"];
+      : ["instagram", "facebook", "linkedin", "whatsapp"];
 
     const { getAllPlatformCapabilities } = await import("@/lib/social/capability-registry");
     const { processDiscoveredSignal } = await import("@/lib/discovery/pipeline");
@@ -60,6 +60,12 @@ export async function POST(request: NextRequest) {
         let duplicates = 0;
 
         for (const event of events) {
+          // Block WhatsApp group messages from entering discovery
+          if (platform === "whatsapp" && event.author_id?.endsWith("@g.us")) {
+            ignored++;
+            continue;
+          }
+
           if (!event.content) {
             ignored++;
             continue;

@@ -52,6 +52,11 @@ export async function POST(request: NextRequest) {
   let duplicates = 0;
   let proposed = 0;
   const errors: string[] = [];
+  let discoveryBridged = 0;
+  let discoveryModule: any = null;
+  try {
+    discoveryModule = await import("@/lib/discovery/pipeline");
+  } catch { /* discovery module not available — skip bridge */ }
 
   for (const connection of connections ?? []) {
     const adapter = getAdapterForProvider(connection.platform);
@@ -64,6 +69,36 @@ export async function POST(request: NextRequest) {
         if (result.status === "PROCESSED") processed += 1;
         if (result.status === "DUPLICATE") duplicates += 1;
         if (result.actionId) proposed += 1;
+
+        // Bridge: if classification shows genuine intent, also feed into discovery pipeline
+        if (
+          discoveryModule &&
+          result.status === "PROCESSED" &&
+          result.classification &&
+          (result.classification.intent_score ?? 0) >= 40 &&
+          event.content &&
+          event.content.trim().length > 0
+        ) {
+          try {
+            await discoveryModule.processDiscoveredSignal(supabase, connection.user_id, {
+              source_platform: connection.platform,
+              source_url: event.url ?? null,
+              source_content: event.content,
+              source_content_type: event.event_type === "post" ? "post" : event.event_type === "message" ? "message" : "comment",
+              external_author_id: event.author_id ?? null,
+              author_name: event.author_name ?? null,
+              author_handle: null,
+              author_profile_url: null,
+              parent_content: null,
+              timestamp: event.timestamp ?? null,
+              metadata: { source: "monitor_bridge", classification: result.classification },
+              idempotency_key: `bridge:${connection.platform}:${event.external_event_id}`,
+            });
+            discoveryBridged++;
+          } catch {
+            // Discovery bridge failure should not break the existing monitor
+          }
+        }
       }
       await supabase
         .from("social_connections")
@@ -75,5 +110,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ pulled, processed, duplicates, proposed, errors });
+  return NextResponse.json({ pulled, processed, duplicates, proposed, discovery_bridged: discoveryBridged, errors });
 }
