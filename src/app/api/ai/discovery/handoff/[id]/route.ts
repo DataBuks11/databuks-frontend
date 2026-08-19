@@ -37,9 +37,9 @@ export async function PATCH(
     }
 
     const statusMap: Record<string, string> = {
-      approve: "approved",
-      reject: "rejected",
-      defer: "deferred",
+      approve: "APPROVED",
+      reject: "REJECTED",
+      defer: "DEFERRED",
     };
 
     const updates: Record<string, any> = {

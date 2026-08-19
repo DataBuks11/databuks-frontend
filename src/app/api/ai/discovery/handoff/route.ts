@@ -11,15 +11,15 @@ export async function GET(request: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status") || "pending";
+    const status = searchParams.get("status") || "PENDING";
 
     let query = supabase
       .from("handoff_requests")
       .select("*, discovered_leads!handoff_requests_discovered_lead_id_fkey(*)")
       .eq("user_id", user.id);
 
-    if (status !== "all") {
-      query = query.eq("status", status);
+    if (status.toLowerCase() !== "all") {
+      query = query.in("status", [status.toUpperCase(), status.toLowerCase()]);
     }
 
     const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
         .from("handoff_requests")
         .select("*")
         .eq("user_id", user.id)
-        .eq("status", status === "all" ? undefined! : status)
+        .in("status", status.toLowerCase() === "all" ? ["PENDING", "pending", "APPROVED", "approved", "REJECTED", "rejected", "DEFERRED", "deferred"] : [status.toUpperCase(), status.toLowerCase()])
         .order("created_at", { ascending: false })
         .limit(50);
       if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
