@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -13,6 +13,7 @@ import {
   CheckCircle,
   MessageSquare,
   BarChart3,
+  Search,
   Workflow,
   Settings,
   CreditCard,
@@ -30,6 +31,7 @@ const navLinks = [
   { href: "/dashboard/website", label: "Website", icon: Globe },
   { href: "/dashboard/socials", label: "Social Connections", icon: Share2 },
   { href: "/dashboard/leads", label: "Lead Engine", icon: Target },
+  { href: "/dashboard/find-leads", label: "Find Leads", icon: Search },
   { href: "/dashboard/socials/discovery", label: "Lead Discovery", icon: Sparkles },
   { href: "/dashboard/content", label: "Content", icon: FileText },
   { href: "/dashboard/approvals", label: "Approvals", icon: CheckCircle },
@@ -148,7 +150,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       <div className="border-t border-white/[0.04] p-2">
         <button
           onClick={handleSignOut}
-          title={collapsed ? `${userName} — Sign out` : undefined}
+          title={collapsed ? `${userName} â€” Sign out` : undefined}
           className={cn(
             "flex items-center rounded-xl transition-all duration-300 hover:bg-white/[0.02] cursor-pointer w-full text-left",
             collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"
