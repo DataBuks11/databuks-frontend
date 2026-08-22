@@ -8,20 +8,6 @@ import type {
 
 const GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1";
 
-interface GoogleSearchItem {
-  title?: string;
-  link?: string;
-  snippet?: string;
-  displayLink?: string;
-  pagemap?: Record<string, any>;
-}
-
-interface GoogleSearchResponse {
-  items?: GoogleSearchItem[];
-  searchInformation?: { totalResults?: string };
-  error?: { message?: string; code?: number };
-}
-
 export class GoogleSearchProvider implements DiscoveryProvider {
   readonly name = "google_search";
   private cxId: string | null;
@@ -34,13 +20,17 @@ export class GoogleSearchProvider implements DiscoveryProvider {
     return !!process.env.GOOGLE_SEARCH_API_KEY && !!this.cxId;
   }
 
+  /**
+   * Custom Search JSON API is CLOSED to new customers (Google policy).
+   * This provider returns UNAVAILABLE for new projects.
+   * If a legacy project has existing access, it may still work.
+   */
   async discover(
     queries: DiscoveryQuery[],
     config: ProviderConfig = {}
   ): Promise<DiscoveryProviderResult> {
     const apiKey = config.apiKey ?? process.env.GOOGLE_SEARCH_API_KEY ?? null;
-    const cxId = (config.cx as string) ?? this.cxId;
-    
+    const cxId = config.cx ?? this.cxId;
     const discoveredAt = new Date().toISOString();
 
     if (!apiKey || !cxId) {
@@ -49,10 +39,7 @@ export class GoogleSearchProvider implements DiscoveryProvider {
         candidates: [],
         total_queries_executed: 0,
         total_queries_requested: queries.length,
-        errors: queries.map((q) => ({
-          query: q.query,
-          error: "Google Search API key or CX ID not configured",
-        })),
+        errors: queries.map((q) => ({ query: q.query, error: "Google Search API key or CX ID not configured" })),
         rate_limit_hit: false,
       };
     }
@@ -72,9 +59,9 @@ export class GoogleSearchProvider implements DiscoveryProvider {
       try {
         const url = new URL(GOOGLE_SEARCH_ENDPOINT);
         url.searchParams.set("key", apiKey);
-        url.searchParams.set("cx", cxId);
+        url.searchParams.set("cx", String(cxId));
         url.searchParams.set("q", query.query);
-        url.searchParams.set("num", String(Math.min(Number(config.max_results_per_query ?? 10), 10)));
+        url.searchParams.set("num", "10");
 
         const response = await fetch(url.toString(), {
           method: "GET",
@@ -96,7 +83,7 @@ export class GoogleSearchProvider implements DiscoveryProvider {
           continue;
         }
 
-        const data: GoogleSearchResponse = await response.json();
+        const data: any = await response.json();
 
         if (data.error) {
           errors.push({ query: query.query, error: data.error.message ?? "unknown API error" });
