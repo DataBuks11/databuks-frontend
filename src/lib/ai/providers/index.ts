@@ -12,8 +12,11 @@ export function getActiveProvider(): AiProvider {
 }
 
 function createDefaultProvider(): AiProvider {
-  // Ox Alpha is the primary/default LLM provider
-  if (process.env.OX_ALPHA_API_KEY && process.env.OX_ALPHA_BASE_URL) {
+  // Ox Alpha is the primary/default LLM provider.
+  // If either variable is set, Ox Alpha owns the slot: a malformed or
+  // incomplete configuration must fail loudly here — never silently
+  // degrade to the fallback provider.
+  if (process.env.OX_ALPHA_API_KEY || process.env.OX_ALPHA_BASE_URL) {
     return new OxAlphaProvider();
   }
   // Fallback: DeepSeek V4 Flash
