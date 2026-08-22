@@ -23,6 +23,25 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL || ""; // Optional: forward messages
 
 const logger = pino({ level: "silent" });
 
+// ─── QR sizing ───
+// A NaN/invalid dimension reaching the PNG encoder throws Node's
+// RangeError "The value of 'size' is out of range ... Received NaN".
+// Every width value is coerced through this guard before rendering.
+const DEFAULT_QR_WIDTH = 300;
+const MIN_QR_WIDTH = 64;
+const MAX_QR_WIDTH = 1024;
+
+function sanitizeQrWidth(value) {
+  let n;
+  if (typeof value === "number") n = value;
+  else if (typeof value === "string" && value.trim() !== "") n = Number(value.trim());
+  else return DEFAULT_QR_WIDTH;
+  if (!Number.isFinite(n)) return DEFAULT_QR_WIDTH;
+  const floored = Math.floor(n);
+  if (floored < MIN_QR_WIDTH || floored > MAX_QR_WIDTH) return DEFAULT_QR_WIDTH;
+  return floored;
+}
+
 // Supabase client (service role for server-side operations)
 let supabase = null;
 try {
@@ -293,7 +312,11 @@ async function connectWhatsApp(userId) {
 
       if (qr) {
         try {
-          const qrImage = await QRCode.toDataURL(qr, { width: 300, margin: 2 });
+          if (typeof qr !== "string" || qr.trim() === "") throw new Error("empty QR payload");
+          const qrImage = await QRCode.toDataURL(qr, {
+            width: sanitizeQrWidth(process.env.QR_WIDTH),
+            margin: 2,
+          });
           session.qrCode = qrImage;
           session.qrRetries++;
 
@@ -472,6 +495,26 @@ app.post("/disconnect", async (req, res) => {
   await updateSupabaseStatus(userId, false);
 
   res.json({ success: true });
+});
+
+// Pairing code endpoint
+app.post("/pair", async (req, res) => {
+  const { userId, phoneNumber } = req.body;
+  if (!userId || !phoneNumber) return res.status(400).json({ error: "userId and phoneNumber required" });
+  let currentSession = sessions.get(userId);
+  if (!currentSession?.socket) {
+    try { await connectWhatsApp(userId); currentSession = sessions.get(userId); } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
+  try {
+    if (!currentSession?.socket) return res.status(400).json({ error: "Connection not ready" });
+    await new Promise((r) => setTimeout(r, 2000));
+    const cleanPhone = phoneNumber.replace(/[^\d]/g, "");
+    const pairingCode = await currentSession.socket.requestPairingCode(cleanPhone);
+    res.json({ success: true, pairingCode });
+  } catch (err) {
+    console.error("[Pair] Error:", err.message);
+    res.status(500).json({ error: "Failed to generate pairing code" });
+  }
 });
 
 // Send text message
