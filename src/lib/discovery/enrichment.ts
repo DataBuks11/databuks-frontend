@@ -45,6 +45,14 @@ export function normalizePhone(raw: string): string | null {
   // Must have at least 8 digits to be a valid phone
   const digitOnly = digits.replace(/\+/g, "");
   if (digitOnly.length < 8 || digitOnly.length > 15) return null;
+  // Precision guard: reject coordinate/ID-like numbers scraped from page
+  // text (e.g. "33.0384615", "00000040"). A real rendered phone has a
+  // separator (+, space, -, parentheses) AND a plausible subscriber length.
+  const hasSeparator = /[+\s().-]/.test(cleaned.slice(1));
+  const plausibleLength = digitOnly.length >= 10 && digitOnly.length <= 13;
+  const e164 = digits.startsWith("+");
+  if (e164) return plausibleLength ? cleaned : null;
+  if (!hasSeparator || !plausibleLength) return null;
   return cleaned;
 }
 
@@ -122,6 +130,8 @@ export interface WebsiteEnrichmentResult {
   emails: string[];
   address: string | null;
   social_links: { instagram: string | null; facebook: string | null; linkedin: string | null };
+  /** Visible page text (homepage + contact), for downstream requirement/urgency analysis */
+  page_text: string;
   fetched_from: string;
   fetched_at: string;
   success: boolean;
@@ -173,6 +183,7 @@ export async function enrichFromWebsite(
   const emptyResult: WebsiteEnrichmentResult = {
     phones: [], emails: [], address: null,
     social_links: { instagram: null, facebook: null, linkedin: null },
+    page_text: "",
     fetched_from: websiteUrl, fetched_at: new Date().toISOString(),
     success: false, error: null,
   };
@@ -192,6 +203,7 @@ export async function enrichFromWebsite(
   const homeEmails = extractEmails(homepage.html);
   const homeSocial = detectSocialLinks(homepage.html, homepage.finalUrl);
   const homeAddress = extractAddress(homepage.html);
+  const pageTextParts: string[] = [extractVisibleText(homepage.html)];
 
   allPhones.push(...homePhones);
   allEmails.push(...homeEmails);
@@ -214,6 +226,7 @@ export async function enrichFromWebsite(
       if (!allSocial.facebook && contactSocial.facebook) allSocial.facebook = contactSocial.facebook;
       if (!allSocial.linkedin && contactSocial.linkedin) allSocial.linkedin = contactSocial.linkedin;
       if (!address) address = extractAddress(contactPage.html);
+      pageTextParts.push(extractVisibleText(contactPage.html));
     }
   }
 
@@ -224,11 +237,26 @@ export async function enrichFromWebsite(
     emails: [...new Set(allEmails)].slice(0, 3),
     address,
     social_links: allSocial,
+    page_text: pageTextParts.join(" ").replace(/\s+/g, " ").trim().slice(0, 6000),
     fetched_from: homepage.finalUrl,
     fetched_at: new Date().toISOString(),
     success: true,
     error: null,
   };
+}
+
+/** Strip tags/scripts and keep readable text for evidence analysis */
+function extractVisibleText(html: string): string {
+  try {
+    const $ = cheerio.load(html);
+    $("script, style, noscript, svg").remove();
+    const title = $("title").first().text() ?? "";
+    const meta = $('meta[name="description"]').attr("content") ?? "";
+    const body = $("body").text() ?? "";
+    return `${title} ${meta} ${body}`.replace(/\s+/g, " ").trim();
+  } catch {
+    return "";
+  }
 }
 
 function isSafeUrl(url: string): boolean {

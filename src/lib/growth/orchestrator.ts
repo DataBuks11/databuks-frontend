@@ -69,9 +69,14 @@ export async function runFindLeads(
         for (const c of gsResult.candidates) {
           allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_search" });
         }
+        for (const e of gsResult.errors.slice(0, 3)) {
+          result.errors.push(`google_search [${e.query}]: ${e.error}`);
+        }
         googleSearchOk = true;
       }
-    } catch {}
+    } catch (err: any) {
+      result.errors.push(`google_search provider failed: ${err?.message ?? "unknown"}`);
+    }
 
     try {
       const gmMod = await import("../discovery/providers/google-maps");
@@ -81,9 +86,22 @@ export async function runFindLeads(
         for (const c of gmResult.candidates) {
           allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_maps" });
         }
+        for (const e of gmResult.errors.slice(0, 3)) {
+          result.errors.push(`google_maps [${e.query}]: ${e.error}`);
+        }
         googleMapsOk = true;
+      } else {
+        result.errors.push("google_maps: GOOGLE_MAPS_API_KEY not configured");
       }
-    } catch {}
+    } catch (err: any) {
+      result.errors.push(`google_maps provider failed: ${err?.message ?? "unknown"}`);
+    }
+
+    // Honest run status: zero raw candidates must never read as a clean COMPLETED run.
+    // result.errors carries the per-provider cause (unconfigured / denied / rate-limited).
+    if (allRawCandidates.length === 0) {
+      result.status = "PARTIAL";
+    }
 
     result.raw_candidates = allRawCandidates.length;
 
@@ -115,6 +133,12 @@ export async function runFindLeads(
       let addressText: string | null = null;
       let socialLinks: Record<string, string | null> = {};
 
+      // Google Places Details provides a real phone even when the website
+      // cannot be crawled — genuine contactability evidence.
+      const placesPhone = group.all_candidates
+        .map((c: any) => c.raw?.raw_metadata?.details_phone)
+        .find((p: any) => typeof p === "string" && p.replace(/\D/g, "").length >= 8) ?? null;
+
       if (primary.websiteUrl) {
         try {
           const enrichment = await enrichFromWebsite(primary.websiteUrl);
@@ -124,29 +148,54 @@ export async function runFindLeads(
             hasPhone = (enrichment.phones?.length ?? 0) > 0;
             hasEmail = (enrichment.emails?.length ?? 0) > 0;
             socialLinks = enrichment.social_links ?? {};
+            if (!addressText && enrichment.address) addressText = enrichment.address;
           }
         } catch {}
       }
+      hasPhone = hasPhone || !!placesPhone;
 
-      const fullText = group.all_candidates.map((c) => c.raw?.snippet ?? "").join(" ");
+      // Evidence for requirement/urgency analysis must include real website
+      // content — a Maps address alone proves existence, not need.
+      const fullText = [
+        ...group.all_candidates.map((c) => c.raw?.snippet ?? ""),
+        typeof enrichmentData?.page_text === "string" ? enrichmentData.page_text.slice(0, 6000) : "",
+      ].join(" ");
       const reqAnalysis = analyzeRequirement(fullText || primary.businessName);
       const urgAnalysis = analyzeUrgency(fullText, reqAnalysis.status);
 
+      // ICP industry match from available evidence
+      const targetIndustries: string[] = Array.isArray(bcData.industries) ? bcData.industries : [];
+      let detectedIndustry: string | null = null;
+      if (targetIndustries.length > 0) {
+        const haystack = `${fullText} ${primary.businessName}`.toLowerCase();
+        detectedIndustry = targetIndustries.find((ind) => typeof ind === "string" && ind.length > 2 && haystack.includes(ind.toLowerCase())) ?? null;
+      }
+
+      // Relevance for place-based candidates: a verified Google Business
+      // listing with rating/review history is an established local business.
+      const meta = primary.raw?.raw_metadata ?? {};
+      const rating = typeof meta.rating === "number" ? meta.rating : null;
+      const reviewCount = typeof meta.review_count === "number" ? meta.review_count : null;
+      let relevanceScore = primary.raw?.snippet ? 40 : 20;
+      if (rating !== null) relevanceScore += rating >= 4 ? 15 : 8;
+      if (reviewCount !== null && reviewCount >= 50) relevanceScore += 10;
+      if (primary.websiteUrl) relevanceScore += 5;
+      relevanceScore = Math.min(70, relevanceScore);
+
       // Sub-scores (deterministic)
-      const relevanceBase = Math.min(100, primary.raw?.snippet?.length ? primary.raw.snippet.length / 10 : 30);
       const subScores = computeSubScores({
         requirementStatus: reqAnalysis.status,
         intentScore: 50,
         urgencyScore: urgAnalysis.score,
-        relevanceScore: Math.round(relevanceBase),
+        relevanceScore: Math.round(relevanceScore),
         hasPhone, hasEmail,
         hasWebsite: !!primary.websiteUrl,
         hasSocialLinks: Object.keys(socialLinks).length > 0,
         hasAddress: !!addressText,
         evidenceStrengthAvg: 50,
         identityConfidence: group.identity_confidence * 100,
-        targetIndustries: Array.isArray(bcData.industries) ? bcData.industries : [],
-        detectedIndustry: null,
+        targetIndustries,
+        detectedIndustry,
       });
 
       const scoring = calculateFinalScore(subScores, []);
@@ -172,7 +221,7 @@ export async function runFindLeads(
         business_name: group.business_name,
         domain: primary.domain,
         website_url: primary.websiteUrl,
-        phones: enrichmentData?.phones ?? [],
+        phones: placesPhone && !(enrichmentData?.phones ?? []).length ? [placesPhone] : enrichmentData?.phones ?? [],
         emails: enrichmentData?.emails ?? [],
         address: addressText,
         instagram_url: socialLinksFinal.instagram ?? null,
@@ -200,27 +249,103 @@ export async function runFindLeads(
         linkedinUrl: socialLinksFinal.linkedin ?? null,
       });
 
-      await supabase.from("discovered_leads").insert({
+      // Real provider provenance (never hardcode google_search)
+      const candidateProviders = [...new Set(group.all_candidates.map((c: any) => c.raw?.raw_metadata?.provider ?? c.provider ?? "google_maps"))];
+
+      // Structured, evidence-backed "Why This Lead" — concise, no chain-of-thought
+      const missing: string[] = [];
+      if (!hasPhone) missing.push("phone");
+      if (!hasEmail) missing.push("email");
+      if (!primary.websiteUrl) missing.push("website");
+      if (!socialLinksFinal.instagram && !socialLinksFinal.facebook && !socialLinksFinal.linkedin) missing.push("social profiles");
+
+      const whyThisLead = {
+        match_reason: detectedIndustry
+          ? `Matches target industry "${detectedIndustry}"${rating !== null ? ` with ${rating}★ Google rating` : ""}`
+          : `Verified local business listing${group.business_name ? `: ${group.business_name}` : ""}`,
+        requirement_evidence: {
+          status: reqAnalysis.status,
+          type: reqAnalysis.requirement_type,
+          reason: reqAnalysis.reason,
+        },
+        urgency_evidence: {
+          level: urgAnalysis.level,
+          score: urgAnalysis.score,
+          reason: urgAnalysis.reason,
+        },
+        score: scoring.final_score,
+        confidence: scoring.confidence,
+        provenance: {
+          providers: candidateProviders,
+          sources: group.all_candidates.slice(0, 3).map((c: any) => c.sourceUrl ?? c.raw?.source_url).filter(Boolean),
+          query: primary.query ?? null,
+        },
+        contacts_found: {
+          phone: hasPhone, email: hasEmail, website: !!primary.websiteUrl,
+          instagram: !!socialLinksFinal.instagram, facebook: !!socialLinksFinal.facebook, linkedin: !!socialLinksFinal.linkedin,
+        },
+        conflicts: [] as string[],
+        missing_information: missing,
+        recommended_channel: channelRec?.channel ?? null,
+        channel_reason: channelRec?.reason ?? null,
+      };
+
+      const leadRow = {
         user_id: userId,
-        source_platform: "google_search",
+        source_platform: candidateProviders[0] ?? "google_maps",
         source_url: primary.sourceUrl,
         source_content: primary.businessName,
-        external_author_id: null,
+        external_author_id: primary.domain,
         author_name: group.business_name,
-        idempotency_key: idempotencyKey("find-leads", userId, String(Date.now()), identityKey),
-        metadata: {
+        detected_requirement: reqAnalysis.requirement_type,
+        business_context_match: detectedIndustry,
+        relevance_score: subScores.icp_fit,
+        intent_score: subScores.requirement_fit,
+        lead_score: scoring.final_score,
+        urgency_score: urgAnalysis.score,
+        confidence: Math.round(scoring.confidence) / 100,
+        evidence: {
           canonical_business_id: bizId,
-          final_score: scoring.final_score,
-          confidence: scoring.confidence,
           quality_gate: scoring.quality_gate_status,
-          site_type: "business",
-          requirement: reqAnalysis.requirement_type,
-          detected_requirement: null,
-          recommended_channel: channelRec?.channel ?? null,
-          channel_reason: channelRec?.reason ?? null,
-          why_this_lead: `Score ${scoring.final_score}/100, Confidence ${scoring.confidence}%`,
+          why_this_lead: whyThisLead,
+          sub_scores: subScores,
         },
-      });
+        recommended_next_action: channelRec ? `${channelRec.channel}: ${channelRec.reason}` : "REVIEW",
+        conversation_stage: "DISCOVER",
+        idempotency_key: idempotencyKey("find-leads", userId, identityKey),
+      };
+
+      // Repeat runs refresh the same row — never duplicate.
+      // (PostgREST cannot target the partial unique index on idempotency_key,
+      // so we resolve the row manually instead of ON CONFLICT.)
+      const stableKey = idempotencyKey("find-leads", userId, identityKey);
+      const { data: existingLead } = await supabase
+        .from("discovered_leads")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("idempotency_key", stableKey)
+        .maybeSingle();
+
+      let persistError: string | null = null;
+      if (existingLead?.id) {
+        const { error } = await supabase
+          .from("discovered_leads")
+          .update(leadRow)
+          .eq("id", existingLead.id);
+        persistError = error?.message ?? null;
+      } else {
+        const { error } = await supabase
+          .from("discovered_leads")
+          .insert({ ...leadRow, idempotency_key: stableKey });
+        if (error?.code === "23505") {
+          persistError = null; // concurrent run created it first — acceptable
+        } else {
+          persistError = error?.message ?? null;
+        }
+      }
+      if (persistError) {
+        result.errors.push(`discovered_leads persist failed for ${group.business_name}: ${persistError}`);
+      }
     }
 
     result.enriched_count = enrichedCount;
