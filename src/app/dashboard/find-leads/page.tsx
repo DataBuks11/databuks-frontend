@@ -10,21 +10,44 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { formatNumber } from "@/lib/utils";
 
+interface WhyThisLead {
+  match_reason?: string;
+  requirement_evidence?: { status?: string; type?: string; reason?: string };
+  urgency_evidence?: { level?: string; score?: number; reason?: string };
+  score?: number;
+  confidence?: number;
+  provenance?: { providers?: string[]; sources?: string[]; query?: string | null };
+  contacts_found?: Record<string, boolean>;
+  conflicts?: string[];
+  missing_information?: string[];
+  recommended_channel?: string | null;
+  channel_reason?: string | null;
+}
+
 interface DiscoveredLead {
   id: string;
   author_name: string | null;
   source_platform: string;
   source_url: string | null;
   source_content: string;
-  metadata: {
+  detected_requirement?: string | null;
+  business_context_match?: string | null;
+  relevance_score?: number;
+  intent_score?: number;
+  lead_score?: number;
+  urgency_score?: number;
+  confidence?: number;
+  evidence?: {
+    quality_gate?: string;
+    why_this_lead?: WhyThisLead;
+    sub_scores?: Record<string, number>;
+  };
+  recommended_next_action?: string | null;
+  metadata?: {
     final_score?: number;
     confidence?: number;
     quality_gate?: string;
-    detected_requirement?: string | null;
-    recommended_channel?: string | null;
-    channel_reason?: string | null;
     why_this_lead?: string;
-    canonical_business_id?: string;
   };
   created_at: string;
 }
@@ -44,6 +67,7 @@ export default function FindLeadsPage() {
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const loadLeads = async () => {
     try {
@@ -95,6 +119,36 @@ export default function FindLeadsPage() {
       default: return <Badge>{gate}</Badge>;
     }
   };
+
+  const leadScore = (lead: DiscoveredLead) => lead.lead_score ?? lead.metadata?.final_score ?? 0;
+  const leadConfidencePct = (lead: DiscoveredLead) => {
+    if (typeof lead.confidence === "number") return Math.round(lead.confidence * 100);
+    if (typeof lead.metadata?.confidence === "number") return lead.metadata.confidence;
+    return null;
+  };
+  const qualityGate = (lead: DiscoveredLead) =>
+    lead.evidence?.quality_gate ?? lead.metadata?.quality_gate ?? "NEW";
+  const channelOf = (lead: DiscoveredLead) => {
+    const action = lead.recommended_next_action;
+    if (!action) return "—";
+    const ch = action.split(":")[0]?.trim();
+    return ch || "—";
+  };
+  const why = (lead: DiscoveredLead) => {
+    if (lead.evidence?.why_this_lead && typeof lead.evidence.why_this_lead === "object") return lead.evidence.why_this_lead;
+    if (typeof lead.metadata?.why_this_lead === "string") {
+      return { match_reason: lead.metadata.why_this_lead } as WhyThisLead;
+    }
+    return null;
+  };
+
+  const toggleWhy = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <div className="space-y-6">
@@ -158,39 +212,91 @@ export default function FindLeadsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leads.map((lead) => (
-                <TableRow key={lead.id} className="hover:bg-white/[0.02]">
-                  <TableCell>
-                    <div className="font-medium text-sm text-white">{lead.author_name ?? lead.source_content?.slice(0, 40) ?? "Unknown"}</div>
-                    {lead.metadata?.detected_requirement && (
-                      <div className="text-xs text-white/40 mt-0.5">{lead.metadata.detected_requirement}</div>
+              {leads.map((lead) => {
+                const whyInfo = why(lead);
+                const conf = leadConfidencePct(lead);
+                const isOpen = expanded.has(lead.id);
+                return (
+                  <>
+                    <TableRow key={lead.id} className="hover:bg-white/[0.02] cursor-pointer" onClick={() => toggleWhy(lead.id)}>
+                      <TableCell>
+                        <div className="font-medium text-sm text-white">{lead.author_name ?? lead.source_content?.slice(0, 40) ?? "Unknown"}</div>
+                        {(lead.detected_requirement || lead.business_context_match) && (
+                          <div className="text-xs text-white/40 mt-0.5">
+                            {lead.detected_requirement}{lead.detected_requirement && lead.business_context_match ? " · " : ""}{lead.business_context_match}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`text-lg font-bold ${getScoreColor(leadScore(lead))}`}>
+                          {leadScore(lead)}
+                        </span>
+                        <span className="text-xs text-white/30 ml-1">/100</span>
+                      </TableCell>
+                      <TableCell>
+                        {getQualityBadge(qualityGate(lead))}
+                        {conf !== null && (
+                          <div className="text-xs text-white/30 mt-1">Conf: {conf}%</div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="info" className="capitalize">{channelOf(lead)}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {lead.source_url && (
+                          <a href={lead.source_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300">
+                            <ExternalLink className="h-3 w-3" />
+                            Source
+                          </a>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {isOpen && whyInfo && (
+                      <TableRow key={`${lead.id}-why`} className="bg-white/[0.03]">
+                        <TableCell colSpan={5}>
+                          <div className="space-y-2 py-2 text-xs">
+                            {whyInfo.match_reason && (
+                              <div><span className="text-white/50">Match:</span> <span className="text-white/80">{whyInfo.match_reason}</span></div>
+                            )}
+                            {whyInfo.requirement_evidence && (
+                              <div>
+                                <span className="text-white/50">Requirement evidence ({whyInfo.requirement_evidence.status}):</span>{" "}
+                                <span className="text-white/80">{whyInfo.requirement_evidence.reason}</span>
+                              </div>
+                            )}
+                            {whyInfo.urgency_evidence && (
+                              <div>
+                                <span className="text-white/50">Urgency evidence ({whyInfo.urgency_evidence.level}, {whyInfo.urgency_evidence.score}):</span>{" "}
+                                <span className="text-white/80">{whyInfo.urgency_evidence.reason}</span>
+                              </div>
+                            )}
+                            {whyInfo.provenance?.providers && whyInfo.provenance.providers.length > 0 && (
+                              <div><span className="text-white/50">Source provenance:</span> <span className="text-white/80">{whyInfo.provenance.providers.join(", ")}{whyInfo.provenance.query ? ` — "${whyInfo.provenance.query}"` : ""}</span></div>
+                            )}
+                            {whyInfo.contacts_found && (
+                              <div>
+                                <span className="text-white/50">Contacts found:</span>{" "}
+                                <span className="text-white/80">
+                                  {Object.entries(whyInfo.contacts_found).filter(([, v]) => v).map(([k]) => k).join(", ") || "none yet"}
+                                </span>
+                              </div>
+                            )}
+                            {whyInfo.missing_information && whyInfo.missing_information.length > 0 && (
+                              <div><span className="text-white/50">Missing information:</span> <span className="text-white/60">{whyInfo.missing_information.join(", ")}</span></div>
+                            )}
+                            {whyInfo.conflicts && whyInfo.conflicts.length > 0 && (
+                              <div><span className="text-white/50">Conflicts:</span> <span className="text-red-300">{whyInfo.conflicts.join("; ")}</span></div>
+                            )}
+                            {whyInfo.channel_reason && (
+                              <div><span className="text-white/50">Channel rationale ({whyInfo.recommended_channel}):</span> <span className="text-white/80">{whyInfo.channel_reason}</span></div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <span className={`text-lg font-bold ${getScoreColor(lead.metadata?.final_score ?? 0)}`}>
-                      {lead.metadata?.final_score ?? 0}
-                    </span>
-                    <span className="text-xs text-white/30 ml-1">/100</span>
-                  </TableCell>
-                  <TableCell>
-                    {getQualityBadge(lead.metadata?.quality_gate ?? "NEW")}
-                    {lead.metadata?.confidence && (
-                      <div className="text-xs text-white/30 mt-1">Conf: {lead.metadata.confidence}%</div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="info" className="capitalize">{lead.metadata?.recommended_channel ?? "—"}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {lead.source_url && (
-                      <a href={lead.source_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300">
-                        <ExternalLink className="h-3 w-3" />
-                        Source
-                      </a>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                  </>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>
