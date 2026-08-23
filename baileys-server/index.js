@@ -86,6 +86,64 @@ function getAuthDir(userId) {
   return dir;
 }
 
+/**
+ * A restored auth_state must contain the crypto material Baileys needs for
+ * the noise handshake. Partial/corrupt state (e.g. creds persisted without
+ * keys, or truncated JSON) makes Baileys throw deep inside its crypto layer
+ * — surfacing as Node RangeErrors like "The value of 'size' is out of range
+ * ... Received NaN". Reject anything suspicious up front.
+ */
+function isValidRestoredCreds(authState) {
+  if (!authState || typeof authState !== "object") return false;
+  const required = ["noiseKey", "signedIdentityKey", "signedPreKey", "registrationId"];
+  for (const field of required) {
+    const v = authState[field];
+    if (!v || typeof v !== "object") return false;
+    if (field === "registrationId") {
+      if (typeof v !== "number" && typeof v.value !== "number") return false;
+      continue;
+    }
+    if (field === "signedPreKey") {
+      if (!v.keyPair || typeof v.keyPair.privateKey !== "string" && !Array.isArray(v.keyPair.privateKey)) return false;
+      continue;
+    }
+    // noiseKey / signedIdentityKey: { private: <string|bytes>, public: ... }
+    const hasMaterial =
+      typeof v.private === "string" || Array.isArray(v.private) || (v.private && typeof v.private === "object");
+    if (!hasMaterial) return false;
+  }
+  return true;
+}
+
+/** Wipe local auth dir + Supabase auth_state so the next connect starts fresh. */
+async function clearAuthState(userId) {
+  const authDir = getAuthDir(userId);
+  try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
+  try {
+    if (supabase) {
+      await supabase
+        .from("whatsapp_sessions")
+        .upsert(
+          { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" }
+        );
+    }
+  } catch (err) {
+    console.error("[Auth] Supabase clear failed:", err.message);
+  }
+  sessions.delete(userId);
+}
+
+/** Never leak raw internals (stack traces, buffer errors) to API clients. */
+function safeConnectError(err) {
+  const msg = String(err?.message ?? err ?? "unknown");
+  console.error("[Connect] Internal error:", msg, err?.stack?.split("\n")[1] ?? "");
+  if (/size.*out of range|NaN|RangeError|TypeError/i.test(msg)) {
+    return "WhatsApp session data was corrupted. A fresh connection was prepared — please try generating the QR code again.";
+  }
+  return "Could not start WhatsApp connection. Please try again.";
+}
+
 // ─── Supabase Helpers ───
 async function updateSupabaseStatus(userId, connected) {
   if (!supabase) return;
@@ -238,9 +296,16 @@ async function connectWhatsApp(userId) {
           .select("auth_state")
           .eq("user_id", userId)
           .maybeSingle();
-        if (savedSession?.auth_state && Object.keys(savedSession.auth_state).length > 0) {
-          fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(savedSession.auth_state));
-          console.log(`[Auth] Restored session from Supabase for user: ${userId}`);
+        const restored = savedSession?.auth_state;
+        if (restored && Object.keys(restored).length > 0) {
+          if (isValidRestoredCreds(restored)) {
+            fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(restored));
+            console.log(`[Auth] Restored session from Supabase for user: ${userId}`);
+          } else {
+            console.warn(`[Auth] Supabase auth_state for ${userId} is corrupt/partial — ignoring, starting fresh`);
+            await clearAuthState(userId);
+            fs.mkdirSync(authDir, { recursive: true });
+          }
         }
       }
     } catch (err) {
@@ -432,8 +497,22 @@ app.post("/connect", async (req, res) => {
     const result = await connectWhatsApp(userId);
     res.json(result);
   } catch (err) {
-    console.error("[Connect Error]", err);
-    res.status(500).json({ error: err.message });
+    // Corrupt auth state can make Baileys crash mid-handshake with raw
+    // buffer errors. Recover automatically: wipe the bad state and retry
+    // once with a fresh session so a QR is generated instead of an error.
+    try {
+      console.log(`[Connect] error for ${userId}, clearing auth and retrying fresh`);
+      await clearAuthState(userId);
+      const retry = await connectWhatsApp(userId);
+      if (retry?.error) {
+        console.error("[Connect] retry also failed:", retry.error);
+        return res.status(500).json({ error: safeConnectError(new Error(retry.error)) });
+      }
+      return res.json(retry);
+    } catch (retryErr) {
+      console.error("[Connect] fresh retry crashed:", retryErr);
+      return res.status(500).json({ error: safeConnectError(retryErr) });
+    }
   }
 });
 
