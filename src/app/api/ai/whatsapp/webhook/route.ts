@@ -5,6 +5,9 @@ import { processIncomingWhatsAppMessage } from "@/lib/ai/whatsapp/engine";
 
 export const maxDuration = 60;
 
+/** Dedup owner commands across Baileys reconnect/replay (per lambda instance). */
+const seenOwnerMsgs = new Set<string>();
+
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -37,6 +40,20 @@ export async function POST(request: NextRequest) {
     const isOwnerCommand = origin === "self" || origin === "owner_device" || (!!ownerPhone && inboundPhone === ownerPhone);
 
     if (isOwnerCommand) {
+      const dedupKey = `${userId}:${message.messageId}`;
+      if (seenOwnerMsgs.has(dedupKey)) {
+        return NextResponse.json({ processed: true, route: "owner_assistant", deduplicated: true });
+      }
+      seenOwnerMsgs.add(dedupKey);
+      if (seenOwnerMsgs.size > 500) {
+        // keep the set bounded — drop oldest half
+        const it = seenOwnerMsgs.values();
+        for (let i = 0; i < 250; i++) {
+          const v = it.next();
+          if (v.done) break;
+          seenOwnerMsgs.delete(v.value);
+        }
+      }
       const supabase = adminClient();
       const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
       const replyJid = String(message.remoteJid).includes("@")

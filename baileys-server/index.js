@@ -212,9 +212,21 @@ async function forwardToWebhook(userId, msg) {
 function setupMessageHandler(socket, userId) {
   // Owner command center: messages the user sends to THEIR OWN number
   // ("message yourself" chat) are routed as assistant commands.
-  const ownPhone = (() => {
-    try { return String(socket.user?.id ?? "").split(":")[0].split("@")[0]; } catch { return ""; }
-  })();
+  // ownPhone is resolved from TWO sources — socket.user.id AND the live
+  // session phoneNumber — because JID formats differ across Baileys events.
+  const resolveOwnPhones = () => {
+    const phones = new Set();
+    try {
+      const uid = String(socket.user?.id ?? "");
+      if (uid) phones.add(uid.split(":")[0].split("@")[0]);
+    } catch {}
+    try {
+      const p = String(sessions.get(userId)?.phoneNumber ?? "");
+      if (p) phones.add(p.replace(/\D/g, ""));
+    } catch {}
+    phones.delete("");
+    return phones;
+  };
 
   socket.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
@@ -224,12 +236,14 @@ function setupMessageHandler(socket, userId) {
       if (msg.key.remoteJid === "status@broadcast") continue;
 
       const fromMe = msg.key.fromMe || false;
-      const remotePhone = String(msg.key.remoteJid ?? "").replace(/@.*$/, "").split(":")[0];
-      const isSelfChat = fromMe && ownPhone && remotePhone === ownPhone;
+      const remotePhone = String(msg.key.remoteJid ?? "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+      const ownPhones = resolveOwnPhones();
+      const isSelfChat =
+        fromMe && !!remotePhone && (ownPhones.has(remotePhone) || [...ownPhones].some((p) => p && (p.includes(remotePhone) || remotePhone.includes(p))));
       const ownerPhone = process.env.OWNER_WHATSAPP_NUMBER
         ? process.env.OWNER_WHATSAPP_NUMBER.replace(/\D/g, "")
         : "";
-      const isOwnerDevice = !fromMe && ownerPhone && remotePhone === ownerPhone;
+      const isOwnerDevice = !fromMe && !!ownerPhone && remotePhone === ownerPhone;
 
       const messageText =
         msg.message?.conversation ||
@@ -278,7 +292,7 @@ function setupMessageHandler(socket, userId) {
       }
 
       // Forward for AI processing: all inbound lead messages + owner/self commands
-      if (!parsedMsg.fromMe || isSelfChat) {
+      if (!fromMe || isSelfChat) {
         await forwardToWebhook(userId, parsedMsg);
       }
     }
