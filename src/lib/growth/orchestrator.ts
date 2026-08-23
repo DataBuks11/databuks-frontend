@@ -1,10 +1,32 @@
-﻿import { generateDiscoveryQueries, type DiscoveryQuery } from "../discovery/query-generator";
+﻿import { generateDiscoveryQueries, type DiscoveryQuery, type GeoScope } from "../discovery/query-generator";
 import { idempotencyKey } from "../ai/utils/idempotency";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeCandidates } from "../discovery/normalization";
 import { groupIntoCanonicalBusinesses } from "../discovery/identity-resolution";
 import { enrichFromWebsite } from "../discovery/enrichment";
 import { analyzeRequirement, analyzeUrgency } from "../discovery/requirement-analysis";
+
+/** Most-specific scope wins when a business appears under multiple scopes. */
+const SCOPE_PRIORITY: Record<GeoScope, number> = { LOCAL: 0, STATE: 1, COUNTRY: 2, GLOBAL: 3 };
+
+function mostSpecificScope(scopes: (GeoScope | undefined)[]): GeoScope {
+  let best: GeoScope = "GLOBAL";
+  for (const s of scopes) {
+    const scope = (s ?? "LOCAL") as GeoScope;
+    if (SCOPE_PRIORITY[scope] < SCOPE_PRIORITY[best]) best = scope;
+  }
+  return best;
+}
+
+/** Geo relevance bonus — closer to the user's region = more relevant lead. */
+export function geoRelevanceBonus(scope: GeoScope): number {
+  switch (scope) {
+    case "LOCAL": return 15;
+    case "STATE": return 10;
+    case "COUNTRY": return 5;
+    default: return 0;
+  }
+}
 
 export interface FindLeadsResult {
   run_id: string;
@@ -16,21 +38,23 @@ export interface FindLeadsResult {
   qualified_count: number;
   needs_review_count: number;
   errors: string[];
+  geo_counts?: Record<string, { qualified: number; needs_review: number }>;
 }
 
 export async function runFindLeads(
   supabase: SupabaseClient,
   userId: string,
-  options?: { max_queries?: number; max_pages?: number }
+  options?: { max_queries?: number; max_pages?: number; scopes?: GeoScope[] }
 ): Promise<FindLeadsResult> {
   const result: FindLeadsResult = {
     run_id: "", status: "RUNNING", queries_generated: 0, raw_candidates: 0,
     canonical_businesses: 0, enriched_count: 0, qualified_count: 0,
-    needs_review_count: 0, errors: [],
+    needs_review_count: 0, errors: [], geo_counts: {},
   };
 
   const maxQueries = options?.max_queries ?? 15;
   const maxPages = options?.max_pages ?? 100;
+  const scopes: GeoScope[] = options?.scopes?.length ? options.scopes : ["LOCAL"];
 
   const { data: bcData } = await supabase.from("business_context").select("*").eq("user_id", userId).maybeSingle();
   if (!bcData) {
@@ -53,13 +77,18 @@ export async function runFindLeads(
       locations: Array.isArray(bcData.locations) ? bcData.locations : [],
       content_themes: Array.isArray(bcData.content_themes) ? bcData.content_themes.map((t: any) => ({ title: typeof t === "string" ? t : t?.title ?? "" })) : [],
     };
-    const queries: DiscoveryQuery[] = generateDiscoveryQueries(queryInput as any, maxQueries);
+    const queries: DiscoveryQuery[] = generateDiscoveryQueries(queryInput as any, maxQueries, scopes);
     result.queries_generated = queries.length;
 
-    // Providers
-    const allRawCandidates: { source_url: string; title: string; snippet: string; website_url: string | null; provider: string }[] = [];
+    // Providers — carry each query's geo scope through to its candidates
+    const allRawCandidates: { source_url: string; title: string; snippet: string; website_url: string | null; provider: string; scope: GeoScope }[] = [];
     let googleSearchOk = false;
     let googleMapsOk = false;
+
+    const scopeOf = (queryText: string): GeoScope => {
+      const q = queries.find((qq) => qq.query === queryText);
+      return (q?.scope ?? "LOCAL") as GeoScope;
+    };
 
     try {
       const gsMod = await import("../discovery/providers/google-search");
@@ -67,7 +96,7 @@ export async function runFindLeads(
       if (gsProvider.isConfigured()) {
         const gsResult = await gsProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
         for (const c of gsResult.candidates) {
-          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_search" });
+          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_search", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
         }
         for (const e of gsResult.errors.slice(0, 3)) {
           result.errors.push(`google_search [${e.query}]: ${e.error}`);
@@ -84,7 +113,7 @@ export async function runFindLeads(
       if (gmProvider.isConfigured()) {
         const gmResult = await gmProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
         for (const c of gmResult.candidates) {
-          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_maps" });
+          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_maps", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
         }
         for (const e of gmResult.errors.slice(0, 3)) {
           result.errors.push(`google_maps [${e.query}]: ${e.error}`);
@@ -105,12 +134,13 @@ export async function runFindLeads(
 
     result.raw_candidates = allRawCandidates.length;
 
-    // Normalize
+    // Normalize — real provider provenance + scope carried through
     const normalized = normalizeCandidates(
       allRawCandidates.map((c) => ({
-        source: "google_search", source_url: c.source_url, title: c.title, snippet: c.snippet,
+        source: c.provider, source_url: c.source_url, title: c.title, snippet: c.snippet,
         website_url: c.website_url, query: "", query_type: "BUSINESS_DISCOVERY",
-        discovered_at: new Date().toISOString(), raw_metadata: { provider: c.provider },
+        discovered_at: new Date().toISOString(),
+        raw_metadata: { provider: c.provider, scope: c.scope },
       }))
     );
 
@@ -180,7 +210,16 @@ export async function runFindLeads(
       if (rating !== null) relevanceScore += rating >= 4 ? 15 : 8;
       if (reviewCount !== null && reviewCount >= 50) relevanceScore += 10;
       if (primary.websiteUrl) relevanceScore += 5;
-      relevanceScore = Math.min(70, relevanceScore);
+
+      // Geo scope of this business = most specific scope among its candidates
+      const groupScope = mostSpecificScope(
+        group.all_candidates.map((c: any) => c.raw?.raw_metadata?.scope)
+      );
+
+      // Geo relevance: businesses closer to the user's region are more
+      // relevant leads (LOCAL > STATE > COUNTRY > GLOBAL).
+      relevanceScore += geoRelevanceBonus(groupScope);
+      relevanceScore = Math.min(85, relevanceScore);
 
       // Sub-scores (deterministic)
       const subScores = computeSubScores({
@@ -201,8 +240,17 @@ export async function runFindLeads(
       const scoring = calculateFinalScore(subScores, []);
       const isQualified = scoring.quality_gate_status === "QUALIFIED" || scoring.quality_gate_status === "NEEDS_REVIEW";
       if (!isQualified) continue;
-      if (scoring.quality_gate_status === "QUALIFIED") qualifiedCount += 1;
-      else needsReviewCount += 1;
+      if (scoring.quality_gate_status === "QUALIFIED") {
+        qualifiedCount += 1;
+        const gc = result.geo_counts![groupScope] ?? { qualified: 0, needs_review: 0 };
+        gc.qualified += 1;
+        result.geo_counts![groupScope] = gc;
+      } else {
+        needsReviewCount += 1;
+        const gc = result.geo_counts![groupScope] ?? { qualified: 0, needs_review: 0 };
+        gc.needs_review += 1;
+        result.geo_counts![groupScope] = gc;
+      }
 
       const identityKey = normalizeKey(group.business_name);
       const socialLinksFinal = enrichmentData?.social_links ?? {};
@@ -228,7 +276,13 @@ export async function runFindLeads(
         facebook_url: socialLinksFinal.facebook ?? null,
         linkedin_url: socialLinksFinal.linkedin ?? null,
         enriched: true,
-        enrichment_data: enrichmentData ?? {},
+        // owner_name + instagram_handle live inside enrichment_data JSONB
+        // (no dedicated columns needed — additive schema stays untouched)
+        enrichment_data: {
+          ...(enrichmentData ?? {}),
+          owner_name: enrichmentData?.owner_name ?? null,
+          instagram_handle: enrichmentData?.instagram_handle ?? null,
+        },
         source_records: group.all_candidates.map((c: any) => ({ url: c.sourceUrl, title: c.businessName })),
         updated_at: new Date().toISOString(),
       };
@@ -263,6 +317,9 @@ export async function runFindLeads(
         match_reason: detectedIndustry
           ? `Matches target industry "${detectedIndustry}"${rating !== null ? ` with ${rating}★ Google rating` : ""}`
           : `Verified local business listing${group.business_name ? `: ${group.business_name}` : ""}`,
+        geo_scope: groupScope,
+        geo_relevance: `${geoRelevanceBonus(groupScope)}pt region relevance (${groupScope.toLowerCase()})`,
+        owner_name: enrichmentData?.owner_name ?? null,
         requirement_evidence: {
           status: reqAnalysis.status,
           type: reqAnalysis.requirement_type,
@@ -283,6 +340,15 @@ export async function runFindLeads(
         contacts_found: {
           phone: hasPhone, email: hasEmail, website: !!primary.websiteUrl,
           instagram: !!socialLinksFinal.instagram, facebook: !!socialLinksFinal.facebook, linkedin: !!socialLinksFinal.linkedin,
+        },
+        contact_details: {
+          phone: placesPhone ?? (enrichmentData?.phones?.[0] ?? null),
+          email: enrichmentData?.emails?.[0] ?? null,
+          website: primary.websiteUrl,
+          instagram: socialLinksFinal.instagram ?? null,
+          facebook: socialLinksFinal.facebook ?? null,
+          linkedin: socialLinksFinal.linkedin ?? null,
+          address: addressText,
         },
         conflicts: [] as string[],
         missing_information: missing,
@@ -307,6 +373,7 @@ export async function runFindLeads(
         evidence: {
           canonical_business_id: bizId,
           quality_gate: scoring.quality_gate_status,
+          geo_scope: groupScope,
           why_this_lead: whyThisLead,
           sub_scores: subScores,
         },

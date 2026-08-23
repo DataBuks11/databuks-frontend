@@ -66,10 +66,87 @@ export function normalizeEmail(raw: string): string | null {
 // ─── Extraction Helpers ─────────────────────────────────────────────────────
 
 const SOCIAL_PATTERNS: Record<string, RegExp> = {
-  instagram: /instagram\.com\/(?!p\/|explore|accounts)[a-zA-Z0-9_.]+/i,
-  facebook: /facebook\.com\/(?!sharer|dialog|plugins|tr)[a-zA-Z0-9_.]+/i,
+  instagram: /instagram\.com\/(?!p\/|explore|accounts|reel|tv|stories)[a-zA-Z0-9_.]+/i,
+  facebook: /facebook\.com\/(?!sharer|dialog|plugins|tr|profile\.php)[a-zA-Z0-9_.]+/i,
   linkedin: /linkedin\.com\/(company|in)\/[a-zA-Z0-9_-]+/i,
 };
+
+/** Generic/non-profile Instagram URLs to reject (brand root, help pages). */
+const INSTAGRAM_GENERIC = /^(instagram\.com)?\/?(#|$)/i;
+
+/**
+ * Normalize an Instagram URL into a clean profile link + handle.
+ * Returns null for generic/invalid matches (instagram.com root, share links).
+ */
+export function normalizeInstagram(rawUrl: string | null | undefined): { url: string; handle: string } | null {
+  if (!rawUrl) return null;
+  try {
+    let input = rawUrl.trim();
+    // Scheme-less inputs ("instagram.com/handle") must become absolute,
+    // otherwise new URL() treats them as relative paths.
+    if (!/^https?:\/\//i.test(input)) input = `https://${input}`;
+    const parsed = new URL(input);
+    if (!/instagram\.com$/i.test(parsed.hostname.replace(/^www\./, ""))) return null;
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (!path || INSTAGRAM_GENERIC.test(path)) return null;
+    const handle = path.replace(/^\//, "").split("/")[0];
+    if (!handle || handle.length < 2 || handle.length > 30) return null;
+    // Reserved system paths are not profiles
+    if (/^(p|reel|reels|tv|stories|explore|accounts|direct|about|legal)$/i.test(handle)) return null;
+    return { url: `https://www.instagram.com/${handle}/`, handle };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the owner/founder name from JSON-LD (founder/owner/employee fields),
+ * meta tags, or common footer patterns. Returns null when nothing credible.
+ */
+function extractOwnerName(html: string): string | null {
+  try {
+    const $ = cheerio.load(html);
+    // 1. JSON-LD structured data (founder/owner/employee names)
+    const scripts = $('script[type="application/ld+json"]').toArray();
+    for (const el of scripts) {
+      try {
+        const data = JSON.parse($(el).text());
+        const nodes = Array.isArray(data) ? data : [data, ...(data["@graph"] ?? [])];
+        for (const node of nodes) {
+          if (!node || typeof node !== "object") continue;
+          for (const field of ["founder", "owner", "employees"]) {
+            const v = node[field];
+            const name = Array.isArray(v) ? v[0]?.name : v?.name;
+            if (typeof name === "string" && name.trim().length > 2 && name.trim().length < 60 && /[a-zA-Z]/.test(name)) {
+              return name.trim();
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2. meta author
+    const metaAuthor = ($('meta[name="author"]').attr("content") ?? "").trim();
+    if (metaAuthor.length > 2 && metaAuthor.length < 60 && /[a-zA-Z]/.test(metaAuthor) && !/@|http|\.com/i.test(metaAuthor)) {
+      return metaAuthor;
+    }
+
+    // 3. Common footer/about patterns: "Founded by X", "Owner: X"
+    const text = $("body").text().replace(/\s+/g, " ");
+    const patterns = [
+      /(?:founded|owned|run|managed)\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})/,
+      /(?:owner|proprietor|founder|ceo|director)\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})/,
+    ];
+    for (const pattern of patterns) {
+      const m = text.match(pattern);
+      if (m?.[1] && m[1].length > 2 && m[1].length < 60) return m[1].trim();
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function detectSocialLinks(html: string, pageUrl: string): {
   instagram: string | null;
@@ -86,7 +163,13 @@ function detectSocialLinks(html: string, pageUrl: string): {
       const absolute = new URL(href, pageUrl).toString();
       for (const [platform, pattern] of Object.entries(SOCIAL_PATTERNS)) {
         if (pattern.test(absolute) && !found[platform as keyof typeof found]) {
-          found[platform as keyof typeof found] = absolute;
+          // Instagram gets strict profile normalization — generic/share URLs rejected
+          if (platform === "instagram") {
+            const normalized = normalizeInstagram(absolute);
+            if (normalized) found.instagram = normalized.url;
+          } else {
+            found[platform as keyof typeof found] = absolute;
+          }
         }
       }
     } catch {}
@@ -130,6 +213,10 @@ export interface WebsiteEnrichmentResult {
   emails: string[];
   address: string | null;
   social_links: { instagram: string | null; facebook: string | null; linkedin: string | null };
+  /** Verified Instagram profile handle (null when none/generic) */
+  instagram_handle: string | null;
+  /** Owner/founder name when credibly discoverable (JSON-LD, meta, footer) */
+  owner_name: string | null;
   /** Visible page text (homepage + contact), for downstream requirement/urgency analysis */
   page_text: string;
   fetched_from: string;
@@ -183,6 +270,8 @@ export async function enrichFromWebsite(
   const emptyResult: WebsiteEnrichmentResult = {
     phones: [], emails: [], address: null,
     social_links: { instagram: null, facebook: null, linkedin: null },
+    instagram_handle: null,
+    owner_name: null,
     page_text: "",
     fetched_from: websiteUrl, fetched_at: new Date().toISOString(),
     success: false, error: null,
@@ -204,6 +293,7 @@ export async function enrichFromWebsite(
   const homeSocial = detectSocialLinks(homepage.html, homepage.finalUrl);
   const homeAddress = extractAddress(homepage.html);
   const pageTextParts: string[] = [extractVisibleText(homepage.html)];
+  let ownerName = extractOwnerName(homepage.html);
 
   allPhones.push(...homePhones);
   allEmails.push(...homeEmails);
@@ -212,7 +302,7 @@ export async function enrichFromWebsite(
   if (homeSocial.linkedin) allSocial.linkedin = homeSocial.linkedin;
   if (!address && homeAddress) address = homeAddress;
 
-  // Try contact page for more data
+  // Try contact + about pages for more data
   const contactUrl = extractContactPageUrl(homepage.html, homepage.finalUrl);
   if (contactUrl && isSafeUrl(contactUrl)) {
     const contactPage = await fetchWebsiteHtml(contactUrl);
@@ -226,17 +316,26 @@ export async function enrichFromWebsite(
       if (!allSocial.facebook && contactSocial.facebook) allSocial.facebook = contactSocial.facebook;
       if (!allSocial.linkedin && contactSocial.linkedin) allSocial.linkedin = contactSocial.linkedin;
       if (!address) address = extractAddress(contactPage.html);
+      if (!ownerName) ownerName = extractOwnerName(contactPage.html);
       pageTextParts.push(extractVisibleText(contactPage.html));
     }
   }
 
   void existingCandidate;
 
+  const igNormalized = normalizeInstagram(allSocial.instagram);
+
   return {
     phones: [...new Set(allPhones)].slice(0, 5),
     emails: [...new Set(allEmails)].slice(0, 3),
     address,
-    social_links: allSocial,
+    social_links: {
+      instagram: igNormalized?.url ?? null,
+      facebook: allSocial.facebook,
+      linkedin: allSocial.linkedin,
+    },
+    instagram_handle: igNormalized?.handle ?? null,
+    owner_name: ownerName,
     page_text: pageTextParts.join(" ").replace(/\s+/g, " ").trim().slice(0, 6000),
     fetched_from: homepage.finalUrl,
     fetched_at: new Date().toISOString(),

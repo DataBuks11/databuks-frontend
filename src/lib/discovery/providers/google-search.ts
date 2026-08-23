@@ -105,6 +105,7 @@ export class GoogleSearchProvider implements DiscoveryProvider {
             raw_metadata: {
               display_link: item.displayLink ?? null,
               pagemap_present: !!item.pagemap,
+              scope: (query as any).scope ?? "LOCAL",
               original_query_priority: query.priority,
               original_query_rationale: query.rationale,
               google_search_total_results: data.searchInformation?.totalResults ?? null,

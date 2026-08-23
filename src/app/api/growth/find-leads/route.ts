@@ -56,9 +56,14 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json().catch(() => ({}));
+    const VALID_SCOPES = ["LOCAL", "STATE", "COUNTRY", "GLOBAL"];
+    const scopes = Array.isArray(body?.scopes)
+      ? body.scopes.filter((s: string) => VALID_SCOPES.includes(s))
+      : [];
     const result = await runFindLeads(supabase, user.id, {
       max_queries: Math.min(Number(body?.max_queries ?? 15), 50),
       max_pages: Math.min(Number(body?.max_pages ?? 100), 200),
+      scopes: scopes.length > 0 ? scopes : ["LOCAL", "STATE", "COUNTRY", "GLOBAL"],
     });
 
     return NextResponse.json(result);

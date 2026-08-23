@@ -137,6 +137,9 @@ export class GoogleMapsProvider implements DiscoveryProvider {
               business_status: place.business_status ?? null,
               location: place.geometry?.location ?? null,
               details_phone: details?.phone ?? null,
+              details_website: details?.website ?? null,
+              owner_hint: null,
+              scope: (query as any).scope ?? "LOCAL",
               original_query_priority: query.priority,
             },
           });

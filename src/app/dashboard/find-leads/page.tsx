@@ -12,12 +12,24 @@ import { formatNumber } from "@/lib/utils";
 
 interface WhyThisLead {
   match_reason?: string;
+  geo_scope?: string;
+  geo_relevance?: string;
+  owner_name?: string | null;
   requirement_evidence?: { status?: string; type?: string; reason?: string };
   urgency_evidence?: { level?: string; score?: number; reason?: string };
   score?: number;
   confidence?: number;
   provenance?: { providers?: string[]; sources?: string[]; query?: string | null };
   contacts_found?: Record<string, boolean>;
+  contact_details?: {
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
+    instagram?: string | null;
+    facebook?: string | null;
+    linkedin?: string | null;
+    address?: string | null;
+  };
   conflicts?: string[];
   missing_information?: string[];
   recommended_channel?: string | null;
@@ -94,7 +106,7 @@ export default function FindLeadsPage() {
       const res = await fetch("/api/growth/find-leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_queries: 15, max_pages: 100 }),
+        body: JSON.stringify({ max_queries: 20, max_pages: 120, scopes: ["LOCAL", "STATE", "COUNTRY", "GLOBAL"] }),
       });
       const json = await res.json();
       if (json.status === "FAILED") {
@@ -141,6 +153,12 @@ export default function FindLeadsPage() {
     }
     return null;
   };
+
+  const scopeOf = (lead: DiscoveredLead): string =>
+    (lead.evidence as any)?.geo_scope ?? why(lead)?.geo_scope ?? "LOCAL";
+
+  const localLeads = leads.filter((l) => scopeOf(l) === "LOCAL");
+  const widerLeads = leads.filter((l) => scopeOf(l) !== "LOCAL");
 
   const toggleWhy = (id: string) =>
     setExpanded((prev) => {
@@ -200,6 +218,23 @@ export default function FindLeadsPage() {
           </CardContent>
         </Card>
       ) : (
+        <>
+          {renderLeadSection("Local Leads", "Businesses in your own region — highest relevance", localLeads, "LOCAL")}
+          {renderLeadSection("State · Country · Global", "Wider-reach opportunities beyond your region", widerLeads, "WIDER")}
+        </>
+      )}
+    </div>
+  );
+
+  function renderLeadSection(title: string, subtitle: string, rows: DiscoveredLead[], kind: string) {
+    if (rows.length === 0) return null;
+    return (
+      <div key={kind} className="space-y-3">
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-lg font-semibold text-white">{title}</h2>
+          <span className="text-xs text-white/40">{subtitle}</span>
+          <span className="ml-auto text-xs text-white/40">{rows.length} leads</span>
+        </div>
         <Card className="glass-card overflow-hidden">
           <Table>
             <TableHeader>
@@ -208,14 +243,16 @@ export default function FindLeadsPage() {
                 <TableHead>Score</TableHead>
                 <TableHead>Quality</TableHead>
                 <TableHead>Channel</TableHead>
-                <TableHead>Source</TableHead>
+                <TableHead>Contact</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leads.map((lead) => {
+              {rows.map((lead) => {
                 const whyInfo = why(lead);
                 const conf = leadConfidencePct(lead);
                 const isOpen = expanded.has(lead.id);
+                const cd = whyInfo?.contact_details;
+                const ig = whyInfo?.contact_details?.instagram;
                 return (
                   <>
                     <TableRow key={lead.id} className="hover:bg-white/[0.02] cursor-pointer" onClick={() => toggleWhy(lead.id)}>
@@ -241,22 +278,40 @@ export default function FindLeadsPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="info" className="capitalize">{channelOf(lead)}</Badge>
+                        <div className="text-[10px] text-white/30 mt-1 uppercase tracking-wide">
+                          {kind === "LOCAL" ? "local" : scopeOf(lead).toLowerCase()}
+                        </div>
                       </TableCell>
                       <TableCell>
-                        {lead.source_url && (
-                          <a href={lead.source_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300">
-                            <ExternalLink className="h-3 w-3" />
-                            Source
-                          </a>
-                        )}
+                        <div className="flex items-center gap-2 text-xs">
+                          {cd?.phone && (
+                            <a href={`tel:${cd.phone}`} onClick={(e) => e.stopPropagation()} title={cd.phone} className="text-emerald-400 hover:text-emerald-300">Phone</a>
+                          )}
+                          {cd?.email && (
+                            <a href={`mailto:${cd.email}`} onClick={(e) => e.stopPropagation()} title={cd.email} className="text-sky-400 hover:text-sky-300">Email</a>
+                          )}
+                          {ig && (
+                            <a href={ig} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={ig} className="text-pink-400 hover:text-pink-300">IG</a>
+                          )}
+                          {cd?.website && (
+                            <a href={cd.website} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={cd.website} className="text-white/50 hover:text-white/80">Web</a>
+                          )}
+                          {!cd?.phone && !cd?.email && !ig && !cd?.website && <span className="text-white/30">—</span>}
+                        </div>
                       </TableCell>
                     </TableRow>
                     {isOpen && whyInfo && (
                       <TableRow key={`${lead.id}-why`} className="bg-white/[0.03]">
                         <TableCell colSpan={5}>
                           <div className="space-y-2 py-2 text-xs">
+                            {whyInfo.owner_name && (
+                              <div><span className="text-white/50">Owner:</span> <span className="text-white/90 font-medium">{whyInfo.owner_name}</span></div>
+                            )}
                             {whyInfo.match_reason && (
                               <div><span className="text-white/50">Match:</span> <span className="text-white/80">{whyInfo.match_reason}</span></div>
+                            )}
+                            {whyInfo.geo_relevance && (
+                              <div><span className="text-white/50">Region:</span> <span className="text-white/80">{whyInfo.geo_relevance}</span></div>
                             )}
                             {whyInfo.requirement_evidence && (
                               <div>
@@ -273,12 +328,16 @@ export default function FindLeadsPage() {
                             {whyInfo.provenance?.providers && whyInfo.provenance.providers.length > 0 && (
                               <div><span className="text-white/50">Source provenance:</span> <span className="text-white/80">{whyInfo.provenance.providers.join(", ")}{whyInfo.provenance.query ? ` — "${whyInfo.provenance.query}"` : ""}</span></div>
                             )}
-                            {whyInfo.contacts_found && (
-                              <div>
-                                <span className="text-white/50">Contacts found:</span>{" "}
-                                <span className="text-white/80">
-                                  {Object.entries(whyInfo.contacts_found).filter(([, v]) => v).map(([k]) => k).join(", ") || "none yet"}
-                                </span>
+                            {cd && (
+                              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                <span className="text-white/50">Contact details:</span>
+                                {cd.phone && <a href={`tel:${cd.phone}`} className="text-emerald-300 hover:underline">{cd.phone}</a>}
+                                {cd.email && <a href={`mailto:${cd.email}`} className="text-sky-300 hover:underline">{cd.email}</a>}
+                                {cd.website && <a href={cd.website} target="_blank" rel="noopener noreferrer" className="text-white/70 hover:underline">website</a>}
+                                {cd.instagram && <a href={cd.instagram} target="_blank" rel="noopener noreferrer" className="text-pink-300 hover:underline">instagram</a>}
+                                {cd.facebook && <a href={cd.facebook} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">facebook</a>}
+                                {cd.linkedin && <a href={cd.linkedin} target="_blank" rel="noopener noreferrer" className="text-indigo-300 hover:underline">linkedin</a>}
+                                {cd.address && <span className="text-white/60">{cd.address}</span>}
                               </div>
                             )}
                             {whyInfo.missing_information && whyInfo.missing_information.length > 0 && (
@@ -300,7 +359,7 @@ export default function FindLeadsPage() {
             </TableBody>
           </Table>
         </Card>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
 }
