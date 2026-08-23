@@ -28,6 +28,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "userId and message (remoteJid, messageId, text) required" }, { status: 400 });
     }
 
+    // ─── OWNER COMMAND CENTER ───
+    // Messages the user sends to their own number ("message yourself") or
+    // from a designated owner device are assistant commands — NOT leads.
+    const origin = message.origin ?? "lead";
+    const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+    const inboundPhone = String(message.remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
+    const isOwnerCommand = origin === "self" || origin === "owner_device" || (!!ownerPhone && inboundPhone === ownerPhone);
+
+    if (isOwnerCommand) {
+      const supabase = adminClient();
+      const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+      const replyJid = String(message.remoteJid).includes("@")
+        ? message.remoteJid
+        : `${inboundPhone}@s.whatsapp.net`;
+      after(async () => {
+        try {
+          await handleOwnerWhatsAppCommand(supabase, {
+            userId,
+            text: message.text,
+            replyJid,
+          });
+        } catch (err: any) {
+          console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
+        }
+      });
+      return NextResponse.json({ processed: true, route: "owner_assistant" });
+    }
+
     if (message.fromMe === true) {
       return NextResponse.json({ processed: false, skippedReason: "outbound" });
     }

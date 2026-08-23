@@ -1,0 +1,430 @@
+import { getActiveProvider } from "./providers";
+
+/**
+ * OWNER WHATSAPP ASSISTANT / COMMAND CENTER
+ *
+ * The business owner chats with their OWN WhatsApp number (self-chat) or a
+ * designated owner device. Every command is answered from REAL Supabase data
+ * — counts, lists, statuses, approvals — never fabricated.
+ *
+ * Supported (natural language, any language):
+ *   - kitni leads nikali / leads list / relevant leads
+ *   - business status kaisa hai
+ *   - kitni meetings booked
+ *   - kitni posts daali / content status
+ *   - pending approvals (lead handoffs + content)
+ *   - approve 1 / reject 2
+ */
+
+export interface OwnerCommandInput {
+  userId: string;
+  text: string;
+  /** Where replies are sent — the owner's own chat JID */
+  replyJid: string;
+}
+
+export interface OwnerAssistantDeps {
+  sendFn?: (input: { userId: string; jid: string; message: string }) => Promise<void>;
+}
+
+type OwnerIntent =
+  | "HELP"
+  | "LEADS_COUNT"
+  | "LEADS_LIST"
+  | "RELEVANT_LEADS"
+  | "BUSINESS_STATUS"
+  | "MEETINGS"
+  | "POSTS_STATUS"
+  | "PENDING_APPROVALS"
+  | "APPROVE"
+  | "REJECT"
+  | "CHAT";
+
+interface OwnerSnapshot {
+  leadsTotal: number;
+  leadsNew: number;
+  leadsQualifiedStage: number;
+  discoveredQualified: number;
+  discoveredNeedsReview: number;
+  meetingsScheduled: number;
+  meetingsUpcoming: number;
+  postsPublishedTotal: number;
+  postsPublishedToday: number;
+  postsDraft: number;
+  postsScheduled: number;
+  storiesPublished: number;
+}
+
+/** Per-user cache of the last numbered approval list shown, so
+ *  "approve 2" resolves against what the owner actually saw. */
+const pendingApprovalCache = new Map<string, PendingItem[]>();
+
+interface PendingItem {
+  kind: "handoff" | "content";
+  id: string;
+  label: string;
+}
+
+// ─── Snapshot ───────────────────────────────────────────────────────────────
+
+async function countRows(supabase: any, table: string, filters: Record<string, any> = {}): Promise<number> {
+  try {
+    let query = supabase.from(table).select("id", { count: "exact", head: true });
+    for (const [col, val] of Object.entries(filters)) {
+      if (val === null) continue;
+      if (Array.isArray(val)) query = query.in(col, val);
+      else query = query.eq(col, val);
+    }
+    const { count, error } = await query;
+    return error ? 0 : count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function startOfTodayISO(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+export async function gatherOwnerSnapshot(supabase: any, userId: string): Promise<OwnerSnapshot> {
+  const today = startOfTodayISO();
+  const [
+    leadsTotal,
+    leadsNew,
+    leadsQualifiedStage,
+    discoveredQualified,
+    meetingsScheduled,
+    meetingsUpcoming,
+    postsPublishedTotal,
+    postsPublishedToday,
+    postsDraft,
+    postsScheduled,
+    storiesPublished,
+  ] = await Promise.all([
+    countRows(supabase, "leads"),
+    countRows(supabase, "leads", { status: "new" }),
+    countRows(supabase, "leads", { funnel_stage: "QUALIFIED" }),
+    (async () => {
+      try {
+        // quality gate lives in evidence JSONB — score threshold as proxy
+        const { count } = await supabase
+          .from("discovered_leads")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .gte("lead_score", 60);
+        return count ?? 0;
+      } catch {
+        return 0;
+      }
+    })(),
+    countRows(supabase, "meetings", { status: ["suggested", "scheduled", "confirmed"] }),
+    (async () => {
+      try {
+        const { count } = await supabase
+          .from("meetings")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["scheduled", "confirmed"])
+          .gte("scheduled_at", new Date().toISOString());
+        return count ?? 0;
+      } catch {
+        return 0;
+      }
+    })(),
+    countRows(supabase, "content", { status: "published" }),
+    (async () => {
+      try {
+        const { count } = await supabase
+          .from("content")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "published")
+          .gte("updated_at", today);
+        return count ?? 0;
+      } catch {
+        return 0;
+      }
+    })(),
+    countRows(supabase, "content", { status: "draft" }),
+    countRows(supabase, "content", { status: "scheduled" }),
+    countRows(supabase, "content", { status: "published", type: ["story"] }),
+  ]);
+
+  return {
+    leadsTotal,
+    leadsNew,
+    leadsQualifiedStage,
+    discoveredQualified,
+    discoveredNeedsReview: 0,
+    meetingsScheduled,
+    meetingsUpcoming,
+    postsPublishedTotal,
+    postsPublishedToday,
+    postsDraft,
+    postsScheduled,
+    storiesPublished,
+  };
+}
+
+// ─── Data fetchers per intent ───────────────────────────────────────────────
+
+async function fetchTopLeads(supabase: any, userId: string, limit = 5): Promise<{ name: string; score: number; stage: string }[]> {
+  const { data } = await supabase
+    .from("leads")
+    .select("name, lead_score, funnel_stage")
+    .eq("user_id", userId)
+    .order("lead_score", { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((r: any) => ({ name: r.name ?? "?", score: r.lead_score ?? 0, stage: r.funnel_stage ?? "" }));
+}
+
+async function fetchRelevantDiscovered(supabase: any, userId: string, limit = 5): Promise<{ name: string; score: number; gate: string }[]> {
+  const { data } = await supabase
+    .from("discovered_leads")
+    .select("author_name, lead_score, evidence")
+    .eq("user_id", userId)
+    .gte("lead_score", 60)
+    .order("lead_score", { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((r: any) => ({
+    name: r.author_name ?? "?",
+    score: r.lead_score ?? 0,
+    gate: r.evidence?.quality_gate ?? "",
+  }));
+}
+
+async function fetchUpcomingMeetings(supabase: any, userId: string, limit = 5): Promise<{ lead: string; at: string | null; status: string }[]> {
+  const { data } = await supabase
+    .from("meetings")
+    .select("scheduled_at, status, leads(name)")
+    .eq("user_id", userId)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((r: any) => ({
+    lead: r.leads?.name ?? "Lead",
+    at: r.scheduled_at,
+    status: r.status ?? "",
+  }));
+}
+
+async function fetchPendingApprovals(supabase: any, userId: string): Promise<PendingItem[]> {
+  const items: PendingItem[] = [];
+  const { data: handoffs } = await supabase
+    .from("handoff_requests")
+    .select("id, lead_id, created_at")
+    .eq("user_id", userId)
+    .ilike("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  for (const h of handoffs ?? []) {
+    items.push({ kind: "handoff", id: h.id, label: `AI handoff request (${String(h.id).slice(0, 8)})` });
+  }
+  const { data: drafts } = await supabase
+    .from("content")
+    .select("id, title, platform")
+    .eq("user_id", userId)
+    .eq("status", "draft")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  for (const c of drafts ?? []) {
+    items.push({ kind: "content", id: c.id, label: `${c.title ?? "Untitled"} (${c.platform ?? "?"} draft)` });
+  }
+  return items;
+}
+
+// ─── Reply formatting (human, Hinglish-friendly, short) ─────────────────────
+
+function fmtSnapshotReply(s: OwnerSnapshot): string {
+  const lines = [
+    `Leads: ${s.leadsTotal} total, ${s.leadsNew} new, ${s.leadsQualifiedStage} qualified`,
+    `Relevant discovered: ${s.discoveredQualified} (60+ score)`,
+    `Meetings: ${s.meetingsScheduled} booked, ${s.meetingsUpcoming} upcoming`,
+    `Content: ${s.postsPublishedToday} posted today (${s.postsPublishedTotal} total), ${s.postsDraft} draft, ${s.postsScheduled} scheduled, ${s.storiesPublished} stories`,
+  ];
+  return lines.join("\n");
+}
+
+function fmtListReply(title: string, rows: { main: string; sub?: string }[]): string {
+  if (rows.length === 0) return `${title}: abhi kuch nahi mila.`;
+  const lines = rows.map((r, i) => `${i + 1}. ${r.main}${r.sub ? ` — ${r.sub}` : ""}`);
+  return [`${title} (top ${rows.length}):`, ...lines].join("\n");
+}
+
+// ─── Intent detection (deterministic first, LLM fallback) ──────────────────
+
+const KEYWORD_INTENTS: { pattern: RegExp; intent: OwnerIntent }[] = [
+  { pattern: /\b(approve|ok kar|confirm kar)\b.*\d|\bapprove\b\s*\d+/i, intent: "APPROVE" },
+  { pattern: /\b(reject|cancel|mat karo|nahi karna)\b\s*\d+|\breject\b/i, intent: "REJECT" },
+  { pattern: /\b(pending|approval|approvals)\b/i, intent: "PENDING_APPROVALS" },
+  { pattern: /\b(meeting|meeting[s]? booked|call scheduled)\b/i, intent: "MEETINGS" },
+  { pattern: /\b(relevant|best|top).*(lead)|\blead.*(relevant|best|top)\b/i, intent: "RELEVANT_LEADS" },
+  { pattern: /\b(leads? list|lead list|kaun[si]e? leads|konsi nikali|show leads|leads batao)\b/i, intent: "LEADS_LIST" },
+  { pattern: /\b(kitni leads?|leads? count|how many leads)\b/i, intent: "LEADS_COUNT" },
+  { pattern: /\b(post|posts|story|stories|content|instagram)\b/i, intent: "POSTS_STATUS" },
+  { pattern: /\b(status|business kaisa|summary|overview|report|hisab)\b/i, intent: "BUSINESS_STATUS" },
+  { pattern: /\b(help|kya kar sakte|commands?)\b/i, intent: "HELP" },
+];
+
+function detectIntent(text: string): { intent: OwnerIntent; itemNumber: number | null } {
+  for (const { pattern, intent } of KEYWORD_INTENTS) {
+    if (pattern.test(text)) {
+      const numMatch = text.match(/\b(\d{1,2})\b/);
+      return { intent, itemNumber: numMatch ? parseInt(numMatch[1], 10) : null };
+    }
+  }
+  return { intent: "CHAT", itemNumber: null };
+}
+
+async function llmIntent(text: string): Promise<OwnerIntent> {
+  try {
+    const provider = getActiveProvider();
+    const out = await provider.completeJson({
+      system:
+        'You map a business owner\'s WhatsApp message to ONE command intent. Allowed: HELP, LEADS_COUNT, LEADS_LIST, RELEVANT_LEADS, BUSINESS_STATUS, MEETINGS, POSTS_STATUS, PENDING_APPROVALS, APPROVE, REJECT, CHAT. Approve/reject ONLY when they clearly confirm/deny an item. Respond {"intent":"..."} only.',
+      user: text.slice(0, 300),
+      temperature: 0,
+    });
+    const allowed: OwnerIntent[] = ["HELP", "LEADS_COUNT", "LEADS_LIST", "RELEVANT_LEADS", "BUSINESS_STATUS", "MEETINGS", "POSTS_STATUS", "PENDING_APPROVALS", "APPROVE", "REJECT", "CHAT"];
+    const intent = String(out?.intent ?? "CHAT").toUpperCase() as OwnerIntent;
+    return allowed.includes(intent) ? intent : "CHAT";
+  } catch {
+    return "CHAT";
+  }
+}
+
+// ─── Main handler ───────────────────────────────────────────────────────────
+
+export async function handleOwnerWhatsAppCommand(
+  supabase: any,
+  input: OwnerCommandInput,
+  deps: OwnerAssistantDeps = {}
+): Promise<string> {
+  const { userId, text } = input;
+  let { intent, itemNumber } = detectIntent(text);
+  if (intent === "CHAT") intent = await llmIntent(text);
+
+  const snapshot = await gatherOwnerSnapshot(supabase, userId);
+  let reply: string;
+
+  switch (intent) {
+    case "HELP":
+      reply = [
+        "Main tera business assistant hoon. Ye sab pooch sakta hai:",
+        "• kitni leads nikali",
+        "• leads list / relevant leads",
+        "• business status",
+        "• meetings booked",
+        "• posts/stories status",
+        "• approvals (phir: approve 1 / reject 2)",
+      ].join("\n");
+      break;
+
+    case "LEADS_COUNT":
+      reply = `Abhi tak ${snapshot.leadsTotal} leads hain — ${snapshot.leadsNew} nayi, ${snapshot.leadsQualifiedStage} qualified stage pe.${snapshot.discoveredQualified ? ` Discovery se ${snapshot.discoveredQualified} relevant (60+) mili hain.` : ""}`;
+      break;
+
+    case "LEADS_LIST": {
+      const rows = await fetchTopLeads(supabase, userId);
+      reply = fmtListReply(
+        "Top leads",
+        rows.map((r) => ({ main: r.name, sub: `${r.score}pt · ${r.stage}` }))
+      );
+      break;
+    }
+
+    case "RELEVANT_LEADS": {
+      const rows = await fetchRelevantDiscovered(supabase, userId);
+      reply = fmtListReply(
+        "Relevant discovered leads",
+        rows.map((r) => ({ main: r.name, sub: `${r.score}pt${r.gate ? ` · ${r.gate}` : ""}` }))
+      );
+      break;
+    }
+
+    case "BUSINESS_STATUS":
+      reply = `Business snapshot:\n${fmtSnapshotReply(snapshot)}`;
+      break;
+
+    case "MEETINGS": {
+      const rows = await fetchUpcomingMeetings(supabase, userId);
+      reply =
+        `Meetings: ${snapshot.meetingsScheduled} booked, ${snapshot.meetingsUpcoming} upcoming.` +
+        (rows.length ? `\n` + rows.map((r, i) => `${i + 1}. ${r.lead} — ${r.at ? new Date(r.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : r.status}`).join("\n") : "");
+      break;
+    }
+
+    case "POSTS_STATUS":
+      reply = `Content: aaj ${snapshot.postsPublishedToday} post gaya (total ${snapshot.postsPublishedTotal}). ${snapshot.postsDraft} draft, ${snapshot.postsScheduled} scheduled, ${snapshot.storiesPublished} stories published.`;
+      break;
+
+    case "PENDING_APPROVALS": {
+      const items = await fetchPendingApprovals(supabase, userId);
+      pendingApprovalCache.set(userId, items);
+      reply =
+        items.length === 0
+          ? "Koi pending approval nahi hai."
+          : ["Pending approvals:", ...items.map((it, i) => `${i + 1}. [${it.kind}] ${it.label}`), "", `"approve 1" ya "reject 2" bolo.`].join("\n");
+      break;
+    }
+
+    case "APPROVE":
+    case "REJECT": {
+      const items = pendingApprovalCache.get(userId) ?? [];
+      if (items.length === 0) {
+        reply = "Pehle pending approvals pooch, phir number bol ke approve/reject kar.";
+        break;
+      }
+      if (!itemNumber || itemNumber < 1 || itemNumber > items.length) {
+        reply = `Kaunsa item? 1-${items.length} me se number bol.`;
+        break;
+      }
+      const item = items[itemNumber - 1];
+      if (item.kind === "handoff") {
+        const status = intent === "APPROVE" ? "APPROVED" : "REJECTED";
+        const { error } = await supabase
+          .from("handoff_requests")
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq("id", item.id)
+          .eq("user_id", userId);
+        reply = error ? `Update fail hua: ${error.message}` : `${intent === "APPROVE" ? "Approved" : "Rejected"} ✓ ${item.label}`;
+      } else {
+        const { error } = await supabase
+          .from("content")
+          .update({ status: "scheduled", updated_at: new Date().toISOString() })
+          .eq("id", item.id)
+          .eq("user_id", userId);
+        reply = error ? `Update fail hua: ${error.message}` : `Post scheduled ✓ ${item.label}`;
+      }
+      items.splice(itemNumber - 1, 1);
+      pendingApprovalCache.set(userId, items);
+      break;
+    }
+
+    case "CHAT":
+    default: {
+      // Natural fallback grounded in real numbers — no fabrication
+      reply = `Snapshot: ${snapshot.leadsTotal} leads (${snapshot.leadsNew} new), ${snapshot.discoveredQualified} relevant discovered, ${snapshot.meetingsScheduled} meetings, ${snapshot.postsPublishedTotal} posts published. Kuch specific pooch — "help" me saare commands hain.`;
+      break;
+    }
+  }
+
+  const sendFn = deps.sendFn ?? defaultSend;
+  try {
+    await sendFn({ userId, jid: input.replyJid, message: reply });
+  } catch (err: any) {
+    console.error(`[owner-assistant] send failed: ${err?.message}`);
+  }
+  return reply;
+}
+
+function defaultSend(input: { userId: string; jid: string; message: string }): Promise<void> {
+  const baseUrl = process.env.BAILEYS_SERVER_URL;
+  if (!baseUrl) return Promise.reject(new Error("BAILEYS_SERVER_URL not configured"));
+  return fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.BAILEYS_API_KEY || "dev-key" },
+    body: JSON.stringify(input),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`WhatsApp send failed (${res.status})`);
+  });
+}

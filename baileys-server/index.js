@@ -210,12 +210,26 @@ async function forwardToWebhook(userId, msg) {
 
 // ─── Message Handler ───
 function setupMessageHandler(socket, userId) {
+  // Owner command center: messages the user sends to THEIR OWN number
+  // ("message yourself" chat) are routed as assistant commands.
+  const ownPhone = (() => {
+    try { return String(socket.user?.id ?? "").split(":")[0].split("@")[0]; } catch { return ""; }
+  })();
+
   socket.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
 
     for (const msg of messages) {
       // Skip status messages
       if (msg.key.remoteJid === "status@broadcast") continue;
+
+      const fromMe = msg.key.fromMe || false;
+      const remotePhone = String(msg.key.remoteJid ?? "").replace(/@.*$/, "").split(":")[0];
+      const isSelfChat = fromMe && ownPhone && remotePhone === ownPhone;
+      const ownerPhone = process.env.OWNER_WHATSAPP_NUMBER
+        ? process.env.OWNER_WHATSAPP_NUMBER.replace(/\D/g, "")
+        : "";
+      const isOwnerDevice = !fromMe && ownerPhone && remotePhone === ownerPhone;
 
       const messageText =
         msg.message?.conversation ||
@@ -244,24 +258,27 @@ function setupMessageHandler(socket, userId) {
 
       const parsedMsg = {
         remoteJid: msg.key.remoteJid,
-        fromMe: msg.key.fromMe || false,
+        fromMe,
         messageId: msg.key.id,
         type: messageType,
         text: messageText,
         timestamp: new Date((msg.messageTimestamp || 0) * 1000).toISOString(),
         pushName: msg.pushName || "",
         raw: JSON.stringify(msg.message || {}),
+        origin: isSelfChat ? "self" : isOwnerDevice ? "owner_device" : "lead",
       };
 
       console.log(
-        `[Message] ${parsedMsg.fromMe ? "SENT" : "RECEIVED"} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
+        `[Message] ${parsedMsg.origin.toUpperCase()} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
 
-      // Store in Supabase
-      await storeMessage(userId, parsedMsg);
+      // Store in Supabase (skip storing self-commands as business inbox msgs)
+      if (!isSelfChat) {
+        await storeMessage(userId, parsedMsg);
+      }
 
-      // Forward to webhook for AI processing (only incoming messages)
-      if (!parsedMsg.fromMe) {
+      // Forward for AI processing: all inbound lead messages + owner/self commands
+      if (!parsedMsg.fromMe || isSelfChat) {
         await forwardToWebhook(userId, parsedMsg);
       }
     }
