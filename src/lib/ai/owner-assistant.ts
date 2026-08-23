@@ -103,9 +103,9 @@ export async function gatherOwnerSnapshot(supabase: any, userId: string): Promis
     postsScheduled,
     storiesPublished,
   ] = await Promise.all([
-    countRows(supabase, "leads"),
-    countRows(supabase, "leads", { status: "new" }),
-    countRows(supabase, "leads", { funnel_stage: "QUALIFIED" }),
+    countRows(supabase, "leads", { user_id: userId }),
+    countRows(supabase, "leads", { user_id: userId, status: "new" }),
+    countRows(supabase, "leads", { user_id: userId, funnel_stage: "QUALIFIED" }),
     (async () => {
       try {
         // quality gate lives in evidence JSONB — score threshold as proxy
@@ -119,7 +119,7 @@ export async function gatherOwnerSnapshot(supabase: any, userId: string): Promis
         return 0;
       }
     })(),
-    countRows(supabase, "meetings", { status: ["suggested", "scheduled", "confirmed"] }),
+    countRows(supabase, "meetings", { user_id: userId, status: ["suggested", "scheduled", "confirmed"] }),
     (async () => {
       try {
         const { count } = await supabase
@@ -132,12 +132,13 @@ export async function gatherOwnerSnapshot(supabase: any, userId: string): Promis
         return 0;
       }
     })(),
-    countRows(supabase, "content", { status: "published" }),
+    countRows(supabase, "content", { user_id: userId, status: "published" }),
     (async () => {
       try {
         const { count } = await supabase
           .from("content")
           .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
           .eq("status", "published")
           .gte("updated_at", today);
         return count ?? 0;
@@ -145,9 +146,9 @@ export async function gatherOwnerSnapshot(supabase: any, userId: string): Promis
         return 0;
       }
     })(),
-    countRows(supabase, "content", { status: "draft" }),
-    countRows(supabase, "content", { status: "scheduled" }),
-    countRows(supabase, "content", { status: "published", type: ["story"] }),
+    countRows(supabase, "content", { user_id: userId, status: "draft" }),
+    countRows(supabase, "content", { user_id: userId, status: "scheduled" }),
+    countRows(supabase, "content", { user_id: userId, status: "published", type: ["story"] }),
   ]);
 
   return {
