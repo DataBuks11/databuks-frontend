@@ -283,7 +283,7 @@ function setupMessageHandler(socket, userId) {
       };
 
       console.log(
-        `[Message] ${parsedMsg.origin.toUpperCase()} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
+        `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
 
       // Store in Supabase (skip storing self-commands as business inbox msgs)
@@ -291,8 +291,12 @@ function setupMessageHandler(socket, userId) {
         await storeMessage(userId, parsedMsg);
       }
 
-      // Forward for AI processing: all inbound lead messages + owner/self commands
-      if (!fromMe || isSelfChat) {
+      // Forward EVERYTHING that is either an inbound lead message OR any
+      // fromMe message with text. The webhook decides routing: messages from
+      // the owner number become assistant commands; other fromMe messages
+      // are ignored there as outbound. This removes ALL detection fragility
+      // from the server — JID formats vary across Baileys events/devices.
+      if (!fromMe || messageText) {
         await forwardToWebhook(userId, parsedMsg);
       }
     }

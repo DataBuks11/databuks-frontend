@@ -34,10 +34,17 @@ export async function POST(request: NextRequest) {
     // ─── OWNER COMMAND CENTER ───
     // Messages the user sends to their own number ("message yourself") or
     // from a designated owner device are assistant commands — NOT leads.
+    // Phone match uses the last 10 digits: WhatsApp JIDs sometimes carry
+    // device suffixes (e.g. 918788606608.0:64) that break exact compares.
     const origin = message.origin ?? "lead";
     const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
     const inboundPhone = String(message.remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
-    const isOwnerCommand = origin === "self" || origin === "owner_device" || (!!ownerPhone && inboundPhone === ownerPhone);
+    const samePhone =
+      !!ownerPhone &&
+      inboundPhone.length >= 10 &&
+      ownerPhone.length >= 10 &&
+      (inboundPhone === ownerPhone || inboundPhone.endsWith(ownerPhone.slice(-10)) || ownerPhone.endsWith(inboundPhone.slice(-10)));
+    const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone;
 
     if (isOwnerCommand) {
       const dedupKey = `${userId}:${message.messageId}`;
