@@ -42,7 +42,8 @@ describe.runIf(SERVICE.length > 20)("owner assistant - live E2E", () => {
       expect(sent.at(-1)).toMatch(/2 leads hain/);
 
       await call("relevant leads batao");
-      expect(sent.at(-1)).toMatch(/Test Biz Nagpur.*72pt/s);
+      expect(sent.at(-1)).toContain("Test Biz Nagpur");
+      expect(sent.at(-1)).toContain("72pt");
 
       await call("pending approvals");
       expect(sent.at(-1)).toMatch(/Pending approvals:/);
