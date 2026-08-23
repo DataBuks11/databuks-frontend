@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getAdapterForProvider } from "@/lib/social/adapters/registry";
 import { processSocialEvent } from "@/lib/social/processor";
@@ -37,6 +38,22 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = adminClient();
+
+  // Piggyback: poll owner WhatsApp commands (self-chat assistant) on every
+  // monitor run — the crawler calls this every ~10 minutes, giving the owner
+  // command center a reliable heartbeat independent of the Baileys webhook.
+  after(async () => {
+    try {
+      const { pollOwnerWhatsAppCommands } = await import("@/lib/ai/whatsapp/owner-poll");
+      const poll = await pollOwnerWhatsAppCommands(supabase, { limit: 10 });
+      if (poll.processed > 0 || poll.errors.length > 0) {
+        console.log(`[API:ai/social/monitor] owner poll: processed=${poll.processed} skipped=${poll.skipped} errors=${poll.errors.length}`);
+      }
+    } catch (err: any) {
+      console.error(`[API:ai/social/monitor] owner poll failed: ${err?.message}`);
+    }
+  });
+
   const { data: connections, error: connError } = await supabase
     .from("social_connections")
     .select("user_id, platform, connection_id")
