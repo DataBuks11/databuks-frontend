@@ -306,6 +306,95 @@ function setupMessageHandler(socket, userId) {
   });
 }
 
+// ─── Full Auth-State Persistence ───
+// Persists the ENTIRE auth folder (creds.json + keys/*) so a Railway restart
+// restores a complete session — no QR re-scan needed. The old creds-only
+// restore left sessions half-alive (connected:false, handshake failures).
+const AUTH_PERSIST_MIN_MS = 30000;
+const lastPersistAt = new Map();
+
+function readAuthFiles(authDir) {
+  const files = {};
+  const walk = (dir, base) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      const rel = base ? `${base}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(full, rel);
+      else {
+        try { files[rel] = fs.readFileSync(full, "utf8"); } catch {}
+      }
+    }
+  };
+  walk(authDir, "");
+  return files;
+}
+
+async function persistFullAuthState(userId, authDir, reason) {
+  if (!supabase) return;
+  const now = Date.now();
+  const last = lastPersistAt.get(userId) ?? 0;
+  if (now - last < AUTH_PERSIST_MIN_MS) return;
+  lastPersistAt.set(userId, now);
+  try {
+    const files = readAuthFiles(authDir);
+    if (!files["creds.json"]) return;
+    await supabase.from("whatsapp_sessions").upsert(
+      {
+        user_id: userId,
+        auth_state: { files, format: "full" },
+        connected: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+    console.log(`[Auth] Full auth state persisted for ${userId} (${Object.keys(files).length} files, ${reason})`);
+  } catch (err) {
+    console.error("[Auth] Full persist failed:", err.message);
+  }
+}
+
+async function restoreFullAuthState(userId, authDir) {
+  if (!supabase) return false;
+  try {
+    const { data: savedSession } = await supabase
+      .from("whatsapp_sessions")
+      .select("auth_state")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const restored = savedSession?.auth_state;
+
+    // 1. FULL restore: { format: "full", files: { "creds.json": ..., "keys/...": ... } }
+    if (restored?.format === "full" && restored?.files && Object.keys(restored.files).length > 0) {
+      fs.mkdirSync(authDir, { recursive: true });
+      for (const [rel, content] of Object.entries(restored.files)) {
+        const target = path.join(authDir, rel);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content);
+      }
+      console.log(`[Auth] FULL session restored from Supabase for ${userId} (${Object.keys(restored.files).length} files)`);
+      return true;
+    }
+
+    // 2. Legacy creds-only restore
+    if (restored && Object.keys(restored).length > 0) {
+      if (isValidRestoredCreds(restored)) {
+        fs.mkdirSync(authDir, { recursive: true });
+        fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(restored));
+        console.log(`[Auth] Restored creds-only from Supabase for ${userId} (legacy)`);
+        return true;
+      }
+      console.warn(`[Auth] Supabase auth_state for ${userId} is corrupt/partial — ignoring, starting fresh`);
+      await clearAuthState(userId);
+      fs.mkdirSync(authDir, { recursive: true });
+    }
+  } catch (err) {
+    console.error("[Auth] Restore failed:", err.message);
+  }
+  return false;
+}
+
 // ─── Connect WhatsApp ───
 async function connectWhatsApp(userId) {
   const existing = sessions.get(userId);
@@ -320,58 +409,14 @@ async function connectWhatsApp(userId) {
   const authDir = getAuthDir(userId);
 
   if (!fs.existsSync(path.join(authDir, "creds.json"))) {
-    try {
-      if (supabase) {
-        const { data: savedSession } = await supabase
-          .from("whatsapp_sessions")
-          .select("auth_state")
-          .eq("user_id", userId)
-          .maybeSingle();
-        const restored = savedSession?.auth_state;
-        if (restored && Object.keys(restored).length > 0) {
-          if (isValidRestoredCreds(restored)) {
-            fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(restored));
-            console.log(`[Auth] Restored session from Supabase for user: ${userId}`);
-          } else {
-            console.warn(`[Auth] Supabase auth_state for ${userId} is corrupt/partial — ignoring, starting fresh`);
-            await clearAuthState(userId);
-            fs.mkdirSync(authDir, { recursive: true });
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[Auth] Restore failed:", err.message);
-    }
+    await restoreFullAuthState(userId, authDir);
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const wrappedSaveCreds = async (creds) => {
     await saveCreds();
-    try {
-      if (supabase) {
-        let credsToPersist = creds;
-        if (!credsToPersist) {
-          try {
-            credsToPersist = JSON.parse(fs.readFileSync(path.join(authDir, "creds.json"), "utf8"));
-          } catch {
-            credsToPersist = null;
-          }
-        }
-        if (credsToPersist && Object.keys(credsToPersist).length > 0) {
-          await supabase.from("whatsapp_sessions").upsert(
-            {
-              user_id: userId,
-              auth_state: credsToPersist,
-              connected: true,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id" }
-          );
-        }
-      }
-    } catch (err) {
-      console.error("[Auth] Persist failed:", err.message);
-    }
+    // Full-state persist (throttled) — creds AND keys survive restarts
+    await persistFullAuthState(userId, authDir, "creds.update");
   };
   const { version } = await fetchLatestBaileysVersion();
 
@@ -441,6 +486,9 @@ async function connectWhatsApp(userId) {
         } catch {}
 
         await updateSupabaseStatus(userId, true);
+        // Persist FULL auth state right after handshake — keys are fresh now
+        lastPersistAt.set(userId, 0);
+        await persistFullAuthState(userId, getAuthDir(userId), "connected");
 
         if (!resolved) {
           resolved = true;
