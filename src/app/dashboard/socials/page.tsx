@@ -71,6 +71,10 @@ export default function SocialsPage() {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
+  const [pairPhone, setPairPhone] = useState("");
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairLoading, setPairLoading] = useState(false);
+  const [pairError, setPairError] = useState<string | null>(null);
 
   const [tgStatus, setTgStatus] = useState(false);
   const [tgBot, setTgBot] = useState<{ username: string; name: string } | null>(null);
@@ -328,7 +332,7 @@ export default function SocialsPage() {
   }
 
   async function handleWhatsAppConnect() {
-    setQrModalOpen(true); setQrLoading(true); setQrCode(null); setError("");
+    setQrModalOpen(true); setQrLoading(true); setQrCode(null); setError(""); setPairingCode(null); setPairError(null);
     try {
       if (!userId) { setError("Not authenticated"); return; }
       const attempt = async () => {
@@ -364,6 +368,24 @@ export default function SocialsPage() {
       } catch {}
     }, 8000);
     setTimeout(() => clearInterval(interval), 240000);
+  }
+
+  async function handlePairingCode() {
+    setPairLoading(true); setPairError(null); setPairingCode(null);
+    try {
+      if (!userId) { setPairError("Not authenticated"); return; }
+      // A fresh connection state avoids stale-socket pairing failures
+      await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
+      const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pair", userId, phoneNumber: pairPhone }) });
+      const data = await res.json();
+      if (data.pairingCode) {
+        const raw = String(data.pairingCode).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+        setPairingCode(raw.length >= 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 8)}` : raw);
+        pollQr();
+      } else {
+        setPairError(data.error || "Failed to generate pairing code");
+      }
+    } catch { setPairError("Failed"); } finally { setPairLoading(false); }
   }
 
   async function checkWhatsAppStatus() {
@@ -481,8 +503,30 @@ export default function SocialsPage() {
           <DialogHeader><DialogTitle className="flex items-center gap-2"><QrCode className="w-5 h-5 text-green-400" />Connect WhatsApp</DialogTitle></DialogHeader>
           <div className="flex flex-col items-center py-4">
             {qrLoading && !qrCode && <div className="flex flex-col items-center gap-3"><RefreshCw className="w-8 h-8 text-green-400 animate-spin" /><p className="text-sm text-white/50 font-light">Generating QR code...</p></div>}
-            {qrCode && <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-4"><div className="p-3 bg-white rounded-2xl"><img src={qrCode} alt="QR" className="w-56 h-56" /></div><p className="text-sm text-white/50 font-light text-center">WhatsApp → Settings → Linked Devices → Link a Device</p><div className="flex items-center gap-2 text-xs text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />Waiting for scan...</div></motion.div>}
+            {qrCode && <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-4"><div className="p-3 bg-white rounded-2xl"><img src={qrCode} alt="QR" className="w-56 h-56" /></div><p className="text-sm text-white/50 font-light text-center">WhatsApp → Settings → Linked Devices → Link a Device</p><div className="flex items-center gap-2 text-xs text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />Waiting for scan... (QR auto-refreshes)</div></motion.div>}
             {!qrLoading && !qrCode && <Button onClick={handleWhatsAppConnect} className="liquid-glass rounded-full gap-2"><QrCode className="w-4 h-4" />Generate QR Code</Button>}
+
+            <div className="w-full flex items-center gap-3 pt-2">
+              <div className="h-px flex-1 bg-white/10" />
+              <span className="text-xs text-white/30">OR — link without QR</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
+
+            {pairingCode ? (
+              <div className="w-full flex flex-col items-center gap-2 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                <p className="text-xs text-white/50 text-center">WhatsApp → Settings → Linked Devices →<br /><strong className="text-white/80">Link with phone number instead</strong></p>
+                <p className="text-3xl font-bold tracking-[0.3em] text-emerald-300 font-mono">{pairingCode}</p>
+                <p className="text-xs text-white/40">Enter this code on your phone (expires in ~1 min)</p>
+              </div>
+            ) : (
+              <div className="w-full space-y-2">
+                <div className="flex gap-2">
+                  <Input placeholder="Your WhatsApp number e.g. 919876543210" value={pairPhone} onChange={(e) => setPairPhone(e.target.value.replace(/[^\d]/g, ""))} className="flex-1" />
+                  <Button onClick={handlePairingCode} disabled={pairLoading || pairPhone.length < 10} className="rounded-full px-4 gap-1.5 shrink-0" variant="primary">{pairLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}Get Code</Button>
+                </div>
+                {pairError && <p className="text-xs text-red-400">{pairError}</p>}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

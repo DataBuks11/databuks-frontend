@@ -89,6 +89,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(data);
     }
 
+    if (action === "pair") {
+      const phoneNumber = (body as any)?.phoneNumber;
+      if (!phoneNumber) return NextResponse.json({ error: "phoneNumber required" }, { status: 400 });
+      const data = await proxyPost("/pair", { userId, phoneNumber });
+      return NextResponse.json(data);
+    }
+
     if (action === "disconnect") {
       const data = await proxyPost("/disconnect", { userId });
       return NextResponse.json(data);
