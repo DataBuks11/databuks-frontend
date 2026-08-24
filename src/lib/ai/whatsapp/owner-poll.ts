@@ -43,14 +43,53 @@ export async function pollOwnerWhatsAppCommands(
     return result;
   }
 
+  // Own-phone lookup per user: ONLY self-chat messages (user → their own
+  // number) are owner commands. fromMe messages directed at other people
+  // are the user's normal outbound chats — the assistant must NEVER reply
+  // to those (it was replying to the user's leads!).
+  const phoneCache = new Map<string, string>();
+  const getOwnPhone = async (userId: string): Promise<string> => {
+    if (phoneCache.has(userId)) return phoneCache.get(userId)!;
+    let phone = "";
+    try {
+      const { data: sess } = await supabase
+        .from("whatsapp_sessions")
+        .select("auth_state")
+        .eq("user_id", userId)
+        .maybeSingle();
+      phone = String(sess?.auth_state?.phone ?? "").replace(/\D/g, "");
+    } catch {}
+    phoneCache.set(userId, phone);
+    return phone;
+  };
+
   for (const row of pending ?? []) {
     result.checked += 1;
     const text = String(row.message_text ?? "").trim();
     const ts = row.timestamp ? new Date(row.timestamp).getTime() : 0;
 
+    const markProcessed = async () => {
+      await supabase.from("whatsapp_messages").update({ processed: true }).eq("id", row.id);
+    };
+
     // Ancient history replays — mark and skip
     if (!text || !ts || Date.now() - ts > MAX_AGE_MS) {
-      await supabase.from("whatsapp_messages").update({ processed: true }).eq("id", row.id);
+      await markProcessed();
+      result.skipped += 1;
+      continue;
+    }
+
+    // Self-chat filter: remote_jid must be the user's OWN number.
+    const ownPhone = await getOwnPhone(row.user_id);
+    const remotePhone = String(row.remote_jid ?? "").split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
+    const isSelfChat =
+      ownPhone.length >= 10 &&
+      remotePhone.length >= 10 &&
+      (remotePhone === ownPhone || remotePhone.endsWith(ownPhone.slice(-10)) || ownPhone.endsWith(remotePhone.slice(-10)));
+
+    if (!isSelfChat) {
+      // Outbound chat to someone else — never an assistant command.
+      await markProcessed();
       result.skipped += 1;
       continue;
     }

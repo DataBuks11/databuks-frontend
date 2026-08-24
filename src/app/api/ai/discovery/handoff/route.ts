@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -127,6 +128,33 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", lead.id);
+
+    // ─── Owner WhatsApp notification ───
+    // Human approval is needed — ping the owner's assistant chat instantly.
+    after(async () => {
+      try {
+        const baseUrl = process.env.BAILEYS_SERVER_URL;
+        const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
+        if (!baseUrl) return;
+        const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+        const jid = ownerPhone ? `${ownerPhone}@s.whatsapp.net` : null;
+        if (!jid) return;
+        const prospect = lead.author_name ?? lead.author_handle ?? "a lead";
+        const score = lead.lead_score ?? "?";
+        const msg =
+          `🔔 Human approval chahiye!\n` +
+          `Lead: ${prospect} (${score}pt)\n` +
+          `Reason: ${lead.detected_requirement ?? "meeting intent"}\n` +
+          `Reply "pending approvals" yahan, phir "approve 1" ya "reject 1".`;
+        await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+          body: JSON.stringify({ userId: user.id, jid, message: msg }),
+        });
+      } catch (err: any) {
+        console.error(`[API:ai/discovery/handoff] owner notification failed: ${err?.message}`);
+      }
+    });
 
     return NextResponse.json({ handoff_request: handoff, context: handoffContext }, { status: 201 });
   } catch (err: any) {

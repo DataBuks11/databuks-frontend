@@ -175,7 +175,7 @@ async function updateSupabaseStatus(userId, connected) {
 }
 
 // Store message in Supabase
-async function storeMessage(userId, msg) {
+async function storeMessage(userId, msg, preProcessed = false) {
   if (!supabase) return;
   try {
     await supabase.from("whatsapp_messages").insert({
@@ -188,6 +188,7 @@ async function storeMessage(userId, msg) {
       timestamp: msg.timestamp,
       push_name: msg.pushName || null,
       raw_data: msg.raw || null,
+      processed: preProcessed,
     });
   } catch (err) {
     console.error("[Store Message Error]", err.message);
@@ -286,9 +287,12 @@ function setupMessageHandler(socket, userId) {
         `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
 
-      // Store in Supabase (skip storing self-commands as business inbox msgs)
+      // Store in Supabase. Self-chat (owner commands) is stored unprocessed
+      // for the polling bridge. fromMe messages to OTHER people are just the
+      // user's own outbound chats — stored marked processed so the owner
+      // assistant never mistakes them for commands.
       if (!isSelfChat) {
-        await storeMessage(userId, parsedMsg);
+        await storeMessage(userId, parsedMsg, fromMe ? true : false);
       }
 
       // Forward EVERYTHING that is either an inbound lead message OR any
@@ -344,16 +348,17 @@ async function persistFullAuthState(userId, authDir, reason) {
   try {
     const files = readAuthFiles(authDir);
     if (!files["creds.json"]) return;
+    const phone = String(sessions.get(userId)?.phoneNumber ?? "").replace(/\D/g, "");
     await supabase.from("whatsapp_sessions").upsert(
       {
         user_id: userId,
-        auth_state: { files, format: "full" },
+        auth_state: { files, format: "full", phone },
         connected: true,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" }
     );
-    console.log(`[Auth] Full auth state persisted for ${userId} (${Object.keys(files).length} files, ${reason})`);
+    console.log(`[Auth] Full auth state persisted for ${userId} (${Object.keys(files).length} files, phone=${phone ? "set" : "none"}, ${reason})`);
   } catch (err) {
     console.error("[Auth] Full persist failed:", err.message);
   }
