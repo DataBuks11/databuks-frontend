@@ -38,7 +38,9 @@ export async function POST(request: NextRequest) {
     // device suffixes (e.g. 918788606608.0:64) that break exact compares.
     const origin = message.origin ?? "lead";
     const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
-    const inboundPhone = String(message.remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
+    // JID formats vary: "919876543210.0:64@s.whatsapp.net" carries device
+    // suffixes before the @ — strip @, then :device, then .device parts.
+    const inboundPhone = String(message.remoteJid).split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
     const samePhone =
       !!ownerPhone &&
       inboundPhone.length >= 10 &&
