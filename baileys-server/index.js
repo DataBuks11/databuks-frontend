@@ -659,23 +659,48 @@ app.post("/disconnect", async (req, res) => {
   res.json({ success: true });
 });
 
-// Pairing code endpoint
+// Pairing code endpoint — links a phone WITHOUT QR.
+// Always starts a FRESH pairing session: stale/dead sockets make
+// requestPairingCode throw, which surfaces as "Failed to generate pairing code".
 app.post("/pair", async (req, res) => {
   const { userId, phoneNumber } = req.body;
   if (!userId || !phoneNumber) return res.status(400).json({ error: "userId and phoneNumber required" });
-  let currentSession = sessions.get(userId);
-  if (!currentSession?.socket) {
-    try { await connectWhatsApp(userId); currentSession = sessions.get(userId); } catch (err) { return res.status(500).json({ error: err.message }); }
+  const cleanPhone = String(phoneNumber).replace(/\D/g, "");
+  if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+    return res.status(400).json({ error: "invalid phone number (use full international format, no +)" });
   }
+
+  const existing = sessions.get(userId);
+  if (existing?.connected) {
+    return res.json({ success: true, alreadyConnected: true });
+  }
+
   try {
-    if (!currentSession?.socket) return res.status(400).json({ error: "Connection not ready" });
-    await new Promise((r) => setTimeout(r, 2000));
-    const cleanPhone = phoneNumber.replace(/[^\d]/g, "");
-    const pairingCode = await currentSession.socket.requestPairingCode(cleanPhone);
+    // Fresh pairing session: close old socket, wipe local + remote auth state
+    if (existing?.socket) { try { existing.socket.ws?.close(); } catch {} }
+    sessions.delete(userId);
+    const authDir = getAuthDir(userId);
+    try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
+    try {
+      if (supabase) {
+        await supabase.from("whatsapp_sessions").upsert(
+          { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" }
+        );
+      }
+    } catch {}
+
+    // connectWhatsApp resolves the moment the socket is pairing-ready (QR event)
+    const result = await connectWhatsApp(userId);
+    if (result?.error) return res.status(500).json({ error: result.error });
+    const session = sessions.get(userId);
+    if (!session?.socket) return res.status(500).json({ error: "Connection not ready" });
+
+    const pairingCode = await session.socket.requestPairingCode(cleanPhone);
     res.json({ success: true, pairingCode });
   } catch (err) {
     console.error("[Pair] Error:", err.message);
-    res.status(500).json({ error: "Failed to generate pairing code" });
+    res.status(500).json({ error: "Failed to generate pairing code: " + String(err.message ?? "").slice(0, 100) });
   }
 });
 

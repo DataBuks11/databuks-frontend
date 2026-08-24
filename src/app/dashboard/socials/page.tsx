@@ -374,8 +374,7 @@ export default function SocialsPage() {
     setPairLoading(true); setPairError(null); setPairingCode(null);
     try {
       if (!userId) { setPairError("Not authenticated"); return; }
-      // A fresh connection state avoids stale-socket pairing failures
-      await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
+      // /pair starts its own fresh pairing session — no separate connect needed
       const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pair", userId, phoneNumber: pairPhone }) });
       const data = await res.json();
       if (data.pairingCode) {

@@ -262,11 +262,19 @@ const KEYWORD_INTENTS: { pattern: RegExp; intent: OwnerIntent }[] = [
   { pattern: /\b(leads? list|lead list|kaun[si]e? leads|konsi nikali|show leads|leads batao)\b/i, intent: "LEADS_LIST" },
   { pattern: /\b(kitni leads?|leads? count|how many leads)\b/i, intent: "LEADS_COUNT" },
   { pattern: /\b(post|posts|story|stories|content|instagram)\b/i, intent: "POSTS_STATUS" },
-  { pattern: /\b(status|business kaisa|summary|overview|report|hisab)\b/i, intent: "BUSINESS_STATUS" },
+  { pattern: /\b(status|business kaisa|kaisa hai|kya haal|summary|overview|report|hisab|how (is|are) (things|business))\b/i, intent: "BUSINESS_STATUS" },
   { pattern: /\b(help|kya kar sakte|commands?)\b/i, intent: "HELP" },
 ];
 
+/** Greetings/smalltalk skip the LLM entirely for instant replies. */
+const GREETING_PATTERN =
+  /^\s*(hi+|hello+|hey+|hlw+|hlo+|namaste|namaskar|salam|yo|sup|good\s*(morning|evening|afternoon|night)|kaise? ho|kya haal|hii+|heyy+)\b[\s!.,]*$/i;
+
 function detectIntent(text: string): { intent: OwnerIntent; itemNumber: number | null } {
+  // Fast path: pure greetings/smalltalk — instant snapshot reply, no LLM
+  if (GREETING_PATTERN.test(text)) {
+    return { intent: "CHAT", itemNumber: null };
+  }
   for (const { pattern, intent } of KEYWORD_INTENTS) {
     if (pattern.test(text)) {
       const numMatch = text.match(/\b(\d{1,2})\b/);
@@ -301,8 +309,10 @@ export async function handleOwnerWhatsAppCommand(
   deps: OwnerAssistantDeps = {}
 ): Promise<string> {
   const { userId, text } = input;
+  const isGreeting = GREETING_PATTERN.test(text);
   let { intent, itemNumber } = detectIntent(text);
-  if (intent === "CHAT") intent = await llmIntent(text);
+  // Greetings skip the LLM entirely — instant snapshot reply.
+  if (intent === "CHAT" && !isGreeting) intent = await llmIntent(text);
 
   const snapshot = await gatherOwnerSnapshot(supabase, userId);
   let reply: string;
