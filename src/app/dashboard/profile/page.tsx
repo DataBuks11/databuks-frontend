@@ -241,8 +241,11 @@ export default function ProfilePage() {
                     <p className="text-xs text-white/40">Email is your login and cannot be changed here.</p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="phone">Phone</Label>
-                    <Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+                    <Label htmlFor="phone">Phone (WhatsApp)</Label>
+                    <Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder="+91 98XXXXXXXX" />
+                    <p className="text-xs text-emerald-400/80">
+                      Set this to your WhatsApp number to unlock your personal AI assistant — message {process.env.NEXT_PUBLIC_ASSISTANT_WHATSAPP_NUMBER ? `+${process.env.NEXT_PUBLIC_ASSISTANT_WHATSAPP_NUMBER}` : "+91 8788606608"} anytime for leads, meetings, posts & approvals.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="website">Website</Label>

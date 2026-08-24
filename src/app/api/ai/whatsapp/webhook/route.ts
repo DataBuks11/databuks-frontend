@@ -46,6 +46,8 @@ export async function POST(request: NextRequest) {
       (inboundPhone === ownerPhone || inboundPhone.endsWith(ownerPhone.slice(-10)) || ownerPhone.endsWith(inboundPhone.slice(-10)));
     const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone;
 
+    const supabase = adminClient();
+
     if (isOwnerCommand) {
       const dedupKey = `${userId}:${message.messageId}`;
       if (seenOwnerMsgs.has(dedupKey)) {
@@ -61,7 +63,6 @@ export async function POST(request: NextRequest) {
           seenOwnerMsgs.delete(v.value);
         }
       }
-      const supabase = adminClient();
       const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
       const replyJid = String(message.remoteJid).includes("@")
         ? message.remoteJid
@@ -80,11 +81,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ processed: true, route: "owner_assistant" });
     }
 
+    // ─── MULTI-TENANT ASSISTANT ───
+    // The assistant number serves EVERY DataBuks user: if the sender's phone
+    // is bound in their profile, this chat is THEIR personal assistant (their
+    // data, instant reply). Unbound senders flow to the lead pipeline below.
+    if (message.fromMe !== true) {
+      const digits = inboundPhone;
+      const last10 = digits.slice(-10);
+      if (digits.length >= 10) {
+        const { data: boundProfiles } = await supabase
+          .from("profiles")
+          .select("id, phone")
+          .not("phone", "is", null)
+          .limit(500);
+        const bound = (boundProfiles ?? []).find((p: any) => {
+          const pd = String(p.phone ?? "").replace(/\D/g, "");
+          if (pd.length < 10) return false;
+          return pd === digits || pd.endsWith(last10) || last10.endsWith(pd.slice(-10));
+        });
+        if (bound?.id) {
+          const dedupKey = `bound:${bound.id}:${message.messageId}`;
+          if (seenOwnerMsgs.has(dedupKey)) {
+            return NextResponse.json({ processed: true, route: "bound_user_assistant", deduplicated: true });
+          }
+          seenOwnerMsgs.add(dedupKey);
+          const boundUserId = bound.id;
+          after(async () => {
+            try {
+              const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+              await handleOwnerWhatsAppCommand(supabase, {
+                userId: boundUserId,
+                text: message.text,
+                replyJid: message.remoteJid,
+              });
+            } catch (err: any) {
+              console.error(`[API:ai/whatsapp/webhook] bound assistant failed: ${err?.message}`);
+            }
+          });
+          return NextResponse.json({ processed: true, route: "bound_user_assistant", boundUser: boundUserId });
+        }
+      }
+    }
+
     if (message.fromMe === true) {
       return NextResponse.json({ processed: false, skippedReason: "outbound" });
     }
 
-    const supabase = adminClient();
     const result = await processIncomingWhatsAppMessage(supabase, {
       userId,
       remoteJid: message.remoteJid,
