@@ -314,15 +314,26 @@ export async function processIncomingWhatsAppMessage(
     }
   }
 
-  if (!sendReply || !replyText) {
+  if (!sendReply || !replyText || humanTakeover) {
     await markWhatsAppProcessed(supabase, input, null);
+    if (humanTakeover) {
+      try { await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "paused" }); } catch {}
+      await recordFunnelEvent(supabase, {
+        userId: input.userId,
+        leadId: lead.id,
+        eventType: "AI_REPLY_HELD",
+        fromStage: lead.funnel_stage ?? null,
+        toStage: null,
+        metadata: { reason: "human_takeover_active", conversation_id: conversation.id },
+      });
+    }
     return {
       processed: true,
       leadId: lead.id,
       conversationId: conversation.id,
       replySent: false,
       replyText: null,
-      decision: { allowed: true, reason: "no reply generated" },
+      decision: { allowed: true, reason: humanTakeover ? "human takeover active — AI stayed quiet" : "no reply generated" },
       meetingIntentDetected,
       latencyMs: timings,
     };
@@ -336,6 +347,20 @@ export async function processIncomingWhatsAppMessage(
     .eq("conversation_id", conversation.id)
     .eq("sender", "ai")
     .gte("created_at", since);
+
+  // ─── Human takeover guard ───
+  // If the owner manually messaged this lead recently, the AI stays quiet —
+  // a human is actively handling the conversation.
+  const takeoverWindow = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data: recentManual } = await supabase
+    .from("whatsapp_messages")
+    .select("id")
+    .eq("user_id", input.userId)
+    .eq("remote_jid", input.remoteJid)
+    .eq("from_me", true)
+    .gte("timestamp", takeoverWindow)
+    .limit(1);
+  const humanTakeover = (recentManual?.length ?? 0) > 0;
 
   const { data: lastAiReply } = await supabase
     .from("messages")
