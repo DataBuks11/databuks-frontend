@@ -71,6 +71,12 @@ export async function POST(request: NextRequest) {
         : `${inboundPhone}@s.whatsapp.net`;
       after(async () => {
         try {
+          // Claim the row so the polling bridge doesn't double-reply
+          await supabase
+            .from("whatsapp_messages")
+            .update({ processed: true })
+            .eq("user_id", userId)
+            .eq("message_id", message.messageId);
           await handleOwnerWhatsAppCommand(supabase, {
             userId,
             text: message.text,
