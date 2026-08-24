@@ -347,12 +347,23 @@ export default function SocialsPage() {
   }
 
   function pollQr() {
+    // Baileys rotates the QR every ~20s — keep the modal image fresh,
+    // otherwise scans fail with WhatsApp's "Couldn't link device".
+    let lastQr: string | null = null;
     const interval = setInterval(async () => {
-      const res = await fetch(`/api/whatsapp?action=status&userId=${userId}`);
-      const data = await res.json();
-      if (data.connected) { clearInterval(interval); setWhatsAppStatus(true); setQrModalOpen(false); }
-    }, 3000);
-    setTimeout(() => clearInterval(interval), 180000);
+      try {
+        const qrRes = await fetch(`/api/whatsapp?action=qr&userId=${userId}`);
+        const qrData = await qrRes.json();
+        if (qrData.qrCode && qrData.qrCode !== lastQr) {
+          lastQr = qrData.qrCode;
+          setQrCode(qrData.qrCode);
+        }
+        const stRes = await fetch(`/api/whatsapp?action=status&userId=${userId}`);
+        const stData = await stRes.json();
+        if (stData.connected) { clearInterval(interval); setWhatsAppStatus(true); setQrModalOpen(false); }
+      } catch {}
+    }, 8000);
+    setTimeout(() => clearInterval(interval), 240000);
   }
 
   async function checkWhatsAppStatus() {
