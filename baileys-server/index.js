@@ -197,13 +197,20 @@ async function storeMessage(userId, msg, preProcessed = false) {
 
 // Forward message to webhook (for AI agent processing)
 async function forwardToWebhook(userId, msg) {
-  if (!WEBHOOK_URL) return;
+  if (!WEBHOOK_URL) { console.log("[Webhook] No WEBHOOK_URL set, skipping"); return; }
   try {
-    await fetch(WEBHOOK_URL, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55000); // 55s timeout
+    console.log(`[Webhook] Forwarding ${msg.origin} message to ${WEBHOOK_URL}`);
+    const resp = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
       body: JSON.stringify({ userId, message: msg }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
+    const body = await resp.text();
+    console.log(`[Webhook] Response: ${resp.status} ${body.slice(0, 200)}`);
   } catch (err) {
     console.error("[Webhook Error]", err.message);
   }
