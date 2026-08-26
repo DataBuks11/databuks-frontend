@@ -447,10 +447,44 @@ export async function handleOwnerWhatsAppCommand(
 
     case "CHAT":
     default: {
-      // Natural fallback grounded in real numbers — no fabrication
-      reply = pick(lang,
-        `Snapshot: ${snapshot.leadsTotal} leads (${snapshot.leadsNew} new), ${snapshot.discoveredQualified} relevant discovered, ${snapshot.meetingsScheduled} meetings, ${snapshot.postsPublishedTotal} posts published. Ask something specific — "help" lists all commands.`,
-        `Snapshot: ${snapshot.leadsTotal} leads (${snapshot.leadsNew} new), ${snapshot.discoveredQualified} relevant discovered, ${snapshot.meetingsScheduled} meetings, ${snapshot.postsPublishedTotal} posts published. Kuch specific pooch — "help" me saare commands hain.`);
+      // Use LLM for genuinely conversational / free-form questions,
+      // grounding the answer in the real business snapshot so nothing
+      // is fabricated. Falls back to the static snapshot if LLM fails.
+      try {
+        const provider = getActiveProvider();
+        const ctx = [
+          `Business snapshot (real data):`,
+          `- Leads: ${snapshot.leadsTotal} total, ${snapshot.leadsNew} new, ${snapshot.leadsQualifiedStage} qualified`,
+          `- Relevant discovered: ${snapshot.discoveredQualified}`,
+          `- Meetings: ${snapshot.meetingsScheduled} booked, ${snapshot.meetingsUpcoming} upcoming`,
+          `- Content: ${snapshot.postsPublishedTotal} posts total, ${snapshot.postsPublishedToday} today, ${snapshot.postsDraft} drafts`,
+        ].join("\n");
+        const out = await provider.completeJson({
+          system: [
+            "You are a smart, helpful AI business assistant for a startup growth platform.",
+            "The user is a business owner on the DataBuks platform.",
+            "Answer their question naturally, helpfully, and concisely.",
+            "If the question relates to their business data, use ONLY the real snapshot below — never invent numbers.",
+            "If they ask something you don't know, say so honestly and suggest what commands they can use.",
+            "Available commands: business status, leads count, leads list, relevant leads, meetings, posts status, pending approvals, approve/reject.",
+            "",
+            ctx,
+            "",
+            `Respond as JSON: {"reply": "your conversational answer here"}`,
+            `Match the user's language: if they write in Hinglish/Hindi, reply in Hinglish. Otherwise reply in English.`,
+          ].join("\n"),
+          user: text,
+          temperature: 0.4,
+          maxTokens: 500,
+        });
+        reply = String(out?.reply ?? "").trim();
+        if (!reply) throw new Error("empty reply");
+      } catch {
+        // Fallback: static snapshot
+        reply = pick(lang,
+          `Snapshot: ${snapshot.leadsTotal} leads (${snapshot.leadsNew} new), ${snapshot.discoveredQualified} relevant discovered, ${snapshot.meetingsScheduled} meetings, ${snapshot.postsPublishedTotal} posts published. Ask something specific — "help" lists all commands.`,
+          `Snapshot: ${snapshot.leadsTotal} leads (${snapshot.leadsNew} new), ${snapshot.discoveredQualified} relevant discovered, ${snapshot.meetingsScheduled} meetings, ${snapshot.postsPublishedTotal} posts published. Kuch specific pooch — "help" me saare commands hain.`);
+      }
       break;
     }
   }
