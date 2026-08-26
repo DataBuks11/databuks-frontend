@@ -9,12 +9,12 @@ interface ChatMessage {
   text: string;
 }
 
-const QUICK_COMMANDS = ["business status", "kitni leads nikali", "pending approvals", "help"];
+const QUICK_COMMANDS = ["business status", "leads count", "pending approvals", "help"];
 
 export default function AssistantChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", text: "Main tera business assistant hoon 💬\n\nPooch: \"business status\", \"kitni leads nikali\", \"pending approvals\", \"meetings booked\"..." },
+    { role: "assistant", text: "I'm your business assistant 💬\n\nAsk me: \"business status\", \"leads count\", \"pending approvals\", \"meetings booked\"..." },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,9 +37,9 @@ export default function AssistantChatWidget() {
         body: JSON.stringify({ message: msg }),
       });
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", text: data.reply ?? data.error ?? "Kuch gadbad ho gayi, dobara try kar." }]);
+      setMessages((prev) => [...prev, { role: "assistant", text: data.reply ?? data.error ?? "Something went wrong, please try again." }]);
     } catch {
-      setMessages((prev) => [...prev, { role: "assistant", text: "Network issue — dobara try kar." }]);
+      setMessages((prev) => [...prev, { role: "assistant", text: "Network issue — please try again." }]);
     } finally {
       setLoading(false);
     }
