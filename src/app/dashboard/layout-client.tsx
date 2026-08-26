@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import Sidebar from "@/components/layout/sidebar";
 import MobileSidebar from "@/components/layout/mobile-sidebar";
 import Navbar from "@/components/layout/navbar";
+import AssistantChatWidget from "@/components/assistant/chat-widget";
 
 function DashboardBg() {
   return (
@@ -48,6 +49,7 @@ export function DashboardLayoutClient({ children }: { children: ReactNode }) {
       >
         {children}
       </main>
+      <AssistantChatWidget />
     </div>
   );
 }
