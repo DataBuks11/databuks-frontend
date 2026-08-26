@@ -41,12 +41,13 @@ export class OxAlphaProvider implements AiProvider {
     }
     return postChatCompletionJson({
       baseUrl: this.baseUrl,
-      apiKey: this.apiKey,
+      apiKey: this.apiKey!,
       model: this.model,
       system: input.system,
       user: input.user,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
+      reasoningEffort: input.reasoningEffort,
       providerLabel: "Ox Alpha",
     });
   }

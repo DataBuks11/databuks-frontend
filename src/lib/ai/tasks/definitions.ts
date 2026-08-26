@@ -46,6 +46,8 @@ export interface TaskDefinition {
   action?: TaskAction;
   decisionOf: (validated: Record<string, any>) => string;
   maxTokens?: number;
+  /** Lower reasoning effort = faster responses for real-time tasks */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
@@ -145,6 +147,9 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     schema: whatsappReplySchema,
     rules: [],
     buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
+    // Real-time chat: cap tokens + low reasoning effort for sub-10s replies
+    maxTokens: 200,
+    reasoningEffort: "low",
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },

@@ -218,7 +218,11 @@ export async function runAiTask(supabase: any, input: AiTaskInput): Promise<AiTa
 
   try {
     const prompt = definition.buildPrompt(context);
-    const raw = await provider.completeJson({ ...prompt, ...(definition.maxTokens ? { maxTokens: definition.maxTokens } : {}) });
+    const raw = await provider.completeJson({
+      ...prompt,
+      ...(definition.maxTokens ? { maxTokens: definition.maxTokens } : {}),
+      ...(definition.reasoningEffort ? { reasoningEffort: definition.reasoningEffort } : {}),
+    });
 
     const validation = validateAiOutput(definition.schema, raw);
     if (!validation.success) {

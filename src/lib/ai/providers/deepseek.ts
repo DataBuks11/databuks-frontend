@@ -35,12 +35,14 @@ export class DeepSeekProvider implements AiProvider {
     }
     return postChatCompletionJson({
       baseUrl: this.baseUrl,
-      apiKey: this.apiKey,
+      apiKey: this.apiKey!,
       model: this.model,
       system: input.system,
       user: input.user,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
+      // DeepSeek-chat has no reasoning phase — already fast, and the API
+      // may reject unknown params. reasoningEffort intentionally omitted.
       providerLabel: "DeepSeek",
     });
   }

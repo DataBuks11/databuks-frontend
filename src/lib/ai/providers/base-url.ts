@@ -169,6 +169,8 @@ export interface ChatCompletionParams {
   user: string;
   temperature?: number;
   maxTokens?: number;
+  /** OpenRouter reasoning effort control — low = much faster for simple tasks */
+  reasoningEffort?: "low" | "medium" | "high";
   providerLabel: string;
 }
 
@@ -196,6 +198,7 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
         temperature: params.temperature ?? 0.2,
         response_format: { type: "json_object" },
         ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
+        ...(params.reasoningEffort ? { reasoning: { effort: params.reasoningEffort } } : {}),
       }),
     });
   } catch (error: any) {

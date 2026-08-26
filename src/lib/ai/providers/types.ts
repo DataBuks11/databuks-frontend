@@ -3,6 +3,8 @@ export interface AiCompletionInput {
   user: string;
   temperature?: number;
   maxTokens?: number;
+  /** Lower reasoning effort = faster responses (real-time chat tasks) */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 export interface AiProvider {
