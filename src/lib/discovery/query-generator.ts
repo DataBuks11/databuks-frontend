@@ -30,71 +30,123 @@ export interface DiscoveryQuery {
   /** Which external platform this query is best suited for */
   best_platform: ExternalPlatform;
   /**
-   * Geo scope of the query. LOCAL = user's own city/region,
-   * STATE = same state, COUNTRY = same country, GLOBAL = worldwide.
-   * Omitted for backward compatibility -> treated as LOCAL.
+   * Geo scope of the query. The funnel expands outward from the business's
+   * own city: LOCAL (city) -> NEARBY (neighbouring cities) -> DISTRICT ->
+   * STATE -> COUNTRY -> GLOBAL. Omitted = LOCAL (backward compatible).
    */
   scope?: GeoScope;
 }
 
-/** Geographic reach of a discovery query. */
-export type GeoScope = "LOCAL" | "STATE" | "COUNTRY" | "GLOBAL";
+/** Geographic reach of a discovery query — the expansion funnel. */
+export type GeoScope = "LOCAL" | "NEARBY" | "DISTRICT" | "STATE" | "COUNTRY" | "GLOBAL";
 
-/** Derive city / state / country from a free-form location string. */
-export function parseLocationParts(location: string): { city: string; state: string; country: string } {
+/**
+ * Curated neighbouring cities for major Indian business hubs.
+ * Used for the NEARBY scope — cities within ~50km reach.
+ */
+const NEARBY_CITIES: Record<string, string[]> = {
+  nagpur: ["Kamptee", "Wardha", "Bhandara", "Hingna", "Katol"],
+  mumbai: ["Thane", "Navi Mumbai", "Kalyan", "Vasai", "Panvel"],
+  pune: ["Pimpri-Chinchwad", "Hinjewadi", "Chakan", "Lonavala", "Baramati"],
+  delhi: ["Noida", "Gurugram", "Ghaziabad", "Faridabad", "Gurgaon"],
+  bangalore: ["Whitefield", "Electronic City", "Mysore", "Tumkur", " Hosur"],
+  bengaluru: ["Whitefield", "Electronic City", "Mysore", "Tumkur", "Hosur"],
+  hyderabad: ["Secunderabad", "Gachibowli", "Warangal", "Nizamabad"],
+  chennai: ["Chengalpattu", "Sriperumbudur", "Kanchipuram", "Vellore"],
+  ahmedabad: ["Gandhinagar", "Vadodara", "Rajkot", "Anand"],
+  jaipur: ["Ajmer", "Kota", "Alwar", "Sikar"],
+  lucknow: ["Kanpur", "Barabanki", "Sitapur", "Raebareli"],
+  indore: ["Ujjain", "Dewas", "Bhopal", "Pithampur"],
+  surat: ["Bharuch", "Navsari", "Vapi", "Valsad"],
+  kolkata: ["Howrah", "Durgapur", "Asansol", "Kharagpur"],
+  goa: ["Panaji", "Margao", "Vasco da Gama", "Mapusa"],
+};
+
+const STATE_NAMES = [
+  "maharashtra", "delhi", "karnataka", "tamil nadu", "gujarat", "rajasthan",
+  "west bengal", "uttar pradesh", "telangana", "andhra pradesh", "madhya pradesh",
+  "kerala", "punjab", "haryana", "jharkhand", "odisha", "assam", "bihar",
+  "chhattisgarh", "uttarakhand", "goa", "himachal", "jammu",
+];
+
+const COUNTRY_NAMES = [
+  "india", "usa", "us", "united states", "uae", "uk", "united kingdom", "singapore",
+  "australia", "canada", "germany", "france", "japan", "china", "brazil",
+  "saudi arabia", "qatar", "oman", "nepal", "bangladesh", "sri lanka", "pakistan",
+];
+
+/** Derive city / district / state / country from a free-form location string. */
+export function parseLocationParts(location: string): {
+  city: string;
+  district: string;
+  state: string;
+  country: string;
+} {
   const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
   const fallback = parts[0] || location.trim();
-  if (parts.length === 0) return { city: fallback, state: "", country: "" };
-  // Common forms:
-  //  "Nagpur" / "Mumbai, Maharashtra" / "Nagpur, Maharashtra, India"
+  if (parts.length === 0) return { city: fallback, district: "", state: "", country: "" };
+
   const last = parts[parts.length - 1].toLowerCase();
-  const countryNames = ["india", "usa", "us", "uae", "uk", "singapore", "australia", "canada", "germany", "france", "japan", "china", "brazil", "saudi arabia", "qatar", "oman", "nepal", "bangladesh", "sri lanka", "dhaka", "pakistan"];
-  let country = last;
-  if (!countryNames.includes(last)) {
-    country = countryNames.includes(parts[parts.length - 2]?.toLowerCase())
-      ? parts[parts.length - 2]
-      : "";
-  }
+  const country = COUNTRY_NAMES.includes(last) ? parts[parts.length - 1] : "";
 
   let state = "";
   for (const part of parts) {
-    const low = part.toLowerCase();
-    if (low.includes("maharashtra") || low.includes("delhi") || low.includes("karnataka") || low.includes("tamil nadu") || low.includes("gujarat") || low.includes("rajasthan") || low.includes("west bengal") || low.includes("uttar pradesh") || low.includes("telangana") || low.includes("andhra pradesh") || low.includes("madhya pradesh") || low.includes("kerala") || low.includes("punjab") || low.includes("haryana") || low.includes("jharkhand") || low.includes("odisha") || low.includes("assam") || low.includes("bihar") || low.includes("chhattisgarh") || low.includes("uttarakhand")) {
+    if (STATE_NAMES.includes(part.toLowerCase())) {
       state = part;
       break;
     }
   }
 
-  const city = parts[0];
+  // District: the part right before the state/country when it differs from the city
+  const beforeStateIdx = state ? parts.indexOf(state) - 1 : country ? parts.length - 2 : parts.length - 1;
+  let district = "";
+  if (beforeStateIdx >= 0 && beforeStateIdx < parts.length) {
+    const candidate = parts[beforeStateIdx];
+    if (candidate.toLowerCase() !== fallback.toLowerCase()) district = candidate;
+  }
+
   return {
-    city: city || fallback,
-    state: state || (countryNames.includes(last) ? "" : parts.length >= 2 ? parts[parts.length - 2] : ""),
-    country: countryNames.includes(last) ? parts[parts.length - 1] : "",
+    city: parts[0] || fallback,
+    district: district || fallback, // many Indian cities share the district name
+    state,
+    country,
   };
 }
 
-/** Generate a scope-specific query suffix (empty = LOCAL behaves as today). */
+/** Resolve the location string for a given geo scope. */
 function scopeLocation(location: string, scope: GeoScope): string {
   const parsed = parseLocationParts(location);
-  if (scope === "GLOBAL") return "worldwide";
-  if (scope === "COUNTRY") return parsed.country || location;
-  if (scope === "STATE") return parsed.state || parsed.city || location;
-  return parsed.city || location;
+  switch (scope) {
+    case "GLOBAL": return "worldwide";
+    case "COUNTRY": return parsed.country || location;
+    case "STATE": return parsed.state || parsed.district || parsed.city || location;
+    case "DISTRICT": return parsed.district || parsed.city || location;
+    case "NEARBY": {
+      const nearby = NEARBY_CITIES[parsed.city.toLowerCase()];
+      return nearby ? nearby.join(" or ") : `${parsed.city} nearby areas`;
+    }
+    default: return parsed.city || location;
+  }
 }
 
 /**
  * Transform the location set for a given geo scope so that queries for
  * different scopes are genuinely different search strings:
- *   LOCAL   -> cities as provided
- *   STATE   -> the state portion of each location
- *   COUNTRY -> the country portion
- *   GLOBAL  -> ["worldwide"]
+ *   LOCAL    -> cities as provided
+ *   NEARBY   -> curated neighbouring cities (fallback: "{city} nearby areas")
+ *   DISTRICT -> the district portion
+ *   STATE    -> the state portion
+ *   COUNTRY  -> the country portion
+ *   GLOBAL   -> ["worldwide"]
  */
 function scopedLocations(locations: string[], scope: GeoScope): string[] {
   if (scope === "GLOBAL") return ["worldwide"];
   const mapped = locations.map((loc) => scopeLocation(loc, scope));
   return [...new Set(mapped.filter(Boolean))];
 }
+
+/** Derive city / state / country from a free-form location string. */
+
 
 // ─── Input from Business Context ────────────────────────────────────────────
 
@@ -526,6 +578,7 @@ export function generateDiscoveryQueries(
 
   return selected;
 }
+
 
 
 

@@ -7,7 +7,7 @@ import { enrichFromWebsite } from "../discovery/enrichment";
 import { analyzeRequirement, analyzeUrgency } from "../discovery/requirement-analysis";
 
 /** Most-specific scope wins when a business appears under multiple scopes. */
-const SCOPE_PRIORITY: Record<GeoScope, number> = { LOCAL: 0, STATE: 1, COUNTRY: 2, GLOBAL: 3 };
+const SCOPE_PRIORITY: Record<GeoScope, number> = { LOCAL: 0, NEARBY: 1, DISTRICT: 2, STATE: 3, COUNTRY: 4, GLOBAL: 5 };
 
 function mostSpecificScope(scopes: (GeoScope | undefined)[]): GeoScope {
   let best: GeoScope = "GLOBAL";
@@ -22,7 +22,9 @@ function mostSpecificScope(scopes: (GeoScope | undefined)[]): GeoScope {
 export function geoRelevanceBonus(scope: GeoScope): number {
   switch (scope) {
     case "LOCAL": return 15;
-    case "STATE": return 10;
+    case "NEARBY": return 12;
+    case "DISTRICT": return 10;
+    case "STATE": return 8;
     case "COUNTRY": return 5;
     default: return 0;
   }

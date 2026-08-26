@@ -106,7 +106,7 @@ export default function FindLeadsPage() {
       const res = await fetch("/api/growth/find-leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_queries: 20, max_pages: 120, scopes: ["LOCAL", "STATE", "COUNTRY", "GLOBAL"] }),
+        body: JSON.stringify({ max_queries: 24, max_pages: 150, scopes: ["LOCAL", "NEARBY", "DISTRICT", "STATE", "COUNTRY", "GLOBAL"] }),
       });
       const json = await res.json();
       if (json.status === "FAILED") {
@@ -157,8 +157,9 @@ export default function FindLeadsPage() {
   const scopeOf = (lead: DiscoveredLead): string =>
     (lead.evidence as any)?.geo_scope ?? why(lead)?.geo_scope ?? "LOCAL";
 
-  const localLeads = leads.filter((l) => scopeOf(l) === "LOCAL");
-  const widerLeads = leads.filter((l) => scopeOf(l) !== "LOCAL");
+  const localLeads = leads.filter((l) => ["LOCAL", "NEARBY"].includes(scopeOf(l)));
+  const regionalLeads = leads.filter((l) => ["DISTRICT", "STATE"].includes(scopeOf(l)));
+  const globalLeads = leads.filter((l) => ["COUNTRY", "GLOBAL"].includes(scopeOf(l)));
 
   const toggleWhy = (id: string) =>
     setExpanded((prev) => {
@@ -219,8 +220,9 @@ export default function FindLeadsPage() {
         </Card>
       ) : (
         <>
-          {renderLeadSection("Local Leads", "Businesses in your own region — highest relevance", localLeads, "LOCAL")}
-          {renderLeadSection("State · Country · Global", "Wider-reach opportunities beyond your region", widerLeads, "WIDER")}
+          {renderLeadSection("Local Leads", "Your city + neighbouring cities — highest relevance", localLeads, "LOCAL")}
+          {renderLeadSection("District & State", "Expanding across your district and state", regionalLeads, "REGIONAL")}
+          {renderLeadSection("Country & Global", "Nationwide and worldwide opportunities", globalLeads, "GLOBAL")}
         </>
       )}
     </div>

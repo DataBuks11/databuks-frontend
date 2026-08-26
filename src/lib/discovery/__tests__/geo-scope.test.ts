@@ -14,15 +14,17 @@ const INPUT = {
 };
 
 describe("geo-scope discovery", () => {
-  it("parses location parts (city/state/country)", () => {
+  it("parses location parts (city/district/state/country)", () => {
     expect(parseLocationParts("Nagpur, Maharashtra, India")).toEqual({
       city: "Nagpur",
+      district: "Nagpur",
       state: "Maharashtra",
       country: "India",
     });
     expect(parseLocationParts("Mumbai").city).toBe("Mumbai");
     const only = parseLocationParts("Mahal, Nagpur");
     expect(only.city).toBe("Mahal");
+    expect(only.state).toBe("");
     expect(only.country).toBe("");
   });
 
@@ -36,12 +38,18 @@ describe("geo-scope discovery", () => {
   });
 
   it("generates queries for every requested scope with correct tagging", () => {
-    const scopes: GeoScope[] = ["LOCAL", "STATE", "COUNTRY", "GLOBAL"];
-    const queries = generateDiscoveryQueries(INPUT as any, 60, scopes);
+    const scopes: GeoScope[] = ["LOCAL", "NEARBY", "DISTRICT", "STATE", "COUNTRY", "GLOBAL"];
+    const queries = generateDiscoveryQueries(INPUT as any, 90, scopes);
     for (const scope of scopes) {
       const inScope = queries.filter((q) => q.scope === scope);
       expect(inScope.length, `scope ${scope}`).toBeGreaterThan(0);
     }
+    // NEARBY queries target curated neighbouring cities
+    const nearbyQ = queries.find((q) => q.scope === "NEARBY");
+    expect(nearbyQ?.query.toLowerCase()).toMatch(/kamptee|wardha|bhandara|nearby/);
+    // DISTRICT queries target the district
+    const districtQ = queries.find((q) => q.scope === "DISTRICT");
+    expect(districtQ?.query).toContain("Nagpur");
     // STATE queries target the parsed state
     const stateQ = queries.find((q) => q.scope === "STATE");
     expect(stateQ?.query).toContain("Maharashtra");
