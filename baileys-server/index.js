@@ -542,6 +542,21 @@ async function connectWhatsApp(userId) {
             resolve({ error: "Logged out from WhatsApp. Please reconnect." });
           }
         } else if (shouldReconnect) {
+          // Code 440 = session replaced on another device. Stop reconnecting
+          // after 3 attempts to avoid infinite loops that block all other sessions.
+          const reconnectKey = `440:${userId}`;
+          if (statusCode === 440) {
+            const count = (global.__reconnectCounts || (global.__reconnectCounts = {}))[reconnectKey] || 0;
+            if (count >= 3) {
+              console.log(`[WhatsApp] STOPPED reconnecting for ${userId} — 440 loop detected (${count} attempts). User must re-scan QR.`);
+              sessions.delete(userId);
+              return;
+            }
+            global.__reconnectCounts[reconnectKey] = count + 1;
+          } else {
+            // Reset counter for non-440 disconnects
+            if (global.__reconnectCounts) delete global.__reconnectCounts[`440:${userId}`];
+          }
           console.log(`[WhatsApp] Auto-reconnecting for user: ${userId}`);
           setTimeout(() => {
             connectWhatsApp(userId).catch(() => {});
