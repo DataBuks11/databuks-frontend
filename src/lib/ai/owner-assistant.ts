@@ -274,7 +274,7 @@ async function llmIntent(text: string): Promise<OwnerIntent> {
         'You map a business owner\'s WhatsApp message to ONE command intent. Allowed: HELP, LEADS_COUNT, LEADS_LIST, RELEVANT_LEADS, BUSINESS_STATUS, MEETINGS, POSTS_STATUS, PENDING_APPROVALS, APPROVE, REJECT, CHAT. Approve/reject ONLY when they clearly confirm/deny an item. Respond {"intent":"..."} only.',
       user: text.slice(0, 300),
       temperature: 0,
-      maxTokens: 50,
+      maxTokens: 200,
       reasoningEffort: "low",
     });
     const allowed: OwnerIntent[] = ["HELP", "LEADS_COUNT", "LEADS_LIST", "RELEVANT_LEADS", "BUSINESS_STATUS", "MEETINGS", "POSTS_STATUS", "PENDING_APPROVALS", "APPROVE", "REJECT", "CHAT"];

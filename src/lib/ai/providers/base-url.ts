@@ -213,8 +213,17 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
   }
 
   const data = await response.json();
-  const content: unknown = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim() === "") {
+  const message = data?.choices?.[0]?.message;
+  // Some reasoning models (e.g. GLM 5.3 Flash) put text in `content` but
+  // may return null content if max_tokens was consumed by reasoning.
+  // Fallback: try the `reasoning` field for extractable JSON.
+  let content: string | null = typeof message?.content === "string" ? message.content : null;
+  if ((!content || content.trim() === "") && typeof message?.reasoning === "string") {
+    // Try to extract JSON from reasoning text
+    const jsonMatch = message.reasoning.match(/\{[\s\S]*\}/);
+    content = jsonMatch ? jsonMatch[0] : null;
+  }
+  if (!content || content.trim() === "") {
     throw new Error(`${params.providerLabel} returned no content`);
   }
 
