@@ -69,23 +69,21 @@ export async function POST(request: NextRequest) {
       const replyJid = String(message.remoteJid).includes("@")
         ? message.remoteJid
         : `${inboundPhone}@s.whatsapp.net`;
-      after(async () => {
-        try {
-          // Claim the row so the polling bridge doesn't double-reply
-          await supabase
-            .from("whatsapp_messages")
-            .update({ processed: true })
-            .eq("user_id", userId)
-            .eq("message_id", message.messageId);
-          await handleOwnerWhatsAppCommand(supabase, {
-            userId,
-            text: message.text,
-            replyJid,
-          });
-        } catch (err: any) {
-          console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
-        }
-      });
+      // Run synchronously — after() on Vercel delays up to 6 min
+      try {
+        await supabase
+          .from("whatsapp_messages")
+          .update({ processed: true })
+          .eq("user_id", userId)
+          .eq("message_id", message.messageId);
+        await handleOwnerWhatsAppCommand(supabase, {
+          userId,
+          text: message.text,
+          replyJid,
+        });
+      } catch (err: any) {
+        console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
+      }
       return NextResponse.json({ processed: true, route: "owner_assistant" });
     }
 
@@ -114,18 +112,17 @@ export async function POST(request: NextRequest) {
           }
           seenOwnerMsgs.add(dedupKey);
           const boundUserId = bound.id;
-          after(async () => {
-            try {
-              const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
-              await handleOwnerWhatsAppCommand(supabase, {
-                userId: boundUserId,
-                text: message.text,
-                replyJid: message.remoteJid,
-              });
-            } catch (err: any) {
-              console.error(`[API:ai/whatsapp/webhook] bound assistant failed: ${err?.message}`);
-            }
-          });
+          // Run synchronously — after() on Vercel delays up to 6 min
+          try {
+            const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+            await handleOwnerWhatsAppCommand(supabase, {
+              userId: boundUserId,
+              text: message.text,
+              replyJid: message.remoteJid,
+            });
+          } catch (err: any) {
+            console.error(`[API:ai/whatsapp/webhook] bound assistant failed: ${err?.message}`);
+          }
           return NextResponse.json({ processed: true, route: "bound_user_assistant", boundUser: boundUserId });
         }
       }
