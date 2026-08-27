@@ -153,20 +153,19 @@ export async function POST(request: NextRequest) {
         text: message.text,
         meetingSignal: result.meetingIntentDetected === true,
       };
-      after(async () => {
-        try {
-          await fetch(backgroundUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": expectedKey,
-            },
-            body: JSON.stringify(backgroundBody),
-          });
-        } catch (err: any) {
-          console.error(`[API:ai/whatsapp/webhook] background trigger failed: ${err?.message}`);
-        }
-      });
+      // Run synchronously — after() on Vercel delays up to 6 min
+      try {
+        await fetch(backgroundUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": expectedKey,
+          },
+          body: JSON.stringify(backgroundBody),
+        });
+      } catch (err: any) {
+        console.error(`[API:ai/whatsapp/webhook] background trigger failed: ${err?.message}`);
+      }
     }
 
     return NextResponse.json(result);
