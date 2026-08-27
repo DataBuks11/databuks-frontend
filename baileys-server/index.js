@@ -444,11 +444,13 @@ async function connectWhatsApp(userId) {
       version,
       printQRInTerminal: false,
       logger,
-      browser: ["DataBuks", "Chrome", "1.0.0"],
+      // Register as a different device type than WhatsApp Desktop ("Chrome")
+      // so both can coexist as linked devices without 440 conflicts.
+      browser: ["DataBuks", "Ubuntu", "22.04"],
       connectTimeoutMs: 30000,
       keepAliveIntervalMs: 30000,
       retryRequestDelayMs: 250,
-      markOnlineOnConnect: true,
+      markOnlineOnConnect: false,
     });
 
     const session = {

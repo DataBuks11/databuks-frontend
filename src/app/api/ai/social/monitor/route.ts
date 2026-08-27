@@ -52,6 +52,31 @@ export async function POST(request: NextRequest) {
     } catch (err: any) {
       console.error(`[API:ai/social/monitor] owner poll failed: ${err?.message}`);
     }
+
+    // Piggyback: auto-publish due scheduled content (Instagram/Facebook via
+    // Composio). The crawler heartbeat gives this a ~10-minute cadence.
+    try {
+      const { publishDueContent } = await import("@/lib/social/publisher");
+      const results = await publishDueContent(supabase, { limit: 5 });
+      const published = results.filter((r) => r.ok).length;
+      if (results.length > 0) {
+        console.log(`[API:ai/social/monitor] content publish: published=${published} failed=${results.length - published}`);
+      }
+    } catch (err: any) {
+      console.error(`[API:ai/social/monitor] content publish failed: ${err?.message}`);
+    }
+
+    // Piggyback: auto-execute safe AI-drafted comment replies (brand engagement)
+    try {
+      const { runAutoComments } = await import("@/lib/social/auto-comment");
+      const acResults = await runAutoComments(supabase, { limit: 5 });
+      const executed = acResults.filter((r) => r.ok && r.status === "SUCCESS").length;
+      if (acResults.length > 0) {
+        console.log(`[API:ai/social/monitor] auto-comments: executed=${executed} total=${acResults.length}`);
+      }
+    } catch (err: any) {
+      console.error(`[API:ai/social/monitor] auto-comments failed: ${err?.message}`);
+    }
   });
 
   const { data: connections, error: connError } = await supabase
