@@ -132,6 +132,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ processed: false, skippedReason: "outbound" });
     }
 
+    // ─── SKIP GROUP MESSAGES ───
+    // AI should never auto-reply in group chats
+    const jid = String(message.remoteJid ?? "");
+    if (jid.includes("@g.us") || jid.includes("@broadcast")) {
+      return NextResponse.json({ processed: false, skippedReason: "group_or_broadcast" });
+    }
+
+    // ─── PERSONAL CONTACTS FILTER ───
+    // Check if sender is marked as personal contact — skip AI reply
+    const senderDigits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+    try {
+      const { data: personalContact } = await supabase
+        .from("personal_contacts")
+        .select("id")
+        .eq("user_id", userId)
+        .or(`jid.eq.${jid},phone.eq.${senderDigits}`)
+        .limit(1)
+        .maybeSingle();
+      if (personalContact) {
+        return NextResponse.json({ processed: false, skippedReason: "personal_contact" });
+      }
+    } catch {
+      // Table may not exist yet — skip filter gracefully
+    }
+
     const result = await processIncomingWhatsAppMessage(supabase, {
       userId,
       remoteJid: message.remoteJid,
