@@ -27,8 +27,8 @@ export async function POST(request: NextRequest) {
     const userId = body?.userId;
     const message = body?.message;
 
-    if (!userId || !message?.remoteJid || !message?.messageId || !message?.text) {
-      return NextResponse.json({ error: "userId and message (remoteJid, messageId, text) required" }, { status: 400 });
+    if (!userId || !message?.remoteJid || !message?.messageId || (!message?.text && !message?.mediaUrl)) {
+      return NextResponse.json({ error: "userId and message (remoteJid, messageId, text or mediaUrl) required" }, { status: 400 });
     }
 
     // ─── OWNER COMMAND CENTER ───
@@ -164,6 +164,7 @@ export async function POST(request: NextRequest) {
       text: message.text,
       timestamp: message.timestamp ?? undefined,
       pushName: message.pushName ?? undefined,
+      mediaType: message.type && message.type !== "text" ? message.type : undefined,
     });
 
     if (result.processed && result.leadId && result.conversationId) {

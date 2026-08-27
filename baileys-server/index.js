@@ -253,11 +253,27 @@ function setupMessageHandler(socket, userId) {
         : "";
       const isOwnerDevice = !fromMe && !!ownerPhone && remotePhone === ownerPhone;
 
+      // Use a placeholder when the message has media but no caption so the
+      // downstream pipeline (engine + AI) can acknowledge the attachment
+      // instead of silently rejecting media-only messages.
+      const mediaTextFor = (type) => {
+        switch (type) {
+          case "image": return "[image]";
+          case "video": return "[video]";
+          case "audio": return "[audio]";
+          case "document": return "[document]";
+          case "sticker": return "[sticker]";
+          case "contact": return "[contact]";
+          case "location": return "[location]";
+          default: return "";
+        }
+      };
       const messageText =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
         msg.message?.videoMessage?.caption ||
+        mediaTextFor(messageType) ||
         "";
 
       const messageType = msg.message?.conversation

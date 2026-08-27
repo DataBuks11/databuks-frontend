@@ -15,6 +15,10 @@ export interface WhatsAppInboundMessage {
   text: string;
   timestamp?: string;
   pushName?: string;
+  /** Optional media URL for image/video/document attachments */
+  mediaUrl?: string;
+  /** Media kind — "image" | "video" | "audio" | "document" | "sticker" */
+  mediaType?: string;
 }
 
 export interface ProcessWhatsAppOptions {
