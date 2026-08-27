@@ -311,7 +311,7 @@ export const websiteCompetitorSchema = z
     reason: z.string().max(500).nullable(),
     source_url: z.string().max(500).nullable(),
     evidence_quote: z.string().max(800).nullable(),
-    evidence_type: z.enum(["mentioned_on_website", "comparison_page", "outbound_link"]),
+    evidence_type: z.enum(["mentioned_on_website", "comparison_page", "outbound_link", "industry_inference"]),
     confidence: confidence,
   })
   .strict();
