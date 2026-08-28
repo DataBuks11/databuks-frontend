@@ -199,8 +199,11 @@ class CrawlRequest(BaseModel):
     scan_id: str
     user_id: str
     url: str
-    max_pages: int = 100
-    max_depth: int = 8
+    # Defaults: 40 pages, depth 4. Most business sites need ≤ 40 pages.
+    # For very large sites, the client can pass lower values to keep
+    # crawl time + LLM cost reasonable.
+    max_pages: int = 40
+    max_depth: int = 4
 
 
 async def require_key(request: Request) -> None:

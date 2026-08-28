@@ -333,10 +333,12 @@ export async function processIncomingWhatsAppMessage(
   }
 
   // ─── Fallback reply when the LLM failed both attempts ───
-  // The LLM is the primary source. If the schema is too strict (MiniMax free
-  // often returns loose JSON), or the call timed out, fall back to a safe
-  // casual reply that USES THE LEAD'S ACTUAL MESSAGE so it doesn't look like
-  // a canned reply and doesn't trip the duplicate-reply guard (WA_002).
+  // The LLM is the primary source (it's already context-aware via
+  // buildBusinessBlock). If the schema is too strict (MiniMax free often
+  // returns loose JSON), or the call timed out, fall back to a safe casual
+  // reply that:
+  //   1. Uses the lead's actual message as a unique echo (avoids WA_002)
+  //   2. References the business when we have business context loaded
   if (!replyText) {
     const trimmed = input.text.trim();
     const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|hai\s*ky|haan|nahi)\b/i.test(trimmed)
@@ -344,18 +346,21 @@ export async function processIncomingWhatsAppMessage(
       : "english";
     const leadName = String(lead.name ?? "").trim().split(/\s+/)[0] || "";
     const nameBit = leadName && leadName.toLowerCase() !== "whatsapp" && leadName.length > 1 ? ` ${leadName}` : "";
-    // Echo a tiny bit of the lead's message so the reply is contextual and unique
     const echo = trimmed.length > 0 && trimmed.length <= 40 && /[a-zA-Z\u0900-\u097F]/.test(trimmed)
       ? ` re "${trimmed.slice(0, 30)}"`
       : "";
+    // Use business context if the LLM context builder loaded one
+    const biz = context?.business;
+    const bizName = typeof biz?.business_name === "string" ? biz.business_name.trim() : "";
+    const bizBit = bizName ? ` from ${bizName}` : "";
     if (lang === "hinglish") {
       replyText = echo
         ? `haan${nameBit}?${echo} — batao`
-        : `haan${nameBit}, bol?`;
+        : `haan${nameBit}${bizBit}, bol?`;
     } else {
       replyText = echo
         ? `yeah${nameBit}?${echo} — go on`
-        : `yeah${nameBit}, what's up?`;
+        : `yeah${nameBit}${bizBit}, what's up?`;
     }
     console.warn(`[LIB:ai:whatsapp] LLM did not return a valid reply — using fallback for message ${input.messageId}`);
   }
