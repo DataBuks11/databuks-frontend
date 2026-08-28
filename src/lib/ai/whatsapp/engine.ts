@@ -143,7 +143,8 @@ async function findOrCreateConversation(
   userId: string,
   leadId: string,
   pushName: string,
-  lastMessage: string
+  lastMessage: string,
+  remoteJid: string | null
 ): Promise<Record<string, any>> {
   const { data: existing } = await supabase
     .from("conversations")
@@ -155,7 +156,11 @@ async function findOrCreateConversation(
   if (existing) {
     await supabase
       .from("conversations")
-      .update({ last_message: lastMessage, updated_at: new Date().toISOString() })
+      .update({
+        last_message: lastMessage,
+        updated_at: new Date().toISOString(),
+        ...(remoteJid && !existing.remote_jid ? { remote_jid: remoteJid } : {}),
+      })
       .eq("id", existing.id);
     return existing;
   }
@@ -166,6 +171,7 @@ async function findOrCreateConversation(
       contact_name: pushName || "WhatsApp contact",
       platform: "whatsapp",
       lead_id: leadId,
+      remote_jid: remoteJid,
       last_message: lastMessage,
       status: "active",
     })
@@ -225,7 +231,8 @@ export async function processIncomingWhatsAppMessage(
     input.userId,
     lead.id,
     input.pushName ?? "",
-    input.text
+    input.text,
+    input.remoteJid
   );
 
   const { error: insertError } = await supabase.from("messages").insert({
