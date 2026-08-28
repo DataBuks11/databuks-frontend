@@ -110,6 +110,9 @@ export function buildConversationBlock(ctx: TaskContext): string {
 export interface PromptTemplate {
   system: string;
   user: string;
+  /** Cap response tokens — prevents large-default model 402-credit errors on
+   *  OpenRouter when the user account has limited balance. */
+  maxTokens?: number;
 }
 
 export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTemplate {
@@ -318,7 +321,7 @@ export function buildWebsiteScanPrompt(pages: { url: string; title: string; desc
     }),
   ].join("\n\n");
 
-  return { system, user };
+  return { system, user, maxTokens: 3500 };
 }
 
 export interface CorpusPage {
@@ -370,7 +373,7 @@ export function buildWebsiteFactsPrompt(pages: CorpusPage[], siteType: string = 
     }),
   ].join("\n\n");
 
-  return { system, user };
+  return { system, user, maxTokens: 2500 };
 }
 
 export function buildWebsiteSynthesisPrompt(
@@ -429,12 +432,12 @@ export function buildWebsiteSynthesisPrompt(
       business_signals: [{ signal: "string", evidence: "string or null", source_url: "string" }],
       brand_voice: ["string"],
       tone: "string or null",
-      competitors: [{ name: "string", website_url: "string or null", reason: "string or null", source_url: "string", evidence_quote: "string or null", evidence_type: "comparison_page|mentioned_on_website|outbound_link", confidence: 0.8 }],
+      competitors: [{ name: "string", website_url: "string or null", reason: "string or null", source_url: "string", evidence_quote: "string or null", evidence_type: "comparison_page|mentioned_on_website|outbound_link|industry_inference", confidence: 0.8 }],
       confidence: 0.8,
     }),
   ].join("\n\n");
 
-  return { system, user };
+  return { system, user, maxTokens: 3500 };
 }
 
 export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
