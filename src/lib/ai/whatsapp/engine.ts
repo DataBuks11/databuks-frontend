@@ -259,7 +259,7 @@ export async function processIncomingWhatsAppMessage(
       userId: input.userId,
       leadId: lead.id,
       conversationId: conversation.id,
-      messageLimit: 12,
+      messageLimit: 20,
     });
   } catch (err: any) {
     console.error(`[LIB:ai:whatsapp] context build failed: ${err?.message}`);

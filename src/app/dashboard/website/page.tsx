@@ -275,10 +275,10 @@ export default function WebsiteIntelligencePage() {
           if (json.status === "FAILED") {
             setError(json.error_message || "Website scan failed. Please try again.");
           }
-        } else if (attempts >= 240) {
+        } else if (attempts >= 450) {
           stopPolling();
           setScanning(false);
-          setError("Scan is taking too long (over 8 minutes). The free LLM is slow — please try again later or check server logs.");
+          setError("Scan is taking too long (over 15 minutes). The free LLM is slow — please try again later or check server logs.");
         }
       } catch {
         stopPolling();

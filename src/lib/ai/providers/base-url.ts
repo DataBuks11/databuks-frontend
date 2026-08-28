@@ -171,6 +171,8 @@ export interface ChatCompletionParams {
   maxTokens?: number;
   /** OpenRouter reasoning effort control — low = much faster for simple tasks */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Hard abort timeout in ms. Default 90s, max 5min, min 5s. */
+  timeoutMs?: number;
   providerLabel: string;
 }
 
@@ -180,30 +182,41 @@ export interface ChatCompletionParams {
  */
 export async function postChatCompletionJson(params: ChatCompletionParams): Promise<Record<string, any>> {
   const requestUrl = `${params.baseUrl}${CHAT_COMPLETIONS_PATH}`;
+  const timeoutMs = Math.max(5_000, Math.min(params.timeoutMs ?? 90_000, 300_000));
 
   let response: Response;
   try {
-    response = await fetch(requestUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${params.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: params.model,
-        messages: [
-          { role: "system", content: params.system },
-          { role: "user", content: params.user },
-        ],
-        temperature: params.temperature ?? 0.2,
-        response_format: { type: "json_object" },
-        ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
-        ...(params.reasoningEffort ? { reasoning: { effort: params.reasoningEffort } } : {}),
-      }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      response = await fetch(requestUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${params.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: params.model,
+          messages: [
+            { role: "system", content: params.system },
+            { role: "user", content: params.user },
+          ],
+          temperature: params.temperature ?? 0.2,
+          response_format: { type: "json_object" },
+          ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
+          ...(params.reasoningEffort ? { reasoning: { effort: params.reasoningEffort } } : {}),
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error: any) {
+    const msg = error?.name === "AbortError"
+      ? `request aborted after ${timeoutMs}ms`
+      : (error?.message ?? "unknown fetch error");
     throw new Error(
-      `${params.providerLabel} request failed for ${requestUrl}: ${error?.message ?? "unknown fetch error"}`
+      `${params.providerLabel} request failed for ${requestUrl}: ${msg}`
     );
   }
 

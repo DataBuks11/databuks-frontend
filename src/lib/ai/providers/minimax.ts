@@ -51,6 +51,7 @@ export class MiniMaxProvider implements AiProvider {
       temperature: input.temperature,
       maxTokens: input.maxTokens,
       reasoningEffort: input.reasoningEffort,
+      timeoutMs: input.timeoutMs,
       providerLabel: "MiniMax",
     });
   }

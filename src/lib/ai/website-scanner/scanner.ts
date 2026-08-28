@@ -96,31 +96,89 @@ async function analyzeWebsite(
   pages: CorpusPage[],
   socialLinks: { platform: string; url: string; source_url: string }[],
   siteType: string = "business"
-): Promise<{ analysis: Record<string, any>; mode: string }> {
+): Promise<{ analysis: Record<string, any>; mode: string; partial: boolean }> {
   const totalChars = pages.reduce((sum, page) => sum + page.text.length, 0);
   const needsMultiStage = totalChars > SINGLE_STAGE_MAX_CHARS || pages.length > SINGLE_STAGE_MAX_PAGES;
+  const SCAN_TIMEOUT_MS = 180_000; // 3 min per LLM call for big sites
+
+  // If anything goes wrong during analysis, fall back to a partial analysis
+  // built from the page titles + headings + first text blocks so the
+  // dashboard still has something useful to show.
+  function buildPartialAnalysis(reason: string): Record<string, any> {
+    const titles = pages
+      .map((p) => p.title?.trim())
+      .filter((t): t is string => !!t && t.length > 0)
+      .slice(0, 20);
+    const headings = pages.flatMap((p) => p.headings ?? []).filter((h) => !!h).slice(0, 30);
+    return {
+      business_name: null,
+      tagline: null,
+      overview: `Partial scan — ${reason}. ${titles.length} pages and ${headings.length} headings were extracted; the AI analysis timed out.`,
+      services: [],
+      products: [],
+      target_customers: [],
+      industries: [],
+      problems_solved: [],
+      value_proposition: null,
+      offers: [],
+      pricing: [],
+      locations: [],
+      social_profiles: socialLinks.length > 0 ? socialLinks.map((s) => ({ platform: s.platform, url: s.url, source_url: s.source_url })) : [],
+      case_studies: [],
+      testimonials: [],
+      contact_info: null,
+      content_themes: titles.slice(0, 10).map((title) => ({ title, description: null, source_url: null })),
+      business_signals: [],
+      brand_voice: [],
+      tone: null,
+      competitors: [],
+      confidence: 0.2,
+      _partial: true,
+      _partial_reason: reason,
+      _partial_pages_analyzed: pages.length,
+      _partial_titles: titles,
+      _partial_headings: headings,
+    } as any;
+  }
 
   if (!needsMultiStage) {
     const prompt = buildWebsiteScanPrompt(pages, socialLinks, siteType);
-    const raw = await provider.completeJson(prompt);
-    const validation = validateAiOutput(websiteAnalysisSchema, raw);
-    if (!validation.success) {
-      throw new Error(`AI analysis produced invalid output: ${validation.issues.slice(0, 5).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+    try {
+      const raw = await provider.completeJson({ ...prompt, timeoutMs: SCAN_TIMEOUT_MS });
+      const validation = validateAiOutput(websiteAnalysisSchema, raw);
+      if (!validation.success) {
+        // Save partial — don't fail the whole scan
+        return { analysis: buildPartialAnalysis("LLM returned invalid JSON"), mode: "single-stage", partial: true };
+      }
+      return { analysis: validation.data as Record<string, any>, mode: "single-stage", partial: false };
+    } catch (err: any) {
+      console.error(`[LIB:ai:website-scanner] single-stage LLM failed: ${err?.message}`);
+      return { analysis: buildPartialAnalysis(`LLM call failed: ${err?.message?.slice(0, 120)}`), mode: "single-stage", partial: true };
     }
-    return { analysis: validation.data as Record<string, any>, mode: "single-stage" };
   }
 
   const chunks = chunkCorpus(pages);
   const allFacts: Record<string, any>[] = [];
   const pagesUsed = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  let factExtractionFailed = false;
   for (const chunk of chunks) {
     const factsPrompt = buildWebsiteFactsPrompt(chunk, siteType);
-    const rawFacts = await provider.completeJson(factsPrompt);
-    const factsValidation = validateAiOutput(websiteFactsSchema, rawFacts);
-    if (!factsValidation.success) {
-      throw new Error(`Fact extraction produced invalid output: ${factsValidation.issues.slice(0, 5).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+    try {
+      const rawFacts = await provider.completeJson({ ...factsPrompt, timeoutMs: SCAN_TIMEOUT_MS });
+      const factsValidation = validateAiOutput(websiteFactsSchema, rawFacts);
+      if (!factsValidation.success) {
+        factExtractionFailed = true;
+        break;
+      }
+      allFacts.push(...(factsValidation.data.facts as Record<string, any>[]));
+    } catch (err: any) {
+      console.error(`[LIB:ai:website-scanner] facts extraction failed: ${err?.message}`);
+      factExtractionFailed = true;
+      break;
     }
-    allFacts.push(...(factsValidation.data.facts as Record<string, any>[]));
+  }
+  if (factExtractionFailed) {
+    return { analysis: buildPartialAnalysis("LLM fact extraction timed out / failed"), mode: "multi-stage", partial: true };
   }
   const corpusCoverage = pagesUsed < pages.length ? { pages_used: pagesUsed, pages_total: pages.length } : null;
 
@@ -138,12 +196,17 @@ async function analyzeWebsite(
     siteType,
     corpusCoverage ? ` (coverage: ${corpusCoverage.pages_used}/${corpusCoverage.pages_total} pages analyzed)` : undefined
   );
-  const rawAnalysis = await provider.completeJson(synthesisPrompt);
-  const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
-  if (!analysisValidation.success) {
-    throw new Error(`Business synthesis produced invalid output: ${analysisValidation.issues.slice(0, 5).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+  try {
+    const rawAnalysis = await provider.completeJson({ ...synthesisPrompt, timeoutMs: SCAN_TIMEOUT_MS });
+    const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
+    if (!analysisValidation.success) {
+      return { analysis: buildPartialAnalysis("LLM synthesis produced invalid JSON"), mode: `multi-stage (${chunks.length} chunks, ${dedupedFacts.length} facts)`, partial: true };
+    }
+    return { analysis: analysisValidation.data as Record<string, any>, mode: `multi-stage (${chunks.length} chunks, ${dedupedFacts.length} facts)`, partial: false };
+  } catch (err: any) {
+    console.error(`[LIB:ai:website-scanner] synthesis failed: ${err?.message}`);
+    return { analysis: buildPartialAnalysis(`LLM synthesis failed: ${err?.message?.slice(0, 120)}`), mode: `multi-stage (${chunks.length} chunks, ${dedupedFacts.length} facts)`, partial: true };
   }
-  return { analysis: analysisValidation.data as Record<string, any>, mode: `multi-stage (${chunks.length} chunks, ${dedupedFacts.length} facts)` };
 }
 
 async function storeScanPages(supabase: any, scanId: string, userId: string, pages: any[]): Promise<void> {
@@ -276,7 +339,7 @@ export async function finalizeScanFromStoredPages(
       }))
     );
     const socialLinks: { platform: string; url: string; source_url: string }[] = [];
-    const { analysis, mode } = await analyzeWebsite(provider, corpus, socialLinks, siteType);
+    const { analysis, mode, partial } = await analyzeWebsite(provider, corpus, socialLinks, siteType);
 
     const results = {
       ...analysis,
@@ -301,7 +364,7 @@ export async function finalizeScanFromStoredPages(
       model_version: provider.modelVersion,
       prompt_version: WEBSITE_SCAN_PROMPT_VERSION,
       analysis_mode: mode,
-      partial: false,
+      partial: partial === true,
     };
 
     let contextSyncError: string | null = null;
@@ -312,12 +375,12 @@ export async function finalizeScanFromStoredPages(
       contextSyncError = error?.message ?? "unknown context sync error";
     }
 
-    await setScanStatus(supabase, scanId, "COMPLETED", {
+    await setScanStatus(supabase, scanId, partial ? "PARTIAL" : "COMPLETED", {
       results,
       pages_crawled: pages.length,
       pages_discovered: scan.pages_discovered ?? pages.length,
       pages_rendered: renderedCount,
-      error_message: null,
+      error_message: partial ? "Partial scan — LLM timed out, see results._partial_reason" : null,
       context_synced_at: contextUpdated ? new Date().toISOString() : null,
       completed_at: new Date().toISOString(),
     });

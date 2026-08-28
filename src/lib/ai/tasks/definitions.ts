@@ -48,6 +48,8 @@ export interface TaskDefinition {
   maxTokens?: number;
   /** Lower reasoning effort = faster responses for real-time tasks */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Per-task hard timeout (ms) — applied to the LLM HTTP call */
+  timeoutMs?: number;
 }
 
 export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
@@ -150,6 +152,7 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     // Real-time chat: cap tokens + low reasoning effort for sub-10s replies
     maxTokens: 200,
     reasoningEffort: "low",
+    timeoutMs: 25_000,
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },
