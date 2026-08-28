@@ -259,7 +259,7 @@ export async function processIncomingWhatsAppMessage(
       userId: input.userId,
       leadId: lead.id,
       conversationId: conversation.id,
-      messageLimit: 20,
+      messageLimit: 30,
     });
   } catch (err: any) {
     console.error(`[LIB:ai:whatsapp] context build failed: ${err?.message}`);
@@ -755,7 +755,7 @@ export async function runBackgroundWhatsAppIntelligence(
     } catch {}
   }
 
-  if (messageCount > 0 && messageCount % 20 === 0) {
+  if (messageCount > 0 && (messageCount === 5 || messageCount % 10 === 0)) {
     try {
       await runAiTask(supabase, {
         userId,
