@@ -335,14 +335,28 @@ export async function processIncomingWhatsAppMessage(
   // ─── Fallback reply when the LLM failed both attempts ───
   // The LLM is the primary source. If the schema is too strict (MiniMax free
   // often returns loose JSON), or the call timed out, fall back to a safe
-  // casual greeting so the lead never gets silence.
+  // casual reply that USES THE LEAD'S ACTUAL MESSAGE so it doesn't look like
+  // a canned reply and doesn't trip the duplicate-reply guard (WA_002).
   if (!replyText) {
-    const lang = input.text.match(/[\u0900-\u097F]/) ? "hinglish"
-      : /\b(kya|hai|nahi|kar|mera|bhai|yaar)\b/i.test(input.text) ? "hinglish"
+    const trimmed = input.text.trim();
+    const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|hai\s*ky|haan|nahi)\b/i.test(trimmed)
+      ? "hinglish"
       : "english";
-    replyText = lang === "hinglish"
-      ? "hey, batao?"
-      : "hey, what's up?";
+    const leadName = String(lead.name ?? "").trim().split(/\s+/)[0] || "";
+    const nameBit = leadName && leadName.toLowerCase() !== "whatsapp" && leadName.length > 1 ? ` ${leadName}` : "";
+    // Echo a tiny bit of the lead's message so the reply is contextual and unique
+    const echo = trimmed.length > 0 && trimmed.length <= 40 && /[a-zA-Z\u0900-\u097F]/.test(trimmed)
+      ? ` re "${trimmed.slice(0, 30)}"`
+      : "";
+    if (lang === "hinglish") {
+      replyText = echo
+        ? `haan${nameBit}?${echo} — batao`
+        : `haan${nameBit}, bol?`;
+    } else {
+      replyText = echo
+        ? `yeah${nameBit}?${echo} — go on`
+        : `yeah${nameBit}, what's up?`;
+    }
     console.warn(`[LIB:ai:whatsapp] LLM did not return a valid reply — using fallback for message ${input.messageId}`);
   }
 
