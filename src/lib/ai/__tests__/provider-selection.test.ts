@@ -1,31 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getActiveProvider, resetActiveProviderForTests } from "@/lib/ai/providers";
-import { OxAlphaProvider } from "@/lib/ai/providers/ox-alpha";
-import { DeepSeekProvider } from "@/lib/ai/providers/deepseek";
-
-const ENV_KEYS = [
-  "OX_ALPHA_API_KEY",
-  "OX_ALPHA_BASE_URL",
-  "OX_ALPHA_MODEL",
-  "DEEPSEEK_API_KEY",
-  "DEEPSEEK_MODEL",
-  "DEEPSEEK_BASE_URL",
-] as const;
+import { MiniMaxProvider } from "@/lib/ai/providers/minimax";
 
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
   savedEnv = {};
-  for (const key of ENV_KEYS) {
+  for (const key of ["OX_ALPHA_API_KEY", "OX_ALPHA_BASE_URL", "OX_ALPHA_MODEL", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "MINIMAX_MODEL"]) {
     savedEnv[key] = process.env[key];
     delete process.env[key];
   }
+  // Default: MiniMax needs an OpenRouter key to authenticate
+  process.env.OX_ALPHA_API_KEY = "test-railway-key";
   resetActiveProviderForTests();
 });
 
 afterEach(() => {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
+  for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
@@ -34,54 +25,30 @@ afterEach(() => {
 });
 
 describe("provider selection", () => {
-  it("selects Ox Alpha when correctly configured", () => {
+  it("always selects MiniMax (no other providers)", () => {
+    expect(getActiveProvider().id).toBe("minimax");
+  });
+
+  it("selects MiniMax even when Ox Alpha env is set (ignored)", () => {
     process.env.OX_ALPHA_API_KEY = "test-key";
     process.env.OX_ALPHA_BASE_URL = "https://openrouter.ai/api/v1";
-    expect(getActiveProvider().id).toBe("ox_alpha");
+    expect(getActiveProvider().id).toBe("minimax");
   });
 
-  it("fails LOUDLY (no silent fallback) when Ox Alpha base URL is malformed", () => {
-    process.env.OX_ALPHA_API_KEY = "test-key";
-    // exact production bug: value contains the variable name prefix
-    process.env.OX_ALPHA_BASE_URL =
-      "OX_ALPHA_BASE_URL=https://openrouter.ai/api/v1/chat/completions";
-    let provider: { id: string };
-    expect(() => {
-      provider = getActiveProvider();
-    }).not.toThrow(); // self-heals the KEY=VALUE paste + endpoint suffix
-    expect(provider!.id).toBe("ox_alpha");
-  });
-
-  it("fails clearly when base URL is set but API key is missing", () => {
-    process.env.OX_ALPHA_BASE_URL = "https://openrouter.ai/api/v1";
-    expect(() => new OxAlphaProvider()).toThrow(/OX_ALPHA_API_KEY is not configured/);
-  });
-
-  it("fails clearly when API key is set but base URL is missing", () => {
-    process.env.OX_ALPHA_API_KEY = "test-key";
-    expect(() => new OxAlphaProvider()).toThrow(/OX_ALPHA_BASE_URL is not configured/);
-  });
-
-  it("fails on truly unparseable Ox Alpha URL instead of constructing an invalid request", () => {
-    process.env.OX_ALPHA_API_KEY = "test-key";
-    process.env.OX_ALPHA_BASE_URL = "openrouter.ai/api/v1"; // no protocol
-    expect(() => new OxAlphaProvider()).toThrow(/OX_ALPHA_BASE_URL is malformed/);
-  });
-
-  it("falls back to DeepSeek only when Ox Alpha is entirely unconfigured", () => {
+  it("selects MiniMax even when DeepSeek env is set (ignored)", () => {
     process.env.DEEPSEEK_API_KEY = "test-key";
-    expect(getActiveProvider().id).toBe("deepseek");
+    expect(getActiveProvider().id).toBe("minimax");
   });
 
-  it("throws a clear error when no provider is configured at all", () => {
-    // With the free MiniMax fallback wired in, the "no provider" path now
-    // surfaces as a missing-API-key error from the MiniMax constructor.
+  it("throws a clear error when OX_ALPHA_API_KEY is missing (needed for OpenRouter auth)", () => {
+    delete process.env.OX_ALPHA_API_KEY;
+    resetActiveProviderForTests();
     expect(() => getActiveProvider()).toThrow(/OX_ALPHA_API_KEY is not configured/);
   });
 });
 
 describe("endpoint construction", () => {
-  it("requests exactly baseUrl + /chat/completions once", async () => {
+  it("MiniMax hits the OpenRouter chat completions endpoint", async () => {
     const fetchMock = vi.fn(async (_url: string) =>
       new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), {
         status: 200,
@@ -89,9 +56,8 @@ describe("endpoint construction", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new OxAlphaProvider({
+    const provider = new MiniMaxProvider({
       OX_ALPHA_API_KEY: "secret-do-not-log",
-      OX_ALPHA_BASE_URL: "https://openrouter.ai/api/v1/",
     } as unknown as NodeJS.ProcessEnv);
 
     const out = await provider.completeJson({ system: "s", user: "u" });
@@ -103,7 +69,8 @@ describe("endpoint construction", () => {
     expect(url).not.toContain("chat/completions/chat/completions");
   });
 
-  it("DeepSeek uses default base URL and appends the endpoint", async () => {
+  it("MiniMax honours MINIMAX_MODEL env override", async () => {
+    process.env.MINIMAX_MODEL = "minimax/minimax-m3:free";
     const fetchMock = vi.fn(async (_url: string) =>
       new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":1}' } }] }), {
         status: 200,
@@ -111,13 +78,15 @@ describe("endpoint construction", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new DeepSeekProvider({
-      DEEPSEEK_API_KEY: "k",
+    const provider = new MiniMaxProvider({
+      OX_ALPHA_API_KEY: "k",
+      MINIMAX_MODEL: "minimax/minimax-m3:free",
     } as unknown as NodeJS.ProcessEnv);
 
     await provider.completeJson({ system: "s", user: "u" });
-    const url = fetchMock.mock.calls[0][0] as string;
-    expect(url).toBe("https://api.deepseek.com/chat/completions");
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(call[1]?.body ?? "{}"));
+    expect(body.model).toBe("minimax/minimax-m3:free");
   });
 
   it("transport errors include the request URL but never the API key", async () => {
@@ -126,9 +95,8 @@ describe("endpoint construction", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new OxAlphaProvider({
+    const provider = new MiniMaxProvider({
       OX_ALPHA_API_KEY: "sk-super-secret-value",
-      OX_ALPHA_BASE_URL: "https://openrouter.ai/api/v1",
     } as unknown as NodeJS.ProcessEnv);
 
     await expect(provider.completeJson({ system: "s", user: "u" })).rejects.toThrow(
