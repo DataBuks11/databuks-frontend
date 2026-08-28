@@ -339,14 +339,10 @@ describe("WhatsApp fast reply path", () => {
     expect(state.decisions.some((d) => d.task_type === "SEND_WHATSAPP_REPLY" && d.action_status === "SENT")).toBe(true);
   });
 
-  it("greeting fast path: one LLM call only, no qualification/enrichment before reply", async () => {
+  it("greeting fast path: instant pre-cached reply, no LLM call needed", async () => {
     const state = makeState();
     const supabase = makeMockSupabase(state);
     const sendFn = vi.fn(async () => {});
-
-    runAiTaskMock.mockResolvedValueOnce(
-      mockWhatsAppReply({ reply: "Hey! What's up? What are you looking to get done?" })
-    );
 
     await processIncomingWhatsAppMessage(
       supabase,
@@ -354,11 +350,14 @@ describe("WhatsApp fast reply path", () => {
       { sendFn }
     );
 
+    // Pre-cached path: no LLM task is created for trivial greetings
     const taskTypes = runAiTaskMock.mock.calls.map((call: any[]) => call[1].taskType);
-    expect(taskTypes).toEqual(["GENERATE_WHATSAPP_REPLY"]);
+    expect(taskTypes).not.toContain("GENERATE_WHATSAPP_REPLY");
     expect(taskTypes).not.toContain("QUALIFY_LEAD");
     expect(taskTypes).not.toContain("ENRICH_LEAD");
     expect(sendFn).toHaveBeenCalledTimes(1);
+    // Reply was a pre-cached greeting
+    expect(sendFn.mock.calls[0][0].message).toMatch(/hey/i);
   });
 
   it("is idempotent: duplicate webhook retries do not send twice", async () => {

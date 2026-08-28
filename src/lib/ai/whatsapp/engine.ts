@@ -289,11 +289,39 @@ export async function processIncomingWhatsAppMessage(
   let meetingIntentDetected = false;
   let language = "other";
 
+  // ─── Fast-path: pre-cached replies for trivial messages ───
+  // Skip the slow LLM call (10-40s on MiniMax free) for very common,
+  // low-stakes messages. Lead still gets a real reply, just instantly.
+  let usedFastPath = false;
+  const trimmed = input.text.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length === 0) {
+    replyText = ""; // no text, skip everything
+    usedFastPath = true;
+  } else if (/^(hi+|hlo+|hlw+|hello+|hey+|heyy*|heya+|yo+|sup|hola|namaste|namaskar|good\s*(morning|evening|afternoon|night))\s*[!.,]*$/i.test(trimmed)) {
+    // Greeting: short, casual, human-feeling (no LLM)
+    replyText = "hey, what's up?";
+    usedFastPath = true;
+  } else if (/^(thanks|thank\s*you|ty|thx|thnx|ok(ay)?|cool|great|awesome|done|got\s*it|sure|alright|ji|haan)\s*[!.,]*$/i.test(trimmed)) {
+    replyText = "👍";
+    usedFastPath = true;
+  } else if (/^bye|byeee+|see\s*ya|cya|talk\s*later|gn\s*$/i.test(trimmed)) {
+    replyText = "👋";
+    usedFastPath = true;
+  } else if (trimmed.length <= 4 && /^[a-z0-9]+$/i.test(trimmed)) {
+    // Single short token (e.g. "ok", "hi", "yo") — already handled above usually
+    replyText = "👍";
+    usedFastPath = true;
+  }
+  if (usedFastPath) {
+    console.log(`[LIB:ai:whatsapp] fast-path used for "${trimmed.slice(0, 30)}" — skipping LLM`);
+  }
+
   try {
     await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "composing" });
   } catch {}
 
-  if (context) {
+  if (!usedFastPath && context) {
     try {
       // First attempt — provider handles network retries internally.
       let replyTask = await runAiTask(supabase, {
