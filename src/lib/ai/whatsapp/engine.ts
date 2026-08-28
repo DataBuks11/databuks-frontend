@@ -414,7 +414,7 @@ export async function processIncomingWhatsAppMessage(
     const bizDesc = typeof biz?.description === "string" ? biz.description.trim() : "";
     const lower = trimmed.toLowerCase();
     const asksWhatWeDo = /\b(what\s*(is|do|are)|kya\s*(hai|kar|ho|karti|krte)|tell\s*me\s*about|kaun\s*ho|who\s*are\s*you|kya\s*karta)\b/i.test(lower);
-    const asksProducts = /\b(products?|service|offer|features?|kaun\s*se\s*services?|kaunsa)\b/i.test(lower);
+    const asksProducts = /\b(products?|services?|service|offer|features?|kaun\s*se\s*services?|kaunsa|what\s*do\s*you\s*do|what\s*do\s*you\s*offer)\b/i.test(lower);
     const asksPrice = /\b(price|pricing|cost|charge|kitna|kya\s*price|kharcha|kitne\s*ka|kitne\s*ki)\b/i.test(lower);
     const asksLocation = /\b(where|location|address|kahan|office|studio)\b/i.test(lower);
     const askName = /\b(your\s*name|company\s*name|firm\s*name|tumhara\s*naam|tum\s*kaun|tumhe|konsi\s*company)\b/i.test(lower);
