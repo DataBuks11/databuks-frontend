@@ -909,6 +909,11 @@ process.on("unhandledRejection", (reason) => {
 // Next.js engine detects a "remind me in 5 min" style message, it calls
 // /schedule-reminder here and we setTimeout to send the message at the
 // right time. Persisted to Supabase as a backup + audit trail.
+function requireApiKey(req, res, next) {
+  const key = req.headers["x-api-key"];
+  if (key !== API_KEY) return res.status(401).json({ ok: false, error: "unauthorized" });
+  next();
+}
 const reminderTimers = new Map(); // reminderId -> { timer, jid, message, userId }
 async function loadPendingReminders() {
   if (!supabase) return;
@@ -978,7 +983,7 @@ async function fireReminder(r) {
   }
 }
 
-app.post("/schedule-reminder", requireKey, async (req, res) => {
+app.post("/schedule-reminder", requireApiKey, async (req, res) => {
   try {
     const { id, user_id: userId, remote_jid: jid, message_text: message, send_at: sendAt } = req.body ?? {};
     if (!id || !jid || !message || !sendAt) {
@@ -991,7 +996,7 @@ app.post("/schedule-reminder", requireKey, async (req, res) => {
   }
 });
 
-app.delete("/schedule-reminder/:id", requireKey, async (req, res) => {
+app.delete("/schedule-reminder/:id", requireApiKey, async (req, res) => {
   const id = req.params.id;
   const entry = reminderTimers.get(id);
   if (entry?.timer) clearTimeout(entry.timer);
