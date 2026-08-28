@@ -269,6 +269,30 @@ export async function processIncomingWhatsAppMessage(
         if (r) {
           reminderScheduled = { sendAt: r.send_at, id: r.id };
           console.log(`[LIB:ai:whatsapp] reminder scheduled for ${r.send_at} (id=${r.id})`);
+          // Hand off to Baileys server for actual timer-based dispatch
+          // (Vercel Hobby only supports daily crons, so we use an in-process
+          // setTimeout inside the long-running Baileys server instead)
+          const baileyBase = process.env.BAILEYS_SERVER_URL;
+          if (baileyBase) {
+            try {
+              await fetch(`${baileyBase.replace(/\/+$/, "")}/schedule-reminder`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": process.env.BAILEYS_API_KEY || "dev-key",
+                },
+                body: JSON.stringify({
+                  id: r.id,
+                  user_id: input.userId,
+                  remote_jid: input.remoteJid,
+                  message_text: reminderMsg,
+                  send_at: r.send_at,
+                }),
+              });
+            } catch (err: any) {
+              console.warn(`[LIB:ai:whatsapp] Baileys handoff failed: ${err?.message}`);
+            }
+          }
         }
       }
     }

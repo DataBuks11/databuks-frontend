@@ -20,10 +20,6 @@
     {
       "path": "/api/cron/auto-comment",
       "schedule": "0 15 * * *"
-    },
-    {
-      "path": "/api/cron/reminders",
-      "schedule": "* * * * *"
     }
   ]
 }

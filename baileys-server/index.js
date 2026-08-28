@@ -904,6 +904,101 @@ process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] Unhandled Rejection:", reason);
 });
 
+// ─── Reminder scheduler ───
+// In-process timer-based scheduler for WhatsApp follow-ups. When the
+// Next.js engine detects a "remind me in 5 min" style message, it calls
+// /schedule-reminder here and we setTimeout to send the message at the
+// right time. Persisted to Supabase as a backup + audit trail.
+const reminderTimers = new Map(); // reminderId -> { timer, jid, message, userId }
+async function loadPendingReminders() {
+  if (!supabase) return;
+  try {
+    const { data: pending } = await supabase
+      .from("reminders")
+      .select("id, user_id, remote_jid, message_text, send_at")
+      .eq("status", "pending")
+      .lte("send_at", new Date(Date.now() + 24 * 3600 * 1000).toISOString())
+      .limit(100);
+    for (const r of pending ?? []) {
+      scheduleReminderInternal(r);
+    }
+    if ((pending ?? []).length > 0) {
+      console.log(`[Reminder] loaded ${(pending ?? []).length} pending reminders from DB`);
+    }
+  } catch (err) {
+    console.error("[Reminder] load failed:", err.message);
+  }
+}
+function scheduleReminderInternal(r) {
+  const sendAt = new Date(r.send_at).getTime();
+  const delay = sendAt - Date.now();
+  if (delay <= 0) {
+    // Already due — fire immediately
+    fireReminder(r);
+    return;
+  }
+  if (delay > 24 * 3600 * 1000) {
+    // Too far out — ignore, will be reloaded later
+    return;
+  }
+  // Clear any existing timer for this id
+  const existing = reminderTimers.get(r.id);
+  if (existing?.timer) clearTimeout(existing.timer);
+  const timer = setTimeout(() => fireReminder(r), delay);
+  reminderTimers.set(r.id, { timer, jid: r.remote_jid, message: r.message_text, userId: r.user_id });
+  console.log(`[Reminder] scheduled id=${r.id} in ${Math.round(delay/1000)}s to ${r.remote_jid}`);
+}
+async function fireReminder(r) {
+  try {
+    // Find any active session that can send (use the first connected one for simplicity)
+    const session = [...sessions.values()].find((s) => s?.socket);
+    if (!session?.socket) {
+      console.warn(`[Reminder] fire failed — no active WhatsApp session: id=${r.id}`);
+      return;
+    }
+    const jid = r.remote_jid.includes("@") ? r.remote_jid : `${r.remote_jid.replace(/\D/g, "")}@s.whatsapp.net`;
+    await session.socket.sendMessage(jid, { text: r.message_text });
+    console.log(`[Reminder] fired id=${r.id} → ${jid}`);
+    if (supabase) {
+      await supabase
+        .from("reminders")
+        .update({ status: "sent", sent_at: new Date().toISOString() })
+        .eq("id", r.id);
+    }
+  } catch (err) {
+    console.error(`[Reminder] fire failed id=${r.id}:`, err.message);
+    if (supabase) {
+      await supabase
+        .from("reminders")
+        .update({ status: "failed", error_message: String(err?.message ?? err) })
+        .eq("id", r.id);
+    }
+  } finally {
+    reminderTimers.delete(r.id);
+  }
+}
+
+app.post("/schedule-reminder", requireKey, async (req, res) => {
+  try {
+    const { id, user_id: userId, remote_jid: jid, message_text: message, send_at: sendAt } = req.body ?? {};
+    if (!id || !jid || !message || !sendAt) {
+      return res.status(400).json({ ok: false, error: "id, remote_jid, message_text, send_at required" });
+    }
+    scheduleReminderInternal({ id, user_id: userId, remote_jid: jid, message_text: message, send_at: sendAt });
+    res.json({ ok: true, scheduled: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message ?? "failed" });
+  }
+});
+
+app.delete("/schedule-reminder/:id", requireKey, async (req, res) => {
+  const id = req.params.id;
+  const entry = reminderTimers.get(id);
+  if (entry?.timer) clearTimeout(entry.timer);
+  reminderTimers.delete(id);
+  res.json({ ok: true, cancelled: !!entry });
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Baileys server running on port ${PORT}`);
   console.log(`   Supabase: ${SUPABASE_URL ? "Connected" : "NOT configured"}`);
@@ -912,6 +1007,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   Health: http://0.0.0.0:${PORT}/health`);
 
   autoRestoreSessions();
+  loadPendingReminders();
 });
 
 async function autoRestoreSessions() {
