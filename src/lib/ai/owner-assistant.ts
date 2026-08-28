@@ -316,6 +316,26 @@ export async function handleOwnerWhatsAppCommand(
   // Greetings skip the LLM entirely — instant snapshot reply.
   if (intent === "CHAT" && !isGreeting) intent = await llmIntent(text);
 
+  // ─── Greeting fast-path: no LLM, no fallback delay ───
+  // When the owner just says "hi" / "hey" / etc., the snapshot is a much
+  // better reply than "yeah, what's up?" because it actually carries useful
+  // data about leads / meetings / posts. Static, fast (<500ms).
+  if (isGreeting && intent === "CHAT") {
+    const snapshot = await gatherOwnerSnapshot(supabase, userId);
+    return pick(lang,
+      `hey 👋 here's where things stand right now:\n` +
+        `• Leads: ${snapshot.leadsTotal} total, ${snapshot.leadsNew} new, ${snapshot.leadsQualifiedStage} qualified\n` +
+        `• Meetings: ${snapshot.meetingsScheduled} booked, ${snapshot.meetingsUpcoming} upcoming\n` +
+        `• Content: ${snapshot.postsPublishedToday} posted today, ${snapshot.postsDraft} drafts, ${snapshot.postsScheduled} scheduled\n` +
+        `Anything specific you want to dig into? "help" lists all commands.`,
+      `hey 👋 abhi ye chal raha hai:\n` +
+        `• Leads: ${snapshot.leadsTotal} total, ${snapshot.leadsNew} nayi, ${snapshot.leadsQualifiedStage} qualified\n` +
+        `• Meetings: ${snapshot.meetingsScheduled} booked, ${snapshot.meetingsUpcoming} upcoming\n` +
+        `• Content: ${snapshot.postsPublishedToday} aaj post hue, ${snapshot.postsDraft} drafts, ${snapshot.postsScheduled} scheduled\n` +
+        `Kuch specific jaanna hai? "help" me saare commands hain.`
+    );
+  }
+
   const snapshot = await gatherOwnerSnapshot(supabase, userId);
   let reply: string;
 
