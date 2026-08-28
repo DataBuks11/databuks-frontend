@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, X, Send, Loader2 } from "lucide-react";
+import { MessageCircle, X, Send, Loader2, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -18,6 +18,7 @@ export default function AssistantChatWidget() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sendToWhatsApp, setSendToWhatsApp] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,10 +35,11 @@ export default function AssistantChatWidget() {
       const res = await fetch("/api/ai/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ message: msg, sendToWhatsApp }),
       });
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", text: data.reply ?? data.error ?? "Something went wrong, please try again." }]);
+      const tail = data.sentToWhatsApp ? " (sent to WhatsApp ✅)" : "";
+      setMessages((prev) => [...prev, { role: "assistant", text: (data.reply ?? data.error ?? "Something went wrong, please try again.") + tail }]);
     } catch {
       setMessages((prev) => [...prev, { role: "assistant", text: "Network issue — please try again." }]);
     } finally {
@@ -117,12 +119,28 @@ export default function AssistantChatWidget() {
 
           {/* Input */}
           <div className="px-3 pb-3">
+            <div className="flex items-center gap-1 mb-1.5">
+              <button
+                onClick={() => setSendToWhatsApp((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full transition-colors",
+                  sendToWhatsApp
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    : "bg-white/[0.04] text-white/40 border border-white/10 hover:text-white/60"
+                )}
+                title={sendToWhatsApp ? "Messages will be sent to your WhatsApp" : "Click to also send to WhatsApp"}
+                disabled={loading}
+              >
+                <Phone className="w-2.5 h-2.5" />
+                {sendToWhatsApp ? "WhatsApp on" : "Web only"}
+              </button>
+            </div>
             <div className="flex items-center gap-2 bg-white/[0.06] rounded-full px-4 py-2 border border-white/10">
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") send(input); }}
-                placeholder="Message..."
+                placeholder={sendToWhatsApp ? "Message → WhatsApp..." : "Message..."}
                 className="flex-1 bg-transparent text-sm text-white placeholder:text-white/30 outline-none"
               />
               <button onClick={() => send(input)} disabled={loading || !input.trim()} className="disabled:opacity-40">
