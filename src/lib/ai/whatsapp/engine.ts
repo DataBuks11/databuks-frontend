@@ -332,6 +332,20 @@ export async function processIncomingWhatsAppMessage(
     }
   }
 
+  // ─── Fallback reply when the LLM failed both attempts ───
+  // The LLM is the primary source. If the schema is too strict (MiniMax free
+  // often returns loose JSON), or the call timed out, fall back to a safe
+  // casual greeting so the lead never gets silence.
+  if (!replyText) {
+    const lang = input.text.match(/[\u0900-\u097F]/) ? "hinglish"
+      : /\b(kya|hai|nahi|kar|mera|bhai|yaar)\b/i.test(input.text) ? "hinglish"
+      : "english";
+    replyText = lang === "hinglish"
+      ? "hey, batao?"
+      : "hey, what's up?";
+    console.warn(`[LIB:ai:whatsapp] LLM did not return a valid reply — using fallback for message ${input.messageId}`);
+  }
+
   // ─── Human takeover / double-send guard ───
   // Only block the AI reply if the owner JUST messaged this lead AFTER the
   // inbound we're processing (i.e. owner raced to reply manually). The previous
