@@ -312,6 +312,34 @@ export async function processIncomingWhatsAppMessage(
     // Single short token (e.g. "ok", "hi", "yo") — already handled above usually
     replyText = "👍";
     usedFastPath = true;
+  } else if (/^\[(image|video|audio|document|sticker|contact|location)\]\s*$/i.test(trimmed)) {
+    // Media received — instant human acknowledgment, no LLM
+    const m = trimmed.match(/^\[(\w+)\]/i);
+    const kind = (m?.[1] ?? "file").toLowerCase();
+    const biz = context?.business;
+    const bizName = typeof biz?.business_name === "string" ? biz.business_name.trim() : "";
+    const bizBit = bizName ? ` from ${bizName}` : "";
+    const map: Record<string, { en: string; hi: string }> = {
+      image: { en: "got the photo", hi: "photo mil gaya" },
+      video: { en: "got the video", hi: "video mil gaya" },
+      audio: { en: "got the voice note", hi: "voice note mil gaya" },
+      document: { en: "got the file", hi: "file mil gaya" },
+      sticker: { en: "nice sticker", hi: "nice sticker" },
+      contact: { en: "got the contact", hi: "contact mil gaya" },
+      location: { en: "got the location", hi: "location mil gaya" },
+    };
+    const ph = map[kind] ?? { en: "got it", hi: "mil gaya" };
+    const isHinglish = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|mila|mile|ho)\b/i.test(trimmed);
+    if (kind === "image" || kind === "video" || kind === "document" || kind === "audio") {
+      replyText = isHinglish
+        ? `${ph.hi}${bizBit} — dekh ke bata kya karna hai?`
+        : `${ph.en}${bizBit} — what do you want me to do with it?`;
+    } else if (kind === "sticker") {
+      replyText = isHinglish ? "😂" : "😂";
+    } else {
+      replyText = isHinglish ? `${ph.hi}${bizBit}` : `${ph.en}${bizBit}`;
+    }
+    usedFastPath = true;
   }
   if (usedFastPath) {
     console.log(`[LIB:ai:whatsapp] fast-path used for "${trimmed.slice(0, 30)}" — skipping LLM`);

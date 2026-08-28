@@ -357,7 +357,8 @@ describe("WhatsApp fast reply path", () => {
     expect(taskTypes).not.toContain("ENRICH_LEAD");
     expect(sendFn).toHaveBeenCalledTimes(1);
     // Reply was a pre-cached greeting
-    expect(sendFn.mock.calls[0][0].message).toMatch(/hey/i);
+    const sentMessage = (sendFn.mock.calls[0] as any[])[0]?.message as string;
+    expect(sentMessage).toMatch(/hey/i);
   });
 
   it("is idempotent: duplicate webhook retries do not send twice", async () => {
