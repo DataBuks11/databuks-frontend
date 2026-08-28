@@ -261,3 +261,35 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
 
   return parsed as Record<string, any>;
 }
+
+/**
+ * Chat-completion with automatic retry on transient failures (network errors,
+ * 429 rate limit, 5xx server errors, empty/malformed JSON response). Up to
+ * 3 attempts total with exponential backoff. Hard timeout per attempt still
+ * applies via AbortController.
+ */
+export async function postChatCompletionJsonWithRetry(
+  params: ChatCompletionParams,
+  opts: { maxAttempts?: number; baseBackoffMs?: number } = {}
+): Promise<Record<string, any>> {
+  const maxAttempts = Math.max(1, Math.min(opts.maxAttempts ?? 3, 5));
+  const baseBackoff = Math.max(100, opts.baseBackoffMs ?? 500);
+  let lastErr: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await postChatCompletionJson(params);
+    } catch (err: any) {
+      lastErr = err;
+      const msg = String(err?.message ?? "");
+      const transient =
+        /aborted after|fetch failed|timeout|429|5\d\d|empty|not valid JSON|JSON object/i.test(msg);
+      if (!transient || attempt === maxAttempts) throw err;
+      const backoff = baseBackoff * Math.pow(2, attempt - 1);
+      console.warn(
+        `[providers] ${params.providerLabel} attempt ${attempt}/${maxAttempts} failed (${msg.slice(0, 120)}); retrying in ${backoff}ms`
+      );
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr ?? new Error(`${params.providerLabel} retry exhausted`);
+}

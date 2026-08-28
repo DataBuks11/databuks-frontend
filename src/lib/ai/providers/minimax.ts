@@ -1,5 +1,5 @@
 import {
-  postChatCompletionJson,
+  postChatCompletionJsonWithRetry,
   resolveBaseUrl,
 } from "./base-url";
 import type { AiCompletionInput, AiProvider } from "./types";
@@ -10,8 +10,8 @@ const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 /**
  * MiniMax (free) provider — same OpenRouter infrastructure as Ox Alpha, but
  * routes to the free :free model so the app keeps working when OpenRouter
- * credit balance is depleted. Used as the automatic fallback in
- * `getActiveProvider()`.
+ * credit balance is depleted. Up to 3 retries with exponential backoff for
+ * transient failures (timeout, 429, 5xx, empty JSON).
  */
 export class MiniMaxProvider implements AiProvider {
   readonly id = "minimax";
@@ -25,34 +25,34 @@ export class MiniMaxProvider implements AiProvider {
     this.apiKey = env.OX_ALPHA_API_KEY;
     if (!this.apiKey) {
       throw new Error(
-        "OX_ALPHA_API_KEY is not configured (required for MiniMax fallback)"
+        "OX_ALPHA_API_KEY is not configured (required for MiniMax)"
       );
     }
     this.model = env.MINIMAX_MODEL || DEFAULT_MODEL;
     const resolution = resolveBaseUrl(env.OX_ALPHA_BASE_URL, { defaultUrl: DEFAULT_BASE_URL });
     if (!resolution.ok || !resolution.url) {
       throw new Error(
-        `Failed to resolve OpenRouter base URL for MiniMax fallback: ${resolution.errorCode ?? "unknown"}`
+        `Failed to resolve OpenRouter base URL for MiniMax: ${resolution.errorCode ?? "unknown"}`
       );
     }
     this.baseUrl = resolution.url;
   }
 
   async completeJson(input: AiCompletionInput): Promise<Record<string, any>> {
-    if (!this.apiKey) {
-      throw new Error("OX_ALPHA_API_KEY is not configured (required for MiniMax fallback)");
-    }
-    return postChatCompletionJson({
-      baseUrl: this.baseUrl,
-      apiKey: this.apiKey,
-      model: this.model,
-      system: input.system,
-      user: input.user,
-      temperature: input.temperature,
-      maxTokens: input.maxTokens,
-      reasoningEffort: input.reasoningEffort,
-      timeoutMs: input.timeoutMs,
-      providerLabel: "MiniMax",
-    });
+    return postChatCompletionJsonWithRetry(
+      {
+        baseUrl: this.baseUrl,
+        apiKey: this.apiKey!,
+        model: this.model,
+        system: input.system,
+        user: input.user,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        providerLabel: "MiniMax",
+      },
+      { maxAttempts: 3, baseBackoffMs: 800 }
+    );
   }
 }

@@ -152,7 +152,7 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     // Real-time chat: cap tokens + low reasoning effort for sub-10s replies
     maxTokens: 200,
     reasoningEffort: "low",
-    timeoutMs: 25_000,
+    timeoutMs: 60_000,
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },

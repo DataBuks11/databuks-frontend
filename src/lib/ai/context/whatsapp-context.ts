@@ -12,7 +12,7 @@ export async function buildWhatsAppReplyContext(
   supabase: any,
   input: LightContextInput
 ): Promise<TaskContext | null> {
-  const limit = input.messageLimit ?? 30;
+  const limit = input.messageLimit ?? 100;
 
   const [businessResult, messagesResult, summaryResult] = await Promise.all([
     buildBusinessContext(supabase, input.userId),

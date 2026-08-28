@@ -259,7 +259,7 @@ export async function processIncomingWhatsAppMessage(
       userId: input.userId,
       leadId: lead.id,
       conversationId: conversation.id,
-      messageLimit: 30,
+      messageLimit: 100,
     });
   } catch (err: any) {
     console.error(`[LIB:ai:whatsapp] context build failed: ${err?.message}`);
@@ -295,6 +295,7 @@ export async function processIncomingWhatsAppMessage(
 
   if (context) {
     try {
+      // First attempt — provider handles network retries internally.
       let replyTask = await runAiTask(supabase, {
         userId: input.userId,
         taskType: "GENERATE_WHATSAPP_REPLY",
@@ -304,7 +305,9 @@ export async function processIncomingWhatsAppMessage(
         idempotencyKey: idempotencyKey("wa:reply", input.userId, input.messageId),
         prebuiltContext: context,
       });
-
+      // Schema-validation retry — the LLM often returns loose JSON, so
+      // we give it one more shot with a different idempotency key. The
+      // provider has already retried network-level failures.
       if (replyTask.status !== "COMPLETED") {
         try {
           replyTask = await runAiTask(supabase, {
@@ -328,7 +331,7 @@ export async function processIncomingWhatsAppMessage(
         language = typeof replyTask.output?.language === "string" ? replyTask.output.language : "other";
       }
     } catch (error: any) {
-      console.error(`[LIB:ai:whatsapp] reply generation failed: ${error?.message}`);
+      console.error(`[LIB:ai:whatsapp] reply generation failed after provider retries: ${error?.message}`);
     }
   }
 
