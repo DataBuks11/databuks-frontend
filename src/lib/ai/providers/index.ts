@@ -1,5 +1,7 @@
 import { OxAlphaProvider } from "./ox-alpha";
 import { DeepSeekProvider } from "./deepseek";
+import { MiniMaxProvider } from "./minimax";
+import { FallbackProvider } from "./fallback";
 import type { AiProvider } from "./types";
 
 let activeProvider: AiProvider | null = null;
@@ -12,18 +14,21 @@ export function getActiveProvider(): AiProvider {
 }
 
 function createDefaultProvider(): AiProvider {
-  // Ox Alpha is the primary/default LLM provider.
-  // If either variable is set, Ox Alpha owns the slot: a malformed or
-  // incomplete configuration must fail loudly here — never silently
-  // degrade to the fallback provider.
+  // Ox Alpha is the primary paid provider. When configured, we wrap it with
+  // MiniMax (free) as a transparent fallback so the app keeps working when
+  // the OpenRouter credit balance is depleted.
   if (process.env.OX_ALPHA_API_KEY || process.env.OX_ALPHA_BASE_URL) {
-    return new OxAlphaProvider();
+    const primary = new OxAlphaProvider();
+    const fallback = new MiniMaxProvider();
+    return new FallbackProvider(primary, fallback);
   }
-  // Fallback: DeepSeek V4 Flash
+  // No OpenRouter config — try DeepSeek (paid) as a standalone.
   if (process.env.DEEPSEEK_API_KEY) {
     return new DeepSeekProvider();
   }
-  throw new Error("No AI provider configured. Set OX_ALPHA_API_KEY + OX_ALPHA_BASE_URL or DEEPSEEK_API_KEY.");
+  // No env at all — try the free MiniMax model directly (still needs an
+  // OpenRouter key, but the provider will throw a clear error if missing).
+  return new MiniMaxProvider();
 }
 
 export function resetActiveProviderForTests(): void {

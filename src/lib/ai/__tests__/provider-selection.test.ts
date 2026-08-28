@@ -74,7 +74,9 @@ describe("provider selection", () => {
   });
 
   it("throws a clear error when no provider is configured at all", () => {
-    expect(() => getActiveProvider()).toThrow(/No AI provider configured/);
+    // With the free MiniMax fallback wired in, the "no provider" path now
+    // surfaces as a missing-API-key error from the MiniMax constructor.
+    expect(() => getActiveProvider()).toThrow(/OX_ALPHA_API_KEY is not configured/);
   });
 });
 
