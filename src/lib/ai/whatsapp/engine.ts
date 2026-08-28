@@ -253,7 +253,7 @@ export async function processIncomingWhatsAppMessage(
     metadata: { conversation_id: conversation.id, message_id: input.messageId },
   });
 
-  let context;
+  let context: any;
   try {
     context = await buildWhatsAppReplyContext(supabase, {
       userId: input.userId,
@@ -261,12 +261,26 @@ export async function processIncomingWhatsAppMessage(
       conversationId: conversation.id,
       messageLimit: 12,
     });
-  } catch {
+  } catch (err: any) {
+    console.error(`[LIB:ai:whatsapp] context build failed: ${err?.message}`);
     context = null;
   }
   mark("context_load", Date.now());
 
-  if (context) {
+  // Always make sure the LLM has a minimal context, even if Supabase lookups
+  // failed. Without this, a transient DB error silently drops the reply.
+  if (!context) {
+    context = {
+      business: { business_name: null, available: false, missing_fields: [] },
+      lead,
+      conversation,
+      messages: [],
+      conversationSummary: null,
+      duplicateExists: false,
+      lastOutreachAt: null,
+      outreachCountInWindow: 0,
+    };
+  } else {
     context.lead = lead;
     context.conversation = conversation;
   }

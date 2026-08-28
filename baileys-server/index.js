@@ -256,6 +256,23 @@ function setupMessageHandler(socket, userId) {
       // Use a placeholder when the message has media but no caption so the
       // downstream pipeline (engine + AI) can acknowledge the attachment
       // instead of silently rejecting media-only messages.
+      const messageType = msg.message?.conversation
+        ? "text"
+        : msg.message?.extendedTextMessage
+        ? "text"
+        : msg.message?.imageMessage
+        ? "image"
+        : msg.message?.videoMessage
+        ? "video"
+        : msg.message?.audioMessage
+        ? "audio"
+        : msg.message?.documentMessage
+        ? "document"
+        : msg.message?.contactMessage
+        ? "contact"
+        : msg.message?.locationMessage
+        ? "location"
+        : "unknown";
       const mediaTextFor = (type) => {
         switch (type) {
           case "image": return "[image]";
@@ -275,24 +292,6 @@ function setupMessageHandler(socket, userId) {
         msg.message?.videoMessage?.caption ||
         mediaTextFor(messageType) ||
         "";
-
-      const messageType = msg.message?.conversation
-        ? "text"
-        : msg.message?.extendedTextMessage
-        ? "text"
-        : msg.message?.imageMessage
-        ? "image"
-        : msg.message?.videoMessage
-        ? "video"
-        : msg.message?.audioMessage
-        ? "audio"
-        : msg.message?.documentMessage
-        ? "document"
-        : msg.message?.contactMessage
-        ? "contact"
-        : msg.message?.locationMessage
-        ? "location"
-        : "unknown";
 
       const parsedMsg = {
         remoteJid: msg.key.remoteJid,
