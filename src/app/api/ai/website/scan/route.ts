@@ -53,9 +53,19 @@ export async function POST(request: NextRequest) {
     const crawlerServiceUrl = process.env.CRAWLER_SERVICE_URL;
     if (crawlerServiceUrl) {
       const crawlerKey = process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+      // Use AbortController to cap the crawler trigger call at 10s so this
+      // function returns 202 quickly and the dashboard polling can start.
+      const controller = new AbortController();
+      const triggerTimeout = setTimeout(() => controller.abort(), 10_000);
+      // Fire the crawler (or static fallback) in the background. Vercel's
+      // `after()` keeps the function alive until the promise resolves or the
+      // function's maxDuration (60s) is hit — so we must keep the trigger
+      // call short. The crawler itself continues in the background on
+      // Railway, then calls back to /api/ai/website/analyze for the LLM
+      // analysis.
       after(async () => {
         try {
-          await fetch(`${crawlerServiceUrl.replace(/\/+$/, "")}/crawl`, {
+          const res = await fetch(`${crawlerServiceUrl.replace(/\/+$/, "")}/crawl`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -68,14 +78,25 @@ export async function POST(request: NextRequest) {
               max_pages: Number(process.env.WEBSITE_MAX_PAGES ?? 40),
               max_depth: Number(process.env.WEBSITE_MAX_DEPTH ?? 4),
             }),
+            signal: controller.signal,
           });
+          if (!res.ok) {
+            console.error(`[API:ai/website/scan] crawler returned ${res.status} — falling back to static`);
+            await runWebsiteScan(scan.id, user.id);
+          }
         } catch (err: any) {
-          console.error(`[API:ai/website/scan] crawler service trigger failed: ${err?.message}`);
+          console.error(`[API:ai/website/scan] crawler trigger failed: ${err?.message} — falling back to static`);
           try {
             await runWebsiteScan(scan.id, user.id);
           } catch (fallbackErr: any) {
             console.error(`[API:ai/website/scan] static fallback failed: ${fallbackErr?.message}`);
+            await supabase
+              .from("website_scans")
+              .update({ status: "FAILED", error_message: `Both crawler and static scan failed: ${fallbackErr?.message ?? "unknown"}`, completed_at: new Date().toISOString() })
+              .eq("id", scan.id);
           }
+        } finally {
+          clearTimeout(triggerTimeout);
         }
       });
     } else {
