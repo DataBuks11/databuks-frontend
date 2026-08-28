@@ -244,14 +244,48 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
   try {
     parsed = JSON.parse(content);
   } catch {
-    const cleaned = content
+    // Attempt 1: strip markdown code fences
+    let cleaned = content
       .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
       .replace(/```\s*$/, "")
       .trim();
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      throw new Error(`${params.providerLabel} response is not valid JSON`);
+      // Attempt 2: extract the largest {...} block from the content
+      const matches = cleaned.match(/\{[\s\S]*?\}/g);
+      if (matches) {
+        // Try largest first (likely the main JSON object)
+        const sorted = matches.sort((a, b) => b.length - a.length);
+        for (const m of sorted) {
+          try {
+            parsed = JSON.parse(m);
+            break;
+          } catch {
+            // continue trying next match
+          }
+        }
+      }
+      if (!parsed) {
+        // Attempt 3: try to find a JSON object and fix common issues (trailing commas, single quotes)
+        const firstBrace = cleaned.indexOf("{");
+        const lastBrace = cleaned.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          const slice = cleaned.slice(firstBrace, lastBrace + 1);
+          const fixed = slice
+            .replace(/,(\s*[}\]])/g, "$1") // remove trailing commas
+            .replace(/'/g, '"'); // single → double quotes
+          try {
+            parsed = JSON.parse(fixed);
+          } catch {
+            // give up
+          }
+        }
+      }
+      if (!parsed) {
+        throw new Error(`${params.providerLabel} response is not valid JSON`);
+      }
     }
   }
 

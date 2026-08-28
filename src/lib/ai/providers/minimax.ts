@@ -52,7 +52,7 @@ export class MiniMaxProvider implements AiProvider {
         timeoutMs: input.timeoutMs,
         providerLabel: "MiniMax",
       },
-      { maxAttempts: 3, baseBackoffMs: 800 }
+      { maxAttempts: 2, baseBackoffMs: 800 }
     );
   }
 }
