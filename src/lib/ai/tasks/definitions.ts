@@ -149,10 +149,12 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     schema: whatsappReplySchema,
     rules: [],
     buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
-    // Real-time chat: cap tokens + low reasoning effort for sub-10s replies
+    // Real-time chat: cap tokens + low reasoning effort for sub-10s replies.
+    // 15s timeout — Vercel Hobby plan limits the webhook to 60s total
+    // and we need a fast fallback path. Provider retries 3x internally.
     maxTokens: 200,
     reasoningEffort: "low",
-    timeoutMs: 60_000,
+    timeoutMs: 15_000,
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },

@@ -336,15 +336,14 @@ export async function processIncomingWhatsAppMessage(
   }
 
   // ─── Fallback reply when the LLM failed both attempts ───
-  // The LLM is the primary source (it's already context-aware via
-  // buildBusinessBlock). If the schema is too strict (MiniMax free often
-  // returns loose JSON), or the call timed out, fall back to a safe casual
-  // reply that:
-  //   1. Uses the lead's actual message as a unique echo (avoids WA_002)
-  //   2. References the business when we have business context loaded
+  // Goal: lead never gets silence, and the reply feels intentional rather
+  // than canned. The fallback:
+  //   1. Detects a question and answers from business context if available
+  //   2. Otherwise echoes the lead's message (unique per message, avoids WA_002)
+  //   3. References the business when context is loaded
   if (!replyText) {
     const trimmed = input.text.trim();
-    const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|hai\s*ky|haan|nahi)\b/i.test(trimmed)
+    const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|hai\s*ky|haan|nahi|kaisa|kaisi|kaise|kahan|konsa|konsi)\b/i.test(trimmed)
       ? "hinglish"
       : "english";
     const leadName = String(lead.name ?? "").trim().split(/\s+/)[0] || "";
@@ -352,18 +351,44 @@ export async function processIncomingWhatsAppMessage(
     const echo = trimmed.length > 0 && trimmed.length <= 40 && /[a-zA-Z\u0900-\u097F]/.test(trimmed)
       ? ` re "${trimmed.slice(0, 30)}"`
       : "";
-    // Use business context if the LLM context builder loaded one
+    // Try to answer questions from business context — this is the single
+    // biggest upgrade over the previous "echo and ask" fallback.
     const biz = context?.business;
     const bizName = typeof biz?.business_name === "string" ? biz.business_name.trim() : "";
-    const bizBit = bizName ? ` from ${bizName}` : "";
-    if (lang === "hinglish") {
-      replyText = echo
-        ? `haan${nameBit}?${echo} — batao`
-        : `haan${nameBit}${bizBit}, bol?`;
+    const bizDesc = typeof biz?.description === "string" ? biz.description.trim() : "";
+    const lower = trimmed.toLowerCase();
+    const asksWhatWeDo = /\b(what\s*(is|do|are)|kya\s*(hai|kar|ho|karti|krte)|tell\s*me\s*about|kaun\s*ho|who\s*are\s*you|kya\s*karta)\b/i.test(lower);
+    const asksProducts = /\b(products?|service|offer|features?|kaun\s*se\s*services?|kaunsa)\b/i.test(lower);
+    const asksPrice = /\b(price|pricing|cost|charge|kitna|kya\s*price|kharcha|kitne\s*ka|kitne\s*ki)\b/i.test(lower);
+    const asksLocation = /\b(where|location|address|kahan|office|studio)\b/i.test(lower);
+    const askName = /\b(your\s*name|company\s*name|firm\s*name|tumhara\s*naam|tum\s*kaun|tumhe|konsi\s*company)\b/i.test(lower);
+
+    let answer = "";
+    if (askName || asksWhatWeDo) {
+      if (bizName) answer = lang === "hinglish"
+        ? `${bizName} — ${bizDesc ? bizDesc.split("\n")[0].slice(0, 120) : "hum ek digital agency hain"}`
+        : `${bizName} — ${bizDesc ? bizDesc.split("\n")[0].slice(0, 160) : "we help businesses with digital growth"}`;
+    } else if (asksProducts && Array.isArray(biz?.services) && biz.services.length > 0) {
+      const names = biz.services.slice(0, 4).map((s: any) => s.name).filter(Boolean);
+      answer = lang === "hinglish"
+        ? `hum ye karte hain: ${names.join(", ")}`
+        : `we do: ${names.join(", ")}`;
+    } else if (asksPrice) {
+      answer = lang === "hinglish"
+        ? `pricing project-to-project depend karta hai — kya chahiye aapko?`
+        : `pricing depends on the project — what are you looking to build?`;
+    } else if (asksLocation) {
+      const locs = Array.isArray(biz?.locations) ? biz.locations.join(", ") : "";
+      answer = locs
+        ? (lang === "hinglish" ? `based out of ${locs}, but we work worldwide` : `based in ${locs}, but we work with clients globally`)
+        : (lang === "hinglish" ? `remote-first hain hum, pan-India clients ke saath kaam karte hain` : `we work remotely with clients across India`);
+    }
+    if (answer) {
+      replyText = answer;
+    } else if (lang === "hinglish") {
+      replyText = echo ? `haan${nameBit}?${echo} — batao` : `haan${nameBit}${bizName ? ` from ${bizName}` : ""}, bol?`;
     } else {
-      replyText = echo
-        ? `yeah${nameBit}?${echo} — go on`
-        : `yeah${nameBit}${bizBit}, what's up?`;
+      replyText = echo ? `yeah${nameBit}?${echo} — go on` : `yeah${nameBit}${bizName ? ` from ${bizName}` : ""}, what's up?`;
     }
     console.warn(`[LIB:ai:whatsapp] LLM did not return a valid reply — using fallback for message ${input.messageId}`);
   }
