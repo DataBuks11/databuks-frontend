@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
               scan_id: scan.id,
               user_id: user.id,
               url: normalized,
-              max_pages: Number(process.env.WEBSITE_MAX_PAGES ?? 40),
+              max_pages: Number(process.env.WEBSITE_MAX_PAGES ?? 500),
               max_depth: Number(process.env.WEBSITE_MAX_DEPTH ?? 4),
             }),
             signal: controller.signal,

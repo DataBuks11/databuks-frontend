@@ -199,10 +199,10 @@ class CrawlRequest(BaseModel):
     scan_id: str
     user_id: str
     url: str
-    # Defaults: 40 pages, depth 4. Most business sites need ≤ 40 pages.
-    # For very large sites, the client can pass lower values to keep
-    # crawl time + LLM cost reasonable.
-    max_pages: int = 40
+    # Up to 500 pages — most business sites need ≤ 100, but big sites
+    # (e-commerce, university, directory) can go higher. The client can
+    # override this with WEBSITE_MAX_PAGES.
+    max_pages: int = 500
     max_depth: int = 4
 
 

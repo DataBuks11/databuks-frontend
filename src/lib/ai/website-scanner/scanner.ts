@@ -29,10 +29,15 @@ export const SCAN_PROGRESS_LABELS: Record<WebsiteScanStatus, string> = {
   FAILED: "Scan failed",
 };
 
-const SINGLE_STAGE_MAX_CHARS = 90000;
-const SINGLE_STAGE_MAX_PAGES = 60;
-const FULL_CORPUS_MAX_CHARS = 500000;
-const MAX_CHARS_PER_PAGE_IN_CORPUS = 10000;
+// Crawling limits: support up to 500 pages per site so the AI gets a complete
+// picture. The single-stage LLM threshold is conservative; large sites always
+// go through multi-stage extraction.
+const SINGLE_STAGE_MAX_CHARS = 90_000;
+const SINGLE_STAGE_MAX_PAGES = 30;
+const FULL_CORPUS_MAX_CHARS = 5_000_000; // 5MB corpus cap (pre-LLM truncation)
+const MAX_CHARS_PER_PAGE_IN_CORPUS = 10_000;
+const PER_CHUNK_MAX_PAGES = 8; // Smaller chunks for huge sites → better LLM focus
+const PER_CHUNK_MAX_CHARS = 80_000;
 
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -77,15 +82,28 @@ function toCorpusPages(pages: any[]): CorpusPage[] {
 }
 
 function chunkCorpus(pages: CorpusPage[]): CorpusPage[][] {
+  // Split into multiple chunks so very large sites (up to 500 pages) get
+  // proper per-chunk fact extraction followed by a single synthesis pass.
   const chunks: CorpusPage[][] = [];
   let current: CorpusPage[] = [];
   let currentChars = 0;
+  let totalChars = 0;
   for (const page of pages) {
-    if (currentChars + page.text.length > FULL_CORPUS_MAX_CHARS && current.length > 0) {
-      break;
+    const pageText = page.text.length > MAX_CHARS_PER_PAGE_IN_CORPUS
+      ? page.text.slice(0, MAX_CHARS_PER_PAGE_IN_CORPUS)
+      : page.text;
+    if (
+      (current.length >= PER_CHUNK_MAX_PAGES || currentChars + pageText.length > PER_CHUNK_MAX_CHARS) &&
+      current.length > 0
+    ) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
     }
-    current.push(page);
-    currentChars += page.text.length;
+    current.push({ ...page, text: pageText });
+    currentChars += pageText.length;
+    totalChars += pageText.length;
+    if (totalChars >= FULL_CORPUS_MAX_CHARS) break;
   }
   if (current.length > 0) chunks.push(current);
   return chunks;
@@ -399,7 +417,16 @@ async function syncBusinessContext(supabase: any, userId: string, results: Recor
     updates.business_name = results.business_name.trim();
   }
   if (typeof results.overview === "string" && results.overview.trim()) {
-    updates.description = results.overview.trim();
+    // Combine overview + tagline + value_proposition into a rich description
+    // so the AI replies carry the full business context, not just one snippet.
+    const parts: string[] = [results.overview.trim()];
+    if (typeof results.tagline === "string" && results.tagline.trim()) {
+      parts.unshift(results.tagline.trim());
+    }
+    if (typeof results.value_proposition === "string" && results.value_proposition.trim()) {
+      parts.push("Value proposition: " + results.value_proposition.trim());
+    }
+    updates.description = parts.join("\n\n").slice(0, 8000);
   }
   if (Array.isArray(results.services) && results.services.length > 0) {
     updates.services = results.services.map((s: Record<string, any>) => ({
