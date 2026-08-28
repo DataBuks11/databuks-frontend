@@ -244,6 +244,38 @@ export async function processIncomingWhatsAppMessage(
   const persistedAt = Date.now();
   mark("ingestion", persistedAt);
 
+  // ─── Reminder detection ───
+  // If the lead asks for a reminder/follow-up, schedule it so the AI
+  // actually comes back later (otherwise the reply is just a promise).
+  let reminderScheduled: { sendAt: string; id: string } | null = null;
+  try {
+    const { looksLikeReminderRequest, parseReminderTime } = await import("./reminder-parser");
+    if (looksLikeReminderRequest(input.text)) {
+      const parsed = parseReminderTime(input.text, new Date());
+      if (parsed) {
+        const reminderMsg = "hi! just checking in as you asked 🙂";
+        const { data: r } = await supabase
+          .from("reminders")
+          .insert({
+            user_id: input.userId,
+            lead_id: lead.id,
+            conversation_id: conversation.id,
+            remote_jid: input.remoteJid,
+            message_text: reminderMsg,
+            send_at: parsed.sendAt.toISOString(),
+          })
+          .select("id, send_at")
+          .single();
+        if (r) {
+          reminderScheduled = { sendAt: r.send_at, id: r.id };
+          console.log(`[LIB:ai:whatsapp] reminder scheduled for ${r.send_at} (id=${r.id})`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[LIB:ai:whatsapp] reminder schedule failed: ${err?.message}`);
+  }
+
   await recordFunnelEvent(supabase, {
     userId: input.userId,
     leadId: lead.id,
