@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { runAiTask } from "@/lib/ai/orchestrator";
 import { buildBusinessContext } from "@/lib/ai/context/business-context";
 import { buildWhatsAppReplyContext } from "@/lib/ai/context/whatsapp-context";
+import { generateImage, buildImagePrompt } from "@/lib/ai/content/image-generator";
 
 export async function GET(request: NextRequest) {
   try {
@@ -76,6 +77,24 @@ export async function POST(request: NextRequest) {
     }
 
     const output = result.output;
+
+    // Generate the matching image (if Cloudflare Worker is configured).
+    // We don't block the post on the image — if it fails, we still save
+    // the text and the user can attach a manual image later.
+    let imageUrl: string | null = null;
+    let imagePrompt: string | null = null;
+    try {
+      const prompt = buildImagePrompt(
+        String(output.topic ?? body.topic ?? ""),
+        String(output.caption ?? "")
+      );
+      const img = await generateImage(prompt);
+      imageUrl = img.url;
+      imagePrompt = prompt;
+    } catch (err: any) {
+      console.warn(`[API:ai/social/content] image generation failed: ${err?.message}`);
+    }
+
     const { data: post, error } = await supabase
       .from("social_posts")
       .insert({
@@ -88,6 +107,8 @@ export async function POST(request: NextRequest) {
         caption: output.caption ?? null,
         hashtags: output.hashtags ?? [],
         cta: output.cta ?? null,
+        image_url: imageUrl,
+        image_prompt: imagePrompt,
         status: body.status === "REVIEW" ? "REVIEW" : "DRAFT",
         ai_decision_id: result.taskId,
       })
