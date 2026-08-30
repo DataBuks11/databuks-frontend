@@ -82,10 +82,58 @@ async function fetchHotLeads(supabase: any, userId: string, limit = 3): Promise<
   return data ?? [];
 }
 
+interface OutreachStats {
+  sentToday: number;
+  byChannel: { whatsapp: number; instagram: number; facebook: number; linkedin: number; email: number };
+  conversationsActive: number;
+  meetingsBooked: number;
+}
+
+async function fetchOutreachStats(supabase: any, userId: string): Promise<OutreachStats> {
+  const today = startOfTodayISO();
+  const empty: OutreachStats = {
+    sentToday: 0,
+    byChannel: { whatsapp: 0, instagram: 0, facebook: 0, linkedin: 0, email: 0 },
+    conversationsActive: 0,
+    meetingsBooked: 0,
+  };
+  try {
+    const { data: events } = await supabase
+      .from("funnel_events")
+      .select("metadata")
+      .eq("user_id", userId)
+      .eq("event_type", "OUTREACH_SENT")
+      .gte("created_at", today)
+      .limit(200);
+    for (const e of events ?? []) {
+      const ch = e?.metadata?.channel;
+      if (ch && ch in empty.byChannel) {
+        empty.byChannel[ch as keyof OutreachStats["byChannel"]] += 1;
+      }
+      empty.sentToday += 1;
+    }
+    const { count: convActive } = await supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "active");
+    empty.conversationsActive = convActive ?? 0;
+    const { count: meetings } = await supabase
+      .from("meetings")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "scheduled")
+      .gte("scheduled_at", today);
+    empty.meetingsBooked = meetings ?? 0;
+  } catch {}
+  return empty;
+}
+
 export function composeDailySummary(
   s: Awaited<ReturnType<typeof gatherOwnerSnapshot>>,
   newToday: LeadRow[],
-  hot: LeadRow[]
+  hot: LeadRow[],
+  outreach?: OutreachStats
 ): string {
   const lines: string[] = ["Aaj ka business summary:"];
 
@@ -101,11 +149,29 @@ export function composeDailySummary(
     lines.push(`• Garam leads: ${hot.map((l) => `${shortName(l.name)} ${l.funnel_stage || ""}`.trim()).join(", ")}`);
   }
 
+  // Outreach pipeline (multi-channel)
+  if (outreach && outreach.sentToday > 0) {
+    const ch = outreach.byChannel;
+    const channelBits: string[] = [];
+    if (ch.whatsapp > 0) channelBits.push(`${ch.whatsapp} wa`);
+    if (ch.instagram > 0) channelBits.push(`${ch.instagram} ig`);
+    if (ch.facebook > 0) channelBits.push(`${ch.facebook} fb`);
+    if (ch.linkedin > 0) channelBits.push(`${ch.linkedin} li`);
+    if (ch.email > 0) channelBits.push(`${ch.email} email`);
+    lines.push(
+      `• Outreach: ${outreach.sentToday} messages aaj (${channelBits.join(", ")})`
+    );
+  }
+
   lines.push(
     `• Meetings: ${s.meetingsScheduled} booked, ${s.meetingsUpcoming} upcoming`,
     `• Content: ${s.postsPublishedToday} aaj publish hue (total ${s.postsPublishedTotal}), ${s.postsDraft} draft, ${s.postsScheduled} scheduled`,
     `• Discovery se relevant leads: ${s.discoveredQualified}`
   );
+
+  if (outreach && outreach.conversationsActive > 0) {
+    lines.push(`• Active conversations: ${outreach.conversationsActive}`);
+  }
 
   if (s.meetingsUpcoming > 0 || s.discoveredQualified >= 60) {
     lines.push("", `"meetings" ya "relevant leads" bolke detail dekh.`);
@@ -130,21 +196,23 @@ export async function sendDailySummaries(supabase: any): Promise<DailySummaryRes
     const jid = profileToJid(p.phone);
     if (!jid) continue;
     try {
-      const [snapshot, newToday, hot] = await Promise.all([
+      const [snapshot, newToday, hot, outreach] = await Promise.all([
         gatherOwnerSnapshot(supabase, p.id),
         fetchNewToday(supabase, p.id),
         fetchHotLeads(supabase, p.id),
+        fetchOutreachStats(supabase, p.id),
       ]);
       // Skip silent accounts entirely — no noise for zero-activity users
       const hasActivity =
         snapshot.leadsTotal > 0 ||
         snapshot.discoveredQualified > 0 ||
-        snapshot.postsPublishedTotal > 0;
+        snapshot.postsPublishedTotal > 0 ||
+        outreach.sentToday > 0;
       if (!hasActivity) {
         results.push({ userId: p.id, phoneJid: jid, ok: true, error: "skipped_empty_account" });
         continue;
       }
-      const message = composeDailySummary(snapshot, newToday, hot);
+      const message = composeDailySummary(snapshot, newToday, hot, outreach);
       await sendViaBaileys({ userId: p.id, jid, message });
       results.push({ userId: p.id, phoneJid: jid, ok: true });
     } catch (err: any) {
