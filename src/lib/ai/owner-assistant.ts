@@ -38,6 +38,7 @@ type OwnerIntent =
   | "PENDING_APPROVALS"
   | "APPROVE"
   | "REJECT"
+  | "OUTREACH_NOW"
   | "CHAT";
 
 interface OwnerSnapshot {
@@ -246,6 +247,7 @@ const KEYWORD_INTENTS: { pattern: RegExp; intent: OwnerIntent }[] = [
   { pattern: /\b(post|posts|story|stories|content|instagram)\b/i, intent: "POSTS_STATUS" },
   { pattern: /\b(status|business kaisa|kaisa hai|kya haal|summary|overview|report|hisab|how (is|are) (things|business))\b/i, intent: "BUSINESS_STATUS" },
   { pattern: /\b(help|kya kar sakte|commands?)\b/i, intent: "HELP" },
+  { pattern: /\b(outreach|contact leads|message leads|start outreach|baat kar unhe|msg kar|leads se baat|run outreach|outreach chalao)\b/i, intent: "OUTREACH_NOW" },
 ];
 
 /** Greetings/smalltalk skip the LLM entirely for instant replies. */
@@ -350,6 +352,7 @@ export async function handleOwnerWhatsAppCommand(
           "• meetings booked",
           "• posts/stories status",
           "• approvals (then: approve 1 / reject 2)",
+          "• run outreach (start multi-channel outreach to top leads)",
         ].join("\n"),
         [
           "Main tera business assistant hoon. Ye sab pooch sakta hai:",
@@ -359,6 +362,7 @@ export async function handleOwnerWhatsAppCommand(
           "• meetings booked",
           "• posts/stories status",
           "• approvals (phir: approve 1 / reject 2)",
+          "• outreach chalao (top leads ko multi-channel msg bhejo)",
         ].join("\n")
       );
       break;
@@ -462,6 +466,52 @@ export async function handleOwnerWhatsAppCommand(
       }
       items.splice(itemNumber - 1, 1);
       pendingApprovalCache.set(userId, items);
+      break;
+    }
+
+    case "OUTREACH_NOW": {
+      // Trigger the multi-channel outreach orchestrator synchronously and
+      // return a human-readable summary. The orchestrator is rate-limited
+      // via the rule engine and 7-day cooldown per lead, so re-running is
+      // safe. We wrap the whole batch in a 3-min overall ceiling.
+      try {
+        const { runMultiChannelOutreachForUser } = await import(
+          "./outreach/multi-channel"
+        );
+        const timeoutMs = 180_000;
+        const result = await Promise.race([
+          runMultiChannelOutreachForUser(supabase, userId, { limit: 3 }),
+          new Promise<{ processed: number; results: any[]; skipped: number; failed: number }>((_, reject) =>
+            setTimeout(() => reject(new Error(`outreach took >${Math.round(timeoutMs / 1000)}s, giving up`)), timeoutMs)
+          ),
+        ]);
+        if (result.processed === 0 && result.skipped > 0) {
+          reply = pick(lang,
+            "no contact info in the top leads (no phone/email/IG/FB/LinkedIn). discovery needs to capture those — try re-running discovery or check if the source is google_maps (no contact fields).",
+            "top leads me koi phone/email/IG/FB/LinkedIn nahi mila. discovery ko ye fields capture karne chahiye — re-run karo ya check karo source google_maps to nahi hai"
+          );
+        } else if (result.processed > 0) {
+          const channelSummary = result.results
+            .flatMap((r) => r.channels)
+            .filter((c) => c.ok)
+            .map((c) => c.channel)
+            .join(", ");
+          reply = pick(lang,
+            `done. ${result.processed} leads contacted${channelSummary ? ` via ${channelSummary}` : ""}. ${result.failed} failed, ${result.skipped} skipped.`,
+            `ho gaya. ${result.processed} leads se baat ki${channelSummary ? ` (${channelSummary})` : ""}. ${result.failed} fail, ${result.skipped} skip.`
+          );
+        } else {
+          reply = pick(lang,
+            `outreach run complete. ${result.failed} failed, ${result.skipped} skipped (no contact info).`,
+            `outreach chala. ${result.failed} fail, ${result.skipped} skip (no contact info).`
+          );
+        }
+      } catch (err: any) {
+        reply = pick(lang,
+          `outreach failed: ${err?.message ?? "unknown"}`,
+          `outreach fail: ${err?.message ?? "unknown"}`
+        );
+      }
       break;
     }
 

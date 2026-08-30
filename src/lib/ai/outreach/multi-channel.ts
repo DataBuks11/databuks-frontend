@@ -29,7 +29,7 @@ export interface MultiChannelCandidate {
   author_name: string | null;
   author_handle: string | null;
   author_profile_url: string | null;
-  source_platform: string;     // instagram | facebook | linkedin | twitter | newsletter
+  source_platform: string;     // instagram | facebook | linkedin | twitter | newsletter | google_maps
   source_url: string | null;
   detected_requirement: string | null;
   business_context_match: string | null;
@@ -43,6 +43,14 @@ export interface MultiChannelCandidate {
   // Optional contact info that may be present after lead promotion
   phone: string | null;
   email: string | null;
+  // Raw metadata from the discovery source (e.g. Google Maps place details)
+  raw_metadata: {
+    details_phone?: string | null;
+    details_website?: string | null;
+    place_id?: string | null;
+    owner_hint?: string | null;
+    [k: string]: any;
+  } | null;
 }
 
 export interface ChannelSendResult {
@@ -79,8 +87,10 @@ async function fetchCandidateChannels(
   email: string | null;
 }> {
   // 1. WhatsApp: from `leads.phone` if promoted; else from evidence.contact
+  //    else from raw_metadata.details_phone (Google Maps place details)
   let whatsapp: string | null = c.phone ?? null;
   if (!whatsapp && c.evidence?.phone) whatsapp = c.evidence.phone as string;
+  if (!whatsapp && c.raw_metadata?.details_phone) whatsapp = c.raw_metadata.details_phone as string;
   if (whatsapp) {
     const digits = String(whatsapp).replace(/\D/g, "");
     whatsapp = digits.length >= 10 ? digits : null;
@@ -103,7 +113,15 @@ async function fetchCandidateChannels(
   let linkedin: string | null =
     c.evidence?.linkedin_handle ?? c.evidence?.linkedin_url ?? null;
   // 5. Email: from evidence (best-effort) or leads table
+  //    Also derive from website if it has a contact form / "info@" / "contact@"
   let email: string | null = c.email ?? c.evidence?.email ?? null;
+  if (!email) {
+    const website: string | null = c.evidence?.details_website ?? c.raw_metadata?.details_website ?? null;
+    if (website) {
+      const m = website.match(/[?&](?:email|to)=([\w.+-]+@[\w.-]+)/i);
+      if (m) email = m[1];
+    }
+  }
   if (!email && c.lead_id) {
     const { data: lead } = await supabase
       .from("leads")
@@ -445,7 +463,7 @@ export async function runMultiChannelOutreachForUser(
 
   const { data: candidates } = await supabase
     .from("discovered_leads")
-    .select("id, user_id, author_name, author_handle, author_profile_url, source_platform, source_url, detected_requirement, business_context_match, lead_score, intent_score, relevance_score, evidence, conversation_stage, opportunity_id, lead_id")
+    .select("id, user_id, author_name, author_handle, author_profile_url, source_platform, source_url, detected_requirement, business_context_match, lead_score, intent_score, relevance_score, evidence, conversation_stage, opportunity_id, lead_id, raw_metadata")
     .eq("user_id", userId)
     .in("conversation_stage", ["DISCOVER", "QUALIFY"])
     .gte("lead_score", minScore)
