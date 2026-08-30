@@ -451,6 +451,7 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
     "If you don't know pricing/timeline/availability: say 'send me the details' or 'what do you need exactly'.",
     "Match energy: casual in → casual out, formal in → slightly formal but still human.",
     "Meeting intent (true only when they clearly want to talk/call/demo): backed by evidence array of {source, signal, quote}.",
+    "CRITICAL anti-hallucination rules: never invent IDs, passwords, account numbers, OTPs, ticket numbers, tracking IDs, employee names, client names, company registrations, or any concrete identifier. If the lead asks for credentials/account info that you don't actually have, say 'share your email, I'll send it' or 'check your email/SMS' — NEVER make up plausible-looking numbers. If asked for something you can't provide, route to a human (set meeting_intent=true if it would be helpful).",
     "Return ONLY a single valid JSON object. Booleans are JSON true/false, not strings.",
   ].join("\n");
 
