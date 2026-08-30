@@ -74,6 +74,14 @@ export function isGroupJid(remoteJid: string): boolean {
   return /@g\.us$/i.test(remoteJid);
 }
 
+function hashStringToInt(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
 async function defaultSendReply(input: { userId: string; jid: string; message: string }): Promise<void> {
   const baseUrl = process.env.BAILEYS_SERVER_URL;
   const apiKey = process.env.BAILEYS_API_KEY;
@@ -455,59 +463,61 @@ export async function processIncomingWhatsAppMessage(
   }
 
   // ─── Fallback reply when the LLM failed both attempts ───
-  // Goal: lead never gets silence, and the reply feels intentional rather
-  // than canned. The fallback:
+  // Goal: lead never gets silence, and the reply feels like a real human
+  // who saw the message, not a bot. The fallback:
   //   1. Detects a question and answers from business context if available
-  //   2. Otherwise echoes the lead's message (unique per message, avoids WA_002)
-  //   3. References the business when context is loaded
+  //   2. Otherwise sends a tiny plain acknowledgment (no echo, no prompts,
+  //      no dashes, no quotes, no business name drop) — just a one-word
+  //      "ok"/"noted" style reply. The lead can say more in their next
+  //      message; we don't try to extract info from the prior one.
   if (!replyText) {
     const trimmed = input.text.trim();
-    const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|hai\s*ky|haan|nahi|kaisa|kaisi|kaise|kahan|konsa|konsi)\b/i.test(trimmed)
+    const lower = trimmed.toLowerCase();
+    const lang = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|karna|mujhe|haan|kaisa|kaisi|kaise|kahan|konsa|konsi)\b/i.test(trimmed)
       ? "hinglish"
       : "english";
-    const leadName = String(lead.name ?? "").trim().split(/\s+/)[0] || "";
-    const nameBit = leadName && leadName.toLowerCase() !== "whatsapp" && leadName.length > 1 ? ` ${leadName}` : "";
-    const echo = trimmed.length > 0 && trimmed.length <= 40 && /[a-zA-Z\u0900-\u097F]/.test(trimmed)
-      ? ` re "${trimmed.slice(0, 30)}"`
-      : "";
-    // Try to answer questions from business context — this is the single
-    // biggest upgrade over the previous "echo and ask" fallback.
     const biz = context?.business;
     const bizName = typeof biz?.business_name === "string" ? biz.business_name.trim() : "";
     const bizDesc = typeof biz?.description === "string" ? biz.description.trim() : "";
-    const lower = trimmed.toLowerCase();
     const asksWhatWeDo = /\b(what\s*(is|do|are)|kya\s*(hai|kar|ho|karti|krte)|tell\s*me\s*about|kaun\s*ho|who\s*are\s*you|kya\s*karta)\b/i.test(lower);
     const asksProducts = /\b(products?|services?|service|offer|features?|kaun\s*se\s*services?|kaunsa|what\s*do\s*you\s*do|what\s*do\s*you\s*offer)\b/i.test(lower);
     const asksPrice = /\b(price|pricing|cost|charge|kitna|kya\s*price|kharcha|kitne\s*ka|kitne\s*ki)\b/i.test(lower);
     const asksLocation = /\b(where|location|address|kahan|office|studio)\b/i.test(lower);
     const askName = /\b(your\s*name|company\s*name|firm\s*name|tumhara\s*naam|tum\s*kaun|tumhe|konsi\s*company)\b/i.test(lower);
 
-    let answer = "";
     if (askName || asksWhatWeDo) {
-      if (bizName) answer = lang === "hinglish"
-        ? `${bizName} — ${bizDesc ? bizDesc.split("\n")[0].slice(0, 120) : "hum ek digital agency hain"}`
-        : `${bizName} — ${bizDesc ? bizDesc.split("\n")[0].slice(0, 160) : "we help businesses with digital growth"}`;
+      replyText = lang === "hinglish"
+        ? bizName
+          ? `${bizName} hain hum. ${bizDesc ? bizDesc.split("\n")[0].slice(0, 100) : "digital agency hain"}`
+          : "ek digital agency hain hum"
+        : bizName
+          ? `${bizName}. ${bizDesc ? bizDesc.split("\n")[0].slice(0, 120) : "we help businesses grow online"}`
+          : "we help businesses grow online";
     } else if (asksProducts && Array.isArray(biz?.services) && biz.services.length > 0) {
       const names = biz.services.slice(0, 4).map((s: any) => s.name).filter(Boolean);
-      answer = lang === "hinglish"
-        ? `hum ye karte hain: ${names.join(", ")}`
-        : `we do: ${names.join(", ")}`;
+      replyText = lang === "hinglish"
+        ? `hum karte hain ${names.join(", ")}`
+        : `we do ${names.join(", ")}`;
     } else if (asksPrice) {
-      answer = lang === "hinglish"
-        ? `pricing project-to-project depend karta hai — kya chahiye aapko?`
-        : `pricing depends on the project — what are you looking to build?`;
+      replyText = lang === "hinglish"
+        ? "project pe depend karta hai. kya chahiye aapko"
+        : "depends on the project. what are you looking to build";
     } else if (asksLocation) {
       const locs = Array.isArray(biz?.locations) ? biz.locations.join(", ") : "";
-      answer = locs
-        ? (lang === "hinglish" ? `based out of ${locs}, but we work worldwide` : `based in ${locs}, but we work with clients globally`)
-        : (lang === "hinglish" ? `remote-first hain hum, pan-India clients ke saath kaam karte hain` : `we work remotely with clients across India`);
-    }
-    if (answer) {
-      replyText = answer;
+      replyText = locs
+        ? (lang === "hinglish" ? `${locs} based hain hum. pan-india clients ke saath kaam karte hain` : `based in ${locs}. work with clients globally`)
+        : (lang === "hinglish" ? "remote-first hain hum" : "we work remotely");
     } else if (lang === "hinglish") {
-      replyText = echo ? `haan${nameBit}?${echo} — batao` : `haan${nameBit}${bizName ? ` from ${bizName}` : ""}, bol?`;
+      // Tiny plain acknowledgments. No echo, no dash, no quote, no prompt.
+      // Pick one based on a stable hash of the message id so consecutive
+      // failures of the same lead don't all look identical.
+      const opts = ["ok noted", "hmm okay", "achha", "ok", "haan", "theek hai", "noted", "samjha"];
+      const idx = hashStringToInt(input.messageId) % opts.length;
+      replyText = opts[idx];
     } else {
-      replyText = echo ? `yeah${nameBit}?${echo} — go on` : `yeah${nameBit}${bizName ? ` from ${bizName}` : ""}, what's up?`;
+      const opts = ["ok noted", "got it", "hmm okay", "okay", "alright", "noted", "sure", "yep"];
+      const idx = hashStringToInt(input.messageId) % opts.length;
+      replyText = opts[idx];
     }
     console.warn(`[LIB:ai:whatsapp] LLM did not return a valid reply — using fallback for message ${input.messageId}`);
   }
