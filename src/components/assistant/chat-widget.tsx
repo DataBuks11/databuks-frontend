@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, X, Send, Loader2, Phone } from "lucide-react";
+import { MessageCircle, X, Send, Loader2, Phone, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -11,6 +11,17 @@ interface ChatMessage {
 
 const QUICK_COMMANDS = ["business status", "leads count", "pending approvals", "help"];
 
+interface ExtractedPreview {
+  business_name?: string | null;
+  description?: string | null;
+  services?: { name: string; description?: string }[];
+  target_audience?: { segment: string; description?: string }[];
+  industries?: string[];
+  locations?: string[];
+  tone?: string | null;
+  missing_fields?: string[];
+}
+
 export default function AssistantChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -19,19 +30,79 @@ export default function AssistantChatWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sendToWhatsApp, setSendToWhatsApp] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [preview, setPreview] = useState<ExtractedPreview | null>(null);
+  const [saving, setSaving] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
+  // Check whether the user has business context the first time the widget opens
+  useEffect(() => {
+    if (!open) return;
+    if (messages.length > 1) return; // already in conversation
+    fetch("/api/ai/assistant/status")
+      .then((r) => r.json())
+      .then((j) => {
+        if (!j.ok) return;
+        if (!j.has_context) {
+          setNeedsOnboarding(true);
+          setMessages([
+            {
+              role: "assistant",
+              text:
+                "hey 👋 before we do anything, the AI needs to know your business. " +
+                "tell me in 2-3 lines what you do, who's it for, and where you are. " +
+                "no website? no problem — just type like you'd explain to a friend.",
+            },
+          ]);
+        }
+      })
+      .catch(() => {});
+  }, [open]);
+
   const send = async (text: string) => {
     const msg = text.trim();
-    if (!msg || loading) return;
+    if (!msg || loading || saving) return;
     setMessages((prev) => [...prev, { role: "user", text: msg }]);
     setInput("");
     setLoading(true);
     try {
+      // Onboarding mode: extract business context, don't run the command-center
+      if (needsOnboarding) {
+        const res = await fetch("/api/ai/onboarding/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        if (data.confirmed === false) {
+          setPreview(data.extracted ?? {});
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: renderPreview(data.extracted) },
+          ]);
+        } else if (data.saved) {
+          setNeedsOnboarding(false);
+          setPreview(null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              text: "saved! ab AI har lead ke saath tumhari business context use karega. ab kuch bhi pooch — 'leads count', 'business status' etc.",
+            },
+          ]);
+        } else if (data.prompt) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: data.prompt },
+          ]);
+        }
+        return;
+      }
+
       const res = await fetch("/api/ai/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -44,6 +115,57 @@ export default function AssistantChatWidget() {
       setMessages((prev) => [...prev, { role: "assistant", text: "Network issue — please try again." }]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  function renderPreview(p: ExtractedPreview | null | undefined): string {
+    if (!p) return "couldn't extract anything — try describing your business in a different way";
+    const lines: string[] = [];
+    if (p.business_name) lines.push(`• name: ${p.business_name}`);
+    if (p.description) lines.push(`• about: ${p.description.slice(0, 200)}`);
+    if (p.services?.length) lines.push(`• services: ${p.services.map((s) => s.name).join(", ")}`);
+    if (p.target_audience?.length) lines.push(`• for: ${p.target_audience.map((t) => t.segment).join(", ")}`);
+    if (p.industries?.length) lines.push(`• industries: ${p.industries.join(", ")}`);
+    if (p.locations?.length) lines.push(`• location: ${p.locations.join(", ")}`);
+    if (p.tone) lines.push(`• tone: ${p.tone}`);
+    const head = lines.length ? "ye samjha —\n" + lines.join("\n") : "kuch bhi samajh nahi aaya";
+    const tail = "agar theek hai toh ✅ Save daba do, ya kuch aur bata";
+    return `${head}\n\n${tail}`;
+  }
+
+  const confirmSave = async () => {
+    if (saving || !needsOnboarding) return;
+    setSaving(true);
+    // Re-send the last user message with confirmed: true
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) {
+      setSaving(false);
+      return;
+    }
+    try {
+      const res = await fetch("/api/ai/onboarding/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: lastUser.text, confirmed: true }),
+      });
+      const data = await res.json();
+      if (data.saved) {
+        setNeedsOnboarding(false);
+        setPreview(null);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            text: "saved ✅ ab AI har lead ke saath tumhari business context use karega. 'leads count', 'business status', ya kuch bhi pooch.",
+          },
+        ]);
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", text: "save failed: " + (data.error ?? "unknown") }]);
+      }
+    } catch {
+      setMessages((prev) => [...prev, { role: "assistant", text: "network issue — try again" }]);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -103,18 +225,32 @@ export default function AssistantChatWidget() {
             )}
           </div>
 
-          {/* Quick commands */}
+          {/* Quick commands / Save button */}
           <div className="px-3 pb-2 flex gap-1.5 flex-wrap">
-            {QUICK_COMMANDS.map((cmd) => (
-              <button
-                key={cmd}
-                onClick={() => send(cmd)}
-                disabled={loading}
-                className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.06] text-white/60 hover:text-white hover:bg-white/[0.12] transition-colors disabled:opacity-40"
-              >
-                {cmd}
-              </button>
-            ))}
+            {preview ? (
+              <>
+                <button
+                  onClick={confirmSave}
+                  disabled={saving}
+                  className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors disabled:opacity-40 flex items-center gap-1"
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  Save
+                </button>
+                <span className="text-[10px] text-white/40 self-center">review aur kuch add karna ho toh type kar</span>
+              </>
+            ) : (
+              QUICK_COMMANDS.map((cmd) => (
+                <button
+                  key={cmd}
+                  onClick={() => send(cmd)}
+                  disabled={loading}
+                  className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.06] text-white/60 hover:text-white hover:bg-white/[0.12] transition-colors disabled:opacity-40"
+                >
+                  {cmd}
+                </button>
+              ))
+            )}
           </div>
 
           {/* Input */}
