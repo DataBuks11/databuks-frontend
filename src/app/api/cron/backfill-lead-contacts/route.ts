@@ -55,11 +55,22 @@ async function findPlaceIdFromCid(apiKey: string, cid: string): Promise<string |
   u.searchParams.set("fields", "place_id");
   try {
     const r = await fetch(u.toString(), { method: "GET" });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      console.warn(`[backfill] findplacefromtext for cid ${cid}: HTTP ${r.status}`);
+      return null;
+    }
     const data: any = await r.json();
-    if (data.status !== "OK" || !data.candidates || data.candidates.length === 0) return null;
+    if (data.status !== "OK") {
+      console.warn(`[backfill] findplacefromtext for cid ${cid}: status=${data.status} err=${data.error_message ?? "n/a"}`);
+      return null;
+    }
+    if (!data.candidates || data.candidates.length === 0) {
+      console.warn(`[backfill] findplacefromtext for cid ${cid}: 0 candidates`);
+      return null;
+    }
     return data.candidates[0].place_id ?? null;
-  } catch {
+  } catch (err: any) {
+    console.error(`[backfill] findplacefromtext for cid ${cid} threw: ${err?.message}`);
     return null;
   }
 }
