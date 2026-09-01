@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,7 +32,10 @@ async function fetchPlaceDetails(apiKey: string, placeId: string) {
   const r = await fetch(u.toString(), { method: "GET" });
   if (!r.ok) return null;
   const data: any = await r.json();
-  if (data.status !== "OK" || !data.result) return null;
+  if (data.status !== "OK" || !data.result) {
+    console.warn(`[backfill] place_details for ${placeId}: status=${data.status} err=${data.error_message ?? "n/a"}`);
+    return null;
+  }
   return {
     phone:
       data.result.international_phone_number ||
@@ -46,7 +49,6 @@ async function fetchPlaceDetails(apiKey: string, placeId: string) {
 function extractPlaceId(sourceUrl: string | null, rawMeta: any): string | null {
   if (rawMeta?.place_id) return rawMeta.place_id;
   if (!sourceUrl) return null;
-  // /maps/place/?q=place_id:XXXX or ?cid=XXXX
   const m1 = sourceUrl.match(/place_id[:=]([A-Za-z0-9_-]+)/);
   if (m1) return m1[1];
   const m2 = sourceUrl.match(/[?&]cid=(\d+)/);
@@ -56,14 +58,10 @@ function extractPlaceId(sourceUrl: string | null, rawMeta: any): string | null {
 
 function extractEmailFromWebsite(website: string | null, rawMeta: any): string | null {
   if (rawMeta?.email) return rawMeta.email;
-  if (!website) return null;
-  // No way to scrape actual page content here, but the next step of
-  // outreach will see website and the LLM-opener can include a "check
-  // out our site" nudge. For now we return null.
   return null;
 }
 
-export async function GET(request: NextRequest) {
+function authorized(request: NextRequest): boolean {
   const expectedKeys = [
     process.env.CRON_SECRET,
     process.env.CRAWLER_SERVICE_KEY,
@@ -75,65 +73,67 @@ export async function GET(request: NextRequest) {
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  if (!providedKey || !expectedKeys.includes(providedKey)) {
+  return !!providedKey && expectedKeys.includes(providedKey);
+}
+
+export async function GET(request: NextRequest) {
+  if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return runBackfill();
 }
 
 export async function POST(request: NextRequest) {
-  const expectedKeys = [
-    process.env.CRON_SECRET,
-    process.env.CRAWLER_SERVICE_KEY,
-    process.env.BAILEYS_API_KEY,
-    "dev-key",
-  ].filter(Boolean) as string[];
-  const providedKey =
-    request.headers.get("x-api-key") ??
-    (request.headers.get("authorization")?.startsWith("Bearer ")
-      ? request.headers.get("authorization")?.slice(7)
-      : null);
-  if (!providedKey || !expectedKeys.includes(providedKey)) {
+  if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return runBackfill();
 }
 
 async function runBackfill() {
-  try {
-    const supabase = adminClient();
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ ok: false, error: "GOOGLE_MAPS_API_KEY not set" }, { status: 500 });
-    }
+  const supabase = adminClient();
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: "GOOGLE_MAPS_API_KEY not set" }, { status: 500 });
+  }
 
-    // Find leads that need enrichment: google_maps source + missing details_phone
-    const { data: leads, error } = await supabase
-      .from("discovered_leads")
-      .select("id, source_url, raw_metadata, evidence")
-      .eq("source_platform", "google_maps")
-      .order("created_at", { ascending: false })
-      .limit(BACKFILL_BATCH);
+  // Find leads that need enrichment: google_maps source + missing details_phone
+  const { data: leads, error } = await supabase
+    .from("discovered_leads")
+    .select("id, source_url, raw_metadata, evidence")
+    .eq("source_platform", "google_maps")
+    .order("created_at", { ascending: false })
+    .limit(BACKFILL_BATCH);
 
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+  if (!leads || leads.length === 0) {
+    return NextResponse.json({ ok: true, processed: 0, updated: 0, message: "no leads to process" });
+  }
 
-    const updated: any[] = [];
-    const skipped: any[] = [];
-    for (const lead of leads ?? []) {
+  const updated: any[] = [];
+  const skipped: any[] = [];
+  for (const lead of leads) {
+    try {
       const rawMeta = (lead.raw_metadata as any) || {};
       const placeId = extractPlaceId(lead.source_url, rawMeta);
       if (!placeId) {
         skipped.push({ id: lead.id, reason: "no_place_id" });
         continue;
       }
-      // Skip if already enriched
       if (rawMeta.details_phone) {
         skipped.push({ id: lead.id, reason: "already_enriched" });
         continue;
       }
-      const details = await fetchPlaceDetails(apiKey, placeId);
+      let details;
+      try {
+        details = await fetchPlaceDetails(apiKey, placeId);
+      } catch (err: any) {
+        console.error(`[backfill] place_details error for ${placeId}: ${err?.message}`);
+        skipped.push({ id: lead.id, reason: `place_details_error: ${err?.message}` });
+        continue;
+      }
       if (!details) {
         skipped.push({ id: lead.id, reason: "place_details_failed" });
         continue;
@@ -160,16 +160,17 @@ async function runBackfill() {
         continue;
       }
       updated.push({ id: lead.id, phone: details.phone, website: details.website });
+    } catch (err: any) {
+      console.error(`[backfill] lead ${lead.id} unhandled error: ${err?.message}`);
+      skipped.push({ id: lead.id, reason: `unhandled: ${err?.message}` });
     }
-
-    return NextResponse.json({
-      ok: true,
-      processed: leads?.length ?? 0,
-      updated: updated.length,
-      skipped: skipped.length,
-      details: { updated, skipped: skipped.slice(0, 10) },
-    });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err?.message }, { status: 500 });
   }
+
+  return NextResponse.json({
+    ok: true,
+    processed: leads.length,
+    updated: updated.length,
+    skipped: skipped.length,
+    details: { updated, skipped: skipped.slice(0, 10) },
+  });
 }
