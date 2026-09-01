@@ -65,10 +65,11 @@ export async function POST(request: NextRequest) {
           seenOwnerMsgs.delete(v.value);
         }
       }
-      const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+
       const replyJid = String(message.remoteJid).includes("@")
         ? message.remoteJid
         : `${inboundPhone}@s.whatsapp.net`;
+
       // Run synchronously — after() on Vercel delays up to 6 min
       try {
         await supabase
@@ -76,11 +77,53 @@ export async function POST(request: NextRequest) {
           .update({ processed: true })
           .eq("user_id", userId)
           .eq("message_id", message.messageId);
-        await handleOwnerWhatsAppCommand(supabase, {
-          userId,
-          text: message.text,
-          replyJid,
-        });
+
+        // First: try to interpret the message as a post-approval reply
+        // (yes / no / edit: ... / schedule: ...). If it matches, route the
+        // decision to the right draft and send a confirmation back.
+        let handledAsApproval = false;
+        try {
+          const { handleApprovalReply } = await import("@/lib/ai/content/approval-handler");
+          const approval = await handleApprovalReply(supabase, userId, message.text ?? "");
+          if (approval.status !== "not-approval") {
+            const sendViaBaileys = async (msg: string) => {
+              const baseUrl = process.env.BAILEYS_SERVER_URL;
+              const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
+              if (!baseUrl) return;
+              await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+                body: JSON.stringify({ userId, jid: replyJid, message: msg }),
+              }).catch(() => {});
+            };
+            if (approval.status === "no-pending") {
+              await sendViaBaileys("koi pending post nahi hai abhi.");
+            } else {
+              const ack =
+                approval.status === "approved"
+                  ? "approved ✓ ab post ready hai publish karne ke liye."
+                  : approval.status === "rejected"
+                    ? "rejected ✗ skip kar diya."
+                    : approval.status === "edited"
+                      ? "edit saved. naya version bhej raha hoon."
+                      : `scheduled ✓ ${approval.topic} schedule ho gaya.`;
+              await sendViaBaileys(`ok, ${ack}`);
+            }
+            handledAsApproval = true;
+          }
+        } catch (err: any) {
+          console.error(`[API:ai/whatsapp/webhook] approval flow failed: ${err?.message}`);
+        }
+
+        // Default path: regular owner command (business status, leads, etc.)
+        if (!handledAsApproval) {
+          const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+          await handleOwnerWhatsAppCommand(supabase, {
+            userId,
+            text: message.text,
+            replyJid,
+          });
+        }
       } catch (err: any) {
         console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
       }
