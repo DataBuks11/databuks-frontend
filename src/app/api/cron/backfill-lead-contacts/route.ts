@@ -175,8 +175,22 @@ async function runBackfill() {
         skipped.push({ id: lead.id, reason: `place_details_error: ${err?.message}` });
         continue;
       }
-      if (!details) {
-        skipped.push({ id: lead.id, reason: "place_details_failed" });
+      if (!details || (!details.phone && !details.website)) {
+        // Map API didn't return phone/website for this lead. Still save the
+        // Google Maps URL so the outreach can mention it.
+        const updatedEvidence = {
+          ...evidence,
+          maps_url: lead.source_url,
+        };
+        const updateRes = await supabase
+          .from("discovered_leads")
+          .update({ evidence: updatedEvidence })
+          .eq("id", lead.id);
+        if (updateRes.error) {
+          skipped.push({ id: lead.id, reason: `db_error: ${updateRes.error.message}` });
+          continue;
+        }
+        updated.push({ id: lead.id, note: "maps_url_only" });
         continue;
       }
       const updatedEvidence = {
