@@ -91,11 +91,14 @@ export async function POST(request: NextRequest) {
 }
 
 async function runBackfill() {
+  console.log("[backfill] starting", { batchSize: BACKFILL_BATCH });
   const supabase = adminClient();
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ ok: false, error: "GOOGLE_MAPS_API_KEY not set" }, { status: 500 });
+    console.error("[backfill] GOOGLE_MAPS_API_KEY not set");
+    return NextResponse.json({ ok: false, error: "GOOGLE_MAPS_API_KEY not set", keyLength: 0 }, { status: 500 });
   }
+  console.log("[backfill] api key length:", apiKey.length);
 
   // Find leads that need enrichment: google_maps source + missing details_phone
   const { data: leads, error } = await supabase
