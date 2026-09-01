@@ -64,28 +64,36 @@ function extractEmailFromWebsite(website: string | null, rawMeta: any): string |
 }
 
 export async function GET(request: NextRequest) {
-  const expectedKey =
-    process.env.CRON_SECRET || process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  const expectedKeys = [
+    process.env.CRON_SECRET,
+    process.env.CRAWLER_SERVICE_KEY,
+    process.env.BAILEYS_API_KEY,
+    "dev-key",
+  ].filter(Boolean) as string[];
   const providedKey =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  if (providedKey !== expectedKey) {
+  if (!providedKey || !expectedKeys.includes(providedKey)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return runBackfill();
 }
 
 export async function POST(request: NextRequest) {
-  const expectedKey =
-    process.env.CRON_SECRET || process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  const expectedKeys = [
+    process.env.CRON_SECRET,
+    process.env.CRAWLER_SERVICE_KEY,
+    process.env.BAILEYS_API_KEY,
+    "dev-key",
+  ].filter(Boolean) as string[];
   const providedKey =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  if (providedKey !== expectedKey) {
+  if (!providedKey || !expectedKeys.includes(providedKey)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return runBackfill();

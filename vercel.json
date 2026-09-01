@@ -24,6 +24,10 @@
     {
       "path": "/api/cron/multi-outreach",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/backfill-lead-contacts",
+      "schedule": "30 1 * * *"
     }
   ]
 }
