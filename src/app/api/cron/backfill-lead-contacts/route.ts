@@ -101,12 +101,20 @@ async function runBackfill() {
   console.log("[backfill] api key length:", apiKey.length);
 
   // Find leads that need enrichment: google_maps source + missing details_phone
-  const { data: leads, error } = await supabase
-    .from("discovered_leads")
-    .select("id, source_url, raw_metadata, evidence")
-    .eq("source_platform", "google_maps")
-    .order("created_at", { ascending: false })
-    .limit(BACKFILL_BATCH);
+  let leads, error;
+  try {
+    const result = await supabase
+      .from("discovered_leads")
+      .select("id, source_url, raw_metadata, evidence")
+      .eq("source_platform", "google_maps")
+      .order("created_at", { ascending: false })
+      .limit(BACKFILL_BATCH);
+    leads = result.data;
+    error = result.error;
+  } catch (e: any) {
+    console.error("[backfill] supabase query threw:", e?.message);
+    return NextResponse.json({ ok: false, error: `supabase_query_threw: ${e?.message}` }, { status: 500 });
+  }
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
