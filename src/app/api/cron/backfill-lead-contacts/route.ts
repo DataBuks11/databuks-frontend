@@ -78,14 +78,23 @@ export async function GET(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return runBackfill();
+  return safeRun();
 }
 
 export async function POST(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return runBackfill();
+  return safeRun();
+}
+
+async function safeRun() {
+  try {
+    return await runBackfill();
+  } catch (err: any) {
+    console.error("[backfill] FATAL", err);
+    return NextResponse.json({ ok: false, error: err?.message ?? "unknown_fatal" }, { status: 500 });
+  }
 }
 
 async function runBackfill() {
