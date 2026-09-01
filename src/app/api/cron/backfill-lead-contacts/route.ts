@@ -22,7 +22,7 @@ function adminClient() {
 }
 
 const MAPS_DETAILS = "name,formatted_phone_number,international_phone_number,website,url";
-const BACKFILL_BATCH = 20;
+const BACKFILL_BATCH = 100;
 
 async function fetchPlaceDetails(apiKey: string, placeId: string) {
   const u = new URL("https://maps.googleapis.com/maps/api/place/details/json");
