@@ -86,37 +86,44 @@ async function fetchCandidateChannels(
   linkedin: string | null;
   email: string | null;
 }> {
-  // 1. WhatsApp: from `leads.phone` if promoted; else from evidence.contact
-  //    else from raw_metadata.details_phone (Google Maps place details)
+  // The discovery orchestrator stores ACTUAL contact values under
+  // evidence.contact_details (separate from the boolean flags under
+  // evidence.why_this_lead.contacts_found). This function reads both.
+  const cd = c.evidence?.contact_details ?? {};
+
+  // 1. WhatsApp: from leads.phone (post-promotion) > evidence.contact_details.phone
+  //    > raw_metadata.details_phone (from our backfill).
   let whatsapp: string | null = c.phone ?? null;
-  if (!whatsapp && c.evidence?.phone) whatsapp = c.evidence.phone as string;
+  if (!whatsapp && cd.phone) whatsapp = String(cd.phone);
   if (!whatsapp && c.raw_metadata?.details_phone) whatsapp = c.raw_metadata.details_phone as string;
   if (whatsapp) {
     const digits = String(whatsapp).replace(/\D/g, "");
     whatsapp = digits.length >= 10 ? digits : null;
   }
-  // 2. Instagram: from author_handle if source is instagram, or stored in evidence
-  let instagram: string | null = null;
-  if (c.source_platform === "instagram") {
+  // 2. Instagram
+  let instagram: string | null = cd.instagram ?? null;
+  if (!instagram && c.source_platform === "instagram") {
     instagram = c.author_handle ?? c.evidence?.instagram_handle ?? null;
-  } else {
+  } else if (!instagram) {
     instagram = c.evidence?.instagram_handle ?? null;
   }
-  // 3. Facebook: from author_profile_url or evidence
-  let facebook: string | null = null;
-  if (c.source_platform === "facebook") {
+  // 3. Facebook
+  let facebook: string | null = cd.facebook ?? null;
+  if (!facebook && c.source_platform === "facebook") {
     facebook = c.author_profile_url ?? c.evidence?.facebook_handle ?? c.author_handle ?? null;
-  } else {
+  } else if (!facebook) {
     facebook = c.evidence?.facebook_handle ?? c.author_profile_url ?? null;
   }
-  // 4. LinkedIn: from evidence
-  let linkedin: string | null =
-    c.evidence?.linkedin_handle ?? c.evidence?.linkedin_url ?? null;
-  // 5. Email: from evidence (best-effort) or leads table
-  //    Also derive from website if it has a contact form / "info@" / "contact@"
-  let email: string | null = c.email ?? c.evidence?.email ?? null;
+  // 4. LinkedIn
+  let linkedin: string | null = cd.linkedin ?? null;
+  if (!linkedin) {
+    linkedin = c.evidence?.linkedin_handle ?? c.evidence?.linkedin_url ?? null;
+  }
+  // 5. Email
+  let email: string | null = c.email ?? null;
+  if (!email && cd.email) email = String(cd.email);
   if (!email) {
-    const website: string | null = c.evidence?.details_website ?? c.raw_metadata?.details_website ?? null;
+    const website: string | null = cd.website ?? c.evidence?.details_website ?? c.raw_metadata?.details_website ?? null;
     if (website) {
       const m = website.match(/[?&](?:email|to)=([\w.+-]+@[\w.-]+)/i);
       if (m) email = m[1];
