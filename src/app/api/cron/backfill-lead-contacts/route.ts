@@ -163,39 +163,30 @@ async function runBackfill() {
         skipped.push({ id: lead.id, reason: "no_place_id" });
         continue;
       }
-      // If the extracted id is a "cid:" reference, resolve it via Google Maps
-      let placeId = extracted;
+
+      // Always save maps_url at minimum, so the lead is "enriched" for outreach
+      const baseMeta = {
+        ...evidence,
+        maps_url: lead.source_url,
+      };
+
+      let placeId: string | null = null;
       if (extracted.startsWith("cid:")) {
-        const cid = extracted.slice(4);
-        const resolved = await findPlaceIdFromCid(apiKey, cid);
-        if (!resolved) {
-          skipped.push({ id: lead.id, reason: "cid_resolve_failed" });
-          continue;
+        // Try the cid-resolver, but don't let a failure kill the rest
+        try {
+          placeId = await findPlaceIdFromCid(apiKey, extracted.slice(4));
+        } catch (err: any) {
+          console.error(`[backfill] cid_resolver threw for ${lead.id}: ${err?.message}`);
         }
-        placeId = resolved;
+      } else {
+        placeId = extracted;
       }
-      if (evidence.details_phone || evidence.phone) {
-        skipped.push({ id: lead.id, reason: "already_enriched" });
-        continue;
-      }
-      let details;
-      try {
-        details = await fetchPlaceDetails(apiKey, placeId);
-      } catch (err: any) {
-        console.error(`[backfill] place_details error for ${placeId}: ${err?.message}`);
-        skipped.push({ id: lead.id, reason: `place_details_error: ${err?.message}` });
-        continue;
-      }
-      if (!details || (!details.phone && !details.website)) {
-        // Map API didn't return phone/website for this lead. Still save the
-        // Google Maps URL so the outreach can mention it.
-        const updatedEvidence = {
-          ...evidence,
-          maps_url: lead.source_url,
-        };
+
+      if (!placeId) {
+        // No place_id resolved — just save the maps_url
         const updateRes = await supabase
           .from("discovered_leads")
-          .update({ evidence: updatedEvidence })
+          .update({ evidence: baseMeta })
           .eq("id", lead.id);
         if (updateRes.error) {
           skipped.push({ id: lead.id, reason: `db_error: ${updateRes.error.message}` });
@@ -204,11 +195,35 @@ async function runBackfill() {
         updated.push({ id: lead.id, note: "maps_url_only" });
         continue;
       }
+
+      // We have a place_id — try to get details
+      let details;
+      try {
+        details = await fetchPlaceDetails(apiKey, placeId);
+      } catch (err: any) {
+        console.error(`[backfill] place_details error for ${placeId}: ${err?.message}`);
+        details = null;
+      }
+
+      if (!details || (!details.phone && !details.website)) {
+        // No phone/website from Maps — save what we have
+        const updateRes = await supabase
+          .from("discovered_leads")
+          .update({ evidence: baseMeta })
+          .eq("id", lead.id);
+        if (updateRes.error) {
+          skipped.push({ id: lead.id, reason: `db_error: ${updateRes.error.message}` });
+          continue;
+        }
+        updated.push({ id: lead.id, note: "maps_url_only" });
+        continue;
+      }
+
+      // Full update with phone + website
       const updatedEvidence = {
-        ...evidence,
+        ...baseMeta,
         phone: details.phone || evidence.phone,
         website: details.website || evidence.website,
-        maps_url: details.mapsUrl || evidence.maps_url,
       };
       const email = extractEmailFromWebsite(details.website, null);
       if (email) updatedEvidence.email = email;
