@@ -46,8 +46,7 @@ async function fetchPlaceDetails(apiKey: string, placeId: string) {
   };
 }
 
-function extractPlaceId(sourceUrl: string | null, rawMeta: any): string | null {
-  if (rawMeta?.place_id) return rawMeta.place_id;
+function extractPlaceId(sourceUrl: string | null, _rawMeta: any): string | null {
   if (!sourceUrl) return null;
   const m1 = sourceUrl.match(/place_id[:=]([A-Za-z0-9_-]+)/);
   if (m1) return m1[1];
@@ -56,8 +55,7 @@ function extractPlaceId(sourceUrl: string | null, rawMeta: any): string | null {
   return null;
 }
 
-function extractEmailFromWebsite(website: string | null, rawMeta: any): string | null {
-  if (rawMeta?.email) return rawMeta.email;
+function extractEmailFromWebsite(_website: string | null, _rawMeta: any): string | null {
   return null;
 }
 
@@ -102,7 +100,7 @@ async function runBackfill() {
 
   const leadsResult = await supabase
     .from("discovered_leads")
-    .select("id, source_url, raw_metadata, evidence")
+    .select("id, source_url, evidence")
     .eq("source_platform", "google_maps")
     .order("created_at", { ascending: false })
     .limit(BACKFILL_BATCH);
@@ -119,13 +117,13 @@ async function runBackfill() {
   const skipped: any[] = [];
   for (const lead of leads) {
     try {
-      const rawMeta = (lead.raw_metadata as any) || {};
-      const placeId = extractPlaceId(lead.source_url, rawMeta);
+      const evidence = (lead.evidence as any) || {};
+      const placeId = extractPlaceId(lead.source_url, null);
       if (!placeId) {
         skipped.push({ id: lead.id, reason: "no_place_id" });
         continue;
       }
-      if (rawMeta.details_phone) {
+      if (evidence.details_phone || evidence.phone) {
         skipped.push({ id: lead.id, reason: "already_enriched" });
         continue;
       }
@@ -141,22 +139,18 @@ async function runBackfill() {
         skipped.push({ id: lead.id, reason: "place_details_failed" });
         continue;
       }
-      const newMeta = {
-        ...rawMeta,
-        details_phone: details.phone,
-        details_website: details.website,
-        maps_url: details.mapsUrl,
+      const updatedEvidence = {
+        ...evidence,
+        phone: details.phone || evidence.phone,
+        website: details.website || evidence.website,
+        maps_url: details.mapsUrl || evidence.maps_url,
       };
-      const evidence = (lead.evidence as any) || {};
-      evidence.phone = details.phone || evidence.phone;
-      evidence.website = details.website || evidence.website;
-      evidence.maps_url = details.mapsUrl || evidence.maps_url;
-      const email = extractEmailFromWebsite(details.website, evidence);
-      if (email) evidence.email = email;
+      const email = extractEmailFromWebsite(details.website, null);
+      if (email) updatedEvidence.email = email;
 
       const updateRes = await supabase
         .from("discovered_leads")
-        .update({ raw_metadata: newMeta, evidence })
+        .update({ evidence: updatedEvidence })
         .eq("id", lead.id);
       if (updateRes.error) {
         skipped.push({ id: lead.id, reason: `db_error: ${updateRes.error.message}` });
