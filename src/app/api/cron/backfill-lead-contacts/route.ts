@@ -46,10 +46,30 @@ async function fetchPlaceDetails(apiKey: string, placeId: string) {
   };
 }
 
+async function findPlaceIdFromCid(apiKey: string, cid: string): Promise<string | null> {
+  // Use the Find Place From Text endpoint with cid
+  const u = new URL("https://maps.googleapis.com/maps/api/place/findplacefromtext/json");
+  u.searchParams.set("key", apiKey);
+  u.searchParams.set("input", `cid:${cid}`);
+  u.searchParams.set("inputtype", "textquery");
+  u.searchParams.set("fields", "place_id");
+  try {
+    const r = await fetch(u.toString(), { method: "GET" });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    if (data.status !== "OK" || !data.candidates || data.candidates.length === 0) return null;
+    return data.candidates[0].place_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function extractPlaceId(sourceUrl: string | null, _rawMeta: any): string | null {
   if (!sourceUrl) return null;
+  // Try place_id=X or place_id:X
   const m1 = sourceUrl.match(/place_id[:=]([A-Za-z0-9_-]+)/);
   if (m1) return m1[1];
+  // Try ?cid=X or &cid=X (will be passed to cid-resolver)
   const m2 = sourceUrl.match(/[?&]cid=(\d+)/);
   if (m2) return `cid:${m2[1]}`;
   return null;
@@ -127,10 +147,21 @@ async function runBackfill() {
   for (const lead of leads) {
     try {
       const evidence = (lead.evidence as any) || {};
-      const placeId = extractPlaceId(lead.source_url, null);
-      if (!placeId) {
+      const extracted = extractPlaceId(lead.source_url, null);
+      if (!extracted) {
         skipped.push({ id: lead.id, reason: "no_place_id" });
         continue;
+      }
+      // If the extracted id is a "cid:" reference, resolve it via Google Maps
+      let placeId = extracted;
+      if (extracted.startsWith("cid:")) {
+        const cid = extracted.slice(4);
+        const resolved = await findPlaceIdFromCid(apiKey, cid);
+        if (!resolved) {
+          skipped.push({ id: lead.id, reason: "cid_resolve_failed" });
+          continue;
+        }
+        placeId = resolved;
       }
       if (evidence.details_phone || evidence.phone) {
         skipped.push({ id: lead.id, reason: "already_enriched" });
