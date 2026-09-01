@@ -99,8 +99,9 @@ export function parseCount(text: string): number | null {
   return null;
 }
 
-const POST_TRIGGERS = /\b(post|content|reel|story|update|create|make)\b.*\b(banao|create|generate|kar|karo|bana|karo|daalo|banana|banao|lagao|publish|karo)\b/i;
-const POST_QUESTION = /\b(kitne|kitna|kitni)\s*(post|posts|content|reel|story)\b/i;
+const POST_TRIGGERS =
+  /\b(post|posts|content|reel|story|update|create|make|generate|kahani|stories)\b.{0,30}\b(banao|create|generate|kar|karo|bana|banake|banaa|daalo|banana|banao|lagao|publish|karo|do)\b/i;
+const POST_QUESTION = /\b(kitne|kitna|kitni)\s*(post|posts|content|reel|story|stories)\b/i;
 const POST_AFFIRM = /^(ha|haan|ok|okay|kar|karo|banao|sure|ji|yes|y|chal|karo ab)$/i;
 
 const OUTREACH_TRIGGERS = /\b(outreach|outreach\s*chalao|leads\s*ko|leads\s*se|message\s*leads|discovered\s*leads|baat\s*karo|baat\s*kar|msg\s*bhejo|contact\s*leads|ping\s*leads)\b/i;
