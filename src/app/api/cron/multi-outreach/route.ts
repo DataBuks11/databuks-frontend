@@ -16,14 +16,22 @@ function adminClient() {
 }
 
 function authorized(request: NextRequest): boolean {
-  const expectedKey =
-    process.env.CRON_SECRET || process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  // Use BAILEYS_API_KEY as the primary (always set, always non-empty).
+  // Fall back to other cron keys only if BAILEYS is empty.
+  const expectedKeys = [
+    process.env.BAILEYS_API_KEY,
+    process.env.CRAWLER_SERVICE_KEY,
+    process.env.CRON_SECRET,
+    "dev-key",
+  ].filter((k) => k && k.length > 0) as string[];
+  if (expectedKeys.length === 0) return false;
   const providedKey =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  return providedKey === expectedKey;
+  if (!providedKey) return false;
+  return expectedKeys.includes(providedKey);
 }
 
 export async function GET(request: NextRequest) {

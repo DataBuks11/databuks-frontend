@@ -91,18 +91,21 @@ function extractEmailFromWebsite(_website: string | null, _rawMeta: any): string
 }
 
 function authorized(request: NextRequest): boolean {
+  // BAILEYS_API_KEY is always set in Vercel — use it as primary.
   const expectedKeys = [
-    process.env.CRON_SECRET,
-    process.env.CRAWLER_SERVICE_KEY,
     process.env.BAILEYS_API_KEY,
+    process.env.CRAWLER_SERVICE_KEY,
+    process.env.CRON_SECRET,
     "dev-key",
-  ].filter(Boolean) as string[];
+  ].filter((k) => k && k.length > 0) as string[];
+  if (expectedKeys.length === 0) return false;
   const providedKey =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  return !!providedKey && expectedKeys.includes(providedKey);
+  if (!providedKey) return false;
+  return expectedKeys.includes(providedKey);
 }
 
 export async function GET(request: NextRequest) {
