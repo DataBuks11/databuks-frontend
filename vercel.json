@@ -24,10 +24,6 @@
     {
       "path": "/api/cron/multi-outreach",
       "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/daily-posts",
-      "schedule": "30 10 * * *"
     }
   ]
 }

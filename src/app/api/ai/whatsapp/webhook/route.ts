@@ -117,12 +117,38 @@ export async function POST(request: NextRequest) {
 
         // Default path: regular owner command (business status, leads, etc.)
         if (!handledAsApproval) {
-          const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
-          await handleOwnerWhatsAppCommand(supabase, {
-            userId,
-            text: message.text,
-            replyJid,
-          });
+          // First, check for multi-step conversational flows (post gen,
+          // outreach count confirmation, etc.)
+          let handledAsFlow = false;
+          try {
+            const { handleFlowMessage } = await import("@/lib/ai/owner-flows");
+            const flowResult = await handleFlowMessage(supabase, userId, message.text ?? "");
+            if (flowResult) {
+              const sendViaBaileys = async (msg: string) => {
+                const baseUrl = process.env.BAILEYS_SERVER_URL;
+                const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
+                if (!baseUrl) return;
+                await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+                  body: JSON.stringify({ userId, jid: replyJid, message: msg }),
+                }).catch(() => {});
+              };
+              await sendViaBaileys(flowResult.text);
+              handledAsFlow = true;
+            }
+          } catch (err: any) {
+            console.error(`[API:ai/whatsapp/webhook] owner flow failed: ${err?.message}`);
+          }
+
+          if (!handledAsFlow) {
+            const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
+            await handleOwnerWhatsAppCommand(supabase, {
+              userId,
+              text: message.text,
+              replyJid,
+            });
+          }
         }
       } catch (err: any) {
         console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
