@@ -1,11 +1,17 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
   Bell,
   Smartphone,
+  MessageSquare,
+  Wifi,
+  WifiOff,
+  Send,
+  Bot,
+  Phone,
   Target,
   FileText,
   Mail,
@@ -35,13 +41,17 @@ import { Separator } from "@/components/ui/separator";
 import { settingsData } from "@/lib/data";
 import { useSettings, useSettingsMutations } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 import type { ApiKey as ApiKeyType, SettingsData } from "@/types";
 
-type TabId = "business-profile" | "notifications" | "integrations" | "api-keys" | "security";
+type TabId = "business-profile" | "notifications" | "integrations" | "api-keys" | "security" | "personal-whatsapp";
 
-const tabs: { id: TabId; label: string; icon: any }[] = [
+const ADMIN_EMAILS = ["databuksllc@gmail.com"];
+
+const baseTabs: { id: TabId; label: string; icon: any; adminOnly?: boolean }[] = [
   { id: "business-profile", label: "Business Profile", icon: Building2 },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "personal-whatsapp", label: "Personal WhatsApp", icon: MessageSquare, adminOnly: true },
 ];
 
 const notificationSettings = [
@@ -95,6 +105,86 @@ const envVariant: Record<ApiKeyType["environment"], "success" | "info" | "warnin
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("business-profile");
+
+  // Admin detection
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const isAdmin = !!userEmail && ADMIN_EMAILS.includes(userEmail);
+  const tabs = baseTabs.filter((t) => !t.adminOnly || isAdmin);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setUserEmail(data.user?.email ?? null);
+    });
+  }, []);
+
+  // Personal WhatsApp state
+  const [personalWA, setPersonalWA] = useState<{
+    enabled: boolean;
+    jid: string | null;
+    loading: boolean;
+    saving: boolean;
+    testSending: boolean;
+    testResult: string | null;
+    phoneInput: string;
+  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "" });
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/ai/assistant/personal")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          setPersonalWA((prev) => ({
+            ...prev,
+            enabled: d.enabled ?? false,
+            jid: d.jid ?? null,
+            phoneInput: d.jid ? d.jid.replace("@s.whatsapp.net", "") : "",
+            loading: false,
+          }));
+        } else {
+          setPersonalWA((prev) => ({ ...prev, loading: false }));
+        }
+      })
+      .catch(() => setPersonalWA((prev) => ({ ...prev, loading: false })));
+  }, [isAdmin]);
+
+  const handleSavePersonalWA = async () => {
+    setPersonalWA((prev) => ({ ...prev, saving: true }));
+    try {
+      const digits = personalWA.phoneInput.replace(/\D/g, "");
+      const jid = digits.length >= 10 ? `${digits}@s.whatsapp.net` : null;
+      await fetch("/api/ai/assistant/personal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: personalWA.enabled, jid }),
+      });
+      setPersonalWA((prev) => ({ ...prev, jid, saving: false, testResult: "Saved!" }));
+      setTimeout(() => setPersonalWA((prev) => ({ ...prev, testResult: null })), 3000);
+    } catch {
+      setPersonalWA((prev) => ({ ...prev, saving: false, testResult: "Save failed" }));
+    }
+  };
+
+  const handleTestMessage = async () => {
+    setPersonalWA((prev) => ({ ...prev, testSending: true, testResult: null }));
+    try {
+      const res = await fetch("/api/ai/assistant/personal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_message: true }),
+      });
+      const data = await res.json();
+      setPersonalWA((prev) => ({
+        ...prev,
+        testSending: false,
+        testResult: data.ok ? "Test message sent!" : (data.error ?? "Failed"),
+      }));
+      setTimeout(() => setPersonalWA((prev) => ({ ...prev, testResult: null })), 5000);
+    } catch {
+      setPersonalWA((prev) => ({ ...prev, testSending: false, testResult: "Request failed" }));
+    }
+  };
 
   const { settings: workspaceSettings, loading: settingsLoading } = useSettings();
   const { updateSettings, loading: saveSettingsLoading } = useSettingsMutations();
@@ -338,6 +428,156 @@ export default function SettingsPage() {
                     (new leads, meeting bookings, WhatsApp activity) are always available in
                     your dashboard Activity feed.
                   </p>
+                </Card>
+              )}
+
+              {/* Personal WhatsApp — admin only */}
+              {activeTab === "personal-whatsapp" && isAdmin && (
+                <Card className="glass-card rounded-2xl border-white/[0.08] p-6">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-10 h-10 rounded-xl bg-green-400/10 flex items-center justify-center">
+                      <MessageSquare className="w-5 h-5 text-green-400" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-white">Personal WhatsApp Assistant</h2>
+                      <p className="text-sm text-white/50">Connect your personal WhatsApp for AI-powered conversations</p>
+                    </div>
+                  </div>
+
+                  {personalWA.loading ? (
+                    <div className="flex items-center gap-2 py-8 justify-center">
+                      <Loader2 className="h-5 w-5 animate-spin text-white/50" />
+                      <span className="text-sm text-white/50">Loading...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {/* Connection Status */}
+                      <div className="glass-card rounded-xl border border-white/[0.08] p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            {personalWA.jid ? (
+                              <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
+                                <Wifi className="w-4 h-4 text-green-400" />
+                              </div>
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center">
+                                <WifiOff className="w-4 h-4 text-white/40" />
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-sm font-medium text-white">
+                                {personalWA.jid ? "Connected" : "Not Connected"}
+                              </p>
+                              <p className="text-xs text-white/40">
+                                {personalWA.jid
+                                  ? `JID: ${personalWA.jid}`
+                                  : "Enter your personal WhatsApp number below"}
+                              </p>
+                            </div>
+                          </div>
+                          <Badge variant={personalWA.jid ? "success" : "secondary"} className="text-xs">
+                            {personalWA.jid ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      {/* Phone Number Input */}
+                      <div className="space-y-2">
+                        <Label htmlFor="personal-wa-phone">Personal WhatsApp Number</Label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                            <Input
+                              id="personal-wa-phone"
+                              type="tel"
+                              placeholder="919876543210 (with country code)"
+                              value={personalWA.phoneInput}
+                              onChange={(e) =>
+                                setPersonalWA((prev) => ({ ...prev, phoneInput: e.target.value }))
+                              }
+                              className="pl-10"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-white/30">Include country code without + (e.g. 919876543210)</p>
+                      </div>
+
+                      {/* Enable/Disable */}
+                      <div className="flex items-center justify-between glass-card rounded-xl border border-white/[0.08] p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-violet-400/10 flex items-center justify-center">
+                            <Bot className="w-4 h-4 text-violet-400" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-white">Enable Personal WhatsApp AI</p>
+                            <p className="text-xs text-white/40">AI will respond to messages on your personal number</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={personalWA.enabled}
+                          onCheckedChange={(checked) =>
+                            setPersonalWA((prev) => ({ ...prev, enabled: checked }))
+                          }
+                        />
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex flex-wrap gap-3">
+                        <Button onClick={handleSavePersonalWA} disabled={personalWA.saving}>
+                          {personalWA.saving ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          ) : (
+                            <Check className="h-4 w-4 mr-2" />
+                          )}
+                          Save Settings
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleTestMessage}
+                          disabled={personalWA.testSending || !personalWA.jid}
+                        >
+                          {personalWA.testSending ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          ) : (
+                            <Send className="h-4 w-4 mr-2" />
+                          )}
+                          Send Test Message
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={!personalWA.jid || !personalWA.enabled}
+                          onClick={() => {
+                            setPersonalWA((prev) => ({ ...prev, testResult: "AI conversation triggered (check WhatsApp)" }));
+                            setTimeout(() => setPersonalWA((prev) => ({ ...prev, testResult: null })), 5000);
+                          }}
+                        >
+                          <Bot className="h-4 w-4 mr-2" />
+                          Trigger AI Conversation
+                        </Button>
+                      </div>
+
+                      {/* Status Message */}
+                      {personalWA.testResult && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center gap-2 text-sm"
+                        >
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          <span className="text-emerald-400">{personalWA.testResult}</span>
+                        </motion.div>
+                      )}
+
+                      {/* Info Note */}
+                      <div className="glass-card rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="text-sm text-amber-200/80 space-y-1">
+                          <p>This personal WhatsApp account is separate from the business WhatsApp account.</p>
+                          <p className="text-xs text-amber-200/60">Messages sent via this number will not appear in the main business conversation feed.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </Card>
               )}
 
