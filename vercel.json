@@ -32,6 +32,10 @@
     {
       "path": "/api/cron/lead-followups",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/content-publisher",
+      "schedule": "30 7 * * *"
     }
   ]
 }
