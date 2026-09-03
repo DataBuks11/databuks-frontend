@@ -12,6 +12,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveUserJid } from "@/lib/whatsapp/jid-utils";
 
 type State = "idle" | "awaiting_post_count" | "generating_posts" | "awaiting_outreach_count" | "doing_outreach";
 
@@ -193,24 +194,15 @@ async function runPostGeneration(
     // Push to WhatsApp
     const baseUrl = process.env.BAILEYS_SERVER_URL;
     if (baseUrl) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("phone")
-        .eq("id", userId)
-        .maybeSingle();
-      const phone = (profile as any)?.phone;
-      if (phone) {
-        const digits = String(phone).replace(/\D/g, "");
-        if (digits.length >= 10) {
-          const jid = `${digits}@s.whatsapp.net`;
-          await pushDailyPostsToWhatsApp(
-            baseUrl,
-            process.env.BAILEYS_API_KEY || "dev-key",
-            userId,
-            jid,
-            result.posts
-          );
-        }
+      const jid = await resolveUserJid(supabase, userId);
+      if (jid) {
+        await pushDailyPostsToWhatsApp(
+          baseUrl,
+          process.env.BAILEYS_API_KEY || "dev-key",
+          userId,
+          jid,
+          result.posts
+        );
       }
     }
 

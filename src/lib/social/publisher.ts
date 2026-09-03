@@ -26,6 +26,9 @@ interface ScheduledRow {
   body: string | null;
   type: string | null;
   platform: string | null;
+  image_url?: string | null;
+  hashtags?: string[] | null;
+  cta?: string | null;
 }
 
 async function findConnection(
@@ -46,7 +49,19 @@ async function findConnection(
 }
 
 function buildCaption(row: ScheduledRow): string {
-  return (row.body && row.body.trim()) || row.title || "";
+  const parts: string[] = [];
+  if (row.body && row.body.trim()) parts.push(row.body.trim());
+  else if (row.title && row.title.trim()) parts.push(row.title.trim());
+  if (Array.isArray(row.hashtags) && row.hashtags.length) {
+    parts.push(row.hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" "));
+  }
+  if (row.cta && row.cta.trim()) parts.push(row.cta.trim());
+  // Best-effort image hook: remote URLs can be attached by the adapter;
+  // inline base64 data URLs are too large to pass through Composio.
+  if (row.image_url && /^https?:\/\//i.test(row.image_url)) {
+    parts.push(`[attach image: ${row.image_url}]`);
+  }
+  return parts.join("\n\n");
 }
 
 /** Publish every due scheduled item across all users (or one user). */
@@ -57,7 +72,7 @@ export async function publishDueContent(
   const limit = opts.limit ?? 10;
   let query = supabase
     .from("content")
-    .select("id, user_id, title, body, type, platform")
+    .select("id, user_id, title, body, type, platform, image_url, hashtags, cta")
     .eq("status", "scheduled")
     .or(`scheduled_date.is.null,scheduled_date.lte.${new Date().toISOString()}`)
     .order("created_at", { ascending: true })

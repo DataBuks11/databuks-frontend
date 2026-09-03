@@ -62,6 +62,47 @@ export function parseApprovalReply(text: string): ApprovalParseResult {
   return { decision: "unknown", editText: null, scheduleAt: null, index };
 }
 
+export interface PublishRowInput {
+  user_id: string;
+  topic: string | null;
+  caption: string | null;
+  content_type: string | null;
+  provider?: string | null;
+  hashtags?: string[] | null;
+  cta?: string | null;
+  image_url?: string | null;
+  image_prompt?: string | null;
+}
+
+/**
+ * Build the row that goes into the `content` table when a draft is approved.
+ * Approved means "publish it" — so the row is status='scheduled' DUE NOW
+ * (publisher picks it up on the next run). Before this fix, approved rows
+ * were mirrored as 'draft', which the publisher ignores, so approved posts
+ * never actually published.
+ */
+export function buildPublishRow(
+  draft: PublishRowInput,
+  decision: ApprovalDecision,
+  scheduledAt: string | null
+): Record<string, any> {
+  const publishAt = decision === "scheduled" && scheduledAt ? scheduledAt : new Date().toISOString();
+  return {
+    user_id: draft.user_id,
+    title: draft.topic ?? "Post",
+    body: draft.caption ?? "",
+    type: draft.content_type ?? "post",
+    platform: draft.provider ?? "instagram",
+    status: "scheduled",
+    scheduled_date: publishAt,
+    hashtags: Array.isArray(draft.hashtags) ? draft.hashtags : [],
+    cta: draft.cta ?? null,
+    image_url: draft.image_url ?? null,
+    image_prompt: draft.image_prompt ?? null,
+    author: null,
+  };
+}
+
 /** Apply the parsed decision to a specific draft in social_posts. */
 export async function applyApproval(
   supabase: SupabaseClient,
@@ -105,24 +146,15 @@ export async function applyApproval(
   if (error) return { ok: false, error: error.message };
 
   // Mirror to content table (legacy schema) so the auto-publisher cron
-  // picks it up. Only for approved/scheduled — the publisher will read
-  // scheduled rows and post them.
+  // picks it up. Approving means "publish it" — so approved drafts are
+  // mirrored as status='scheduled' DUE NOW (scheduled_date = now), not
+  // 'draft'. The publisher only reads scheduled rows; mirroring as draft
+  // made approved posts never leave the queue.
   if (decision === "approved" || decision === "scheduled") {
     try {
-      await supabase.from("content").insert({
-        user_id: userId,
-        title: draft.topic ?? "Post",
-        body: draft.caption ?? "",
-        type: draft.content_type ?? "post",
-        platform: "instagram",
-        status: decision === "scheduled" ? "scheduled" : "draft",
-        scheduled_date: update.scheduled_at ?? null,
-        hashtags: Array.isArray(draft.hashtags) ? draft.hashtags : [],
-        cta: draft.cta ?? null,
-        image_url: draft.image_url ?? null,
-        image_prompt: draft.image_prompt ?? null,
-        author: null,
-      });
+      await supabase.from("content").insert(
+        buildPublishRow(draft as PublishRowInput, decision, update.scheduled_at ?? null)
+      );
     } catch (err: any) {
       console.warn(`[approval-handler] could not mirror to content table: ${err?.message}`);
     }

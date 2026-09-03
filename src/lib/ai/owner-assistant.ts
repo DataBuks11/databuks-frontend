@@ -39,6 +39,7 @@ type OwnerIntent =
   | "APPROVE"
   | "REJECT"
   | "OUTREACH_NOW"
+  | "MODE"
   | "CHAT";
 
 interface OwnerSnapshot {
@@ -248,6 +249,7 @@ const KEYWORD_INTENTS: { pattern: RegExp; intent: OwnerIntent }[] = [
   { pattern: /\b(status|business kaisa|kaisa hai|kya haal|summary|overview|report|hisab|how (is|are) (things|business))\b/i, intent: "BUSINESS_STATUS" },
   { pattern: /\b(help|kya kar sakte|commands?)\b/i, intent: "HELP" },
   { pattern: /\b(outreach|contact leads|message leads|start outreach|baat kar unhe|msg kar|leads se baat|run outreach|outreach chalao)\b/i, intent: "OUTREACH_NOW" },
+  { pattern: /\b(mode|kaunsa mode|current mode|mode kya hai|personal ya business)\b/i, intent: "MODE" },
 ];
 
 /** Greetings/smalltalk skip the LLM entirely for instant replies. */
@@ -273,13 +275,13 @@ async function llmIntent(text: string): Promise<OwnerIntent> {
     const provider = getActiveProvider();
     const out = await provider.completeJson({
       system:
-        'You map a business owner\'s WhatsApp message to ONE command intent. Allowed: HELP, LEADS_COUNT, LEADS_LIST, RELEVANT_LEADS, BUSINESS_STATUS, MEETINGS, POSTS_STATUS, PENDING_APPROVALS, APPROVE, REJECT, CHAT. Approve/reject ONLY when they clearly confirm/deny an item. Respond {"intent":"..."} only.',
+        'You map a business owner\'s WhatsApp message to ONE command intent. Allowed: HELP, LEADS_COUNT, LEADS_LIST, RELEVANT_LEADS, BUSINESS_STATUS, MEETINGS, POSTS_STATUS, PENDING_APPROVALS, APPROVE, REJECT, MODE, CHAT. Approve/reject ONLY when they clearly confirm/deny an item. Respond {"intent":"..."} only.',
       user: text.slice(0, 300),
       temperature: 0,
       maxTokens: 200,
       reasoningEffort: "low",
     });
-    const allowed: OwnerIntent[] = ["HELP", "LEADS_COUNT", "LEADS_LIST", "RELEVANT_LEADS", "BUSINESS_STATUS", "MEETINGS", "POSTS_STATUS", "PENDING_APPROVALS", "APPROVE", "REJECT", "CHAT"];
+    const allowed: OwnerIntent[] = ["HELP", "LEADS_COUNT", "LEADS_LIST", "RELEVANT_LEADS", "BUSINESS_STATUS", "MEETINGS", "POSTS_STATUS", "PENDING_APPROVALS", "APPROVE", "REJECT", "MODE", "CHAT"];
     const intent = String(out?.intent ?? "CHAT").toUpperCase() as OwnerIntent;
     return allowed.includes(intent) ? intent : "CHAT";
   } catch {
@@ -348,21 +350,23 @@ export async function handleOwnerWhatsAppCommand(
           "I'm your business assistant. Ask me:",
           "• how many leads we got",
           "• leads list / relevant leads",
-          "• business status",
+          "• business status / report",
           "• meetings booked",
           "• posts/stories status",
           "• approvals (then: approve 1 / reject 2)",
           "• run outreach (start multi-channel outreach to top leads)",
+          "• mode (see personal/business mode; 'personal' ya 'back to business' se switch)",
         ].join("\n"),
         [
           "Main tera business assistant hoon. Ye sab pooch sakta hai:",
           "• kitni leads nikali",
           "• leads list / relevant leads",
-          "• business status",
+          "• business status / report",
           "• meetings booked",
           "• posts/stories status",
           "• approvals (phir: approve 1 / reject 2)",
           "• outreach chalao (top leads ko multi-channel msg bhejo)",
+          "• mode (personal/business mode dekho; 'personal' ya 'back to business' se switch)",
         ].join("\n")
       );
       break;
@@ -512,6 +516,24 @@ export async function handleOwnerWhatsAppCommand(
           `outreach fail: ${err?.message ?? "unknown"}`
         );
       }
+      break;
+    }
+
+    case "MODE": {
+      let current = "business";
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("assistant_mode")
+          .eq("id", userId)
+          .maybeSingle();
+        current = (data as any)?.assistant_mode === "personal" ? "personal" : "business";
+      } catch {}
+      reply = pick(
+        lang,
+        `Current mode: ${current}. "personal" → casual chat (no business data). "back to business" → data-aware business assistant.`,
+        `Abhi mode: ${current}. "personal" → casual chat (business data nahi aayega). "back to business" → business assistant.`
+      );
       break;
     }
 

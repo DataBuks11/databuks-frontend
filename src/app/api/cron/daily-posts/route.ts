@@ -83,17 +83,9 @@ async function run(request: NextRequest) {
         }
         if (result.posts.length === 0 || !baseUrl) continue;
 
-        // Look up the user's WhatsApp-bound phone
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("phone")
-          .eq("id", userId)
-          .maybeSingle();
-        const phone = (profile as any)?.phone;
-        if (!phone) continue;
-        const digits = String(phone).replace(/\D/g, "");
-        if (digits.length < 10) continue;
-        const jid = `${digits}@s.whatsapp.net`;
+        const { resolveUserJid } = await import("@/lib/whatsapp/jid-utils");
+        const jid = await resolveUserJid(supabase, userId);
+        if (!jid) continue;
 
         const pushResult = await pushDailyPostsToWhatsApp(baseUrl, apiKey, userId, jid, result.posts);
         summary.total_pushed += pushResult.sent;

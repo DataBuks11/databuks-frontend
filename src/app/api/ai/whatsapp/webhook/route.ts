@@ -78,125 +78,12 @@ export async function POST(request: NextRequest) {
           .eq("user_id", userId)
           .eq("message_id", message.messageId);
 
-        // First: try to interpret the message as a post-approval reply
-        // (yes / no / edit: ... / schedule: ...). If it matches, route the
-        // decision to the right draft and send a confirmation back.
-        let handledAsApproval = false;
-        try {
-          const { handleApprovalReply } = await import("@/lib/ai/content/approval-handler");
-          const approval = await handleApprovalReply(supabase, userId, message.text ?? "");
-          if (approval.status !== "not-approval") {
-            const sendViaBaileys = async (msg: string) => {
-              const baseUrl = process.env.BAILEYS_SERVER_URL;
-              const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
-              if (!baseUrl) return;
-              await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-                body: JSON.stringify({ userId, jid: replyJid, message: msg }),
-              }).catch(() => {});
-            };
-            if (approval.status === "no-pending") {
-              await sendViaBaileys("koi pending post nahi hai abhi.");
-            } else {
-              const ack =
-                approval.status === "approved"
-                  ? "approved ✓ ab post ready hai publish karne ke liye."
-                  : approval.status === "rejected"
-                    ? "rejected ✗ skip kar diya."
-                    : approval.status === "edited"
-                      ? "edit saved. naya version bhej raha hoon."
-                      : `scheduled ✓ ${approval.topic} schedule ho gaya.`;
-              await sendViaBaileys(`ok, ${ack}`);
-            }
-            handledAsApproval = true;
-          }
-        } catch (err: any) {
-          console.error(`[API:ai/whatsapp/webhook] approval flow failed: ${err?.message}`);
-        }
-
-        // Default path: regular owner command (business status, leads, etc.)
-        if (!handledAsApproval) {
-          // First, check for multi-step conversational flows (post gen,
-          // outreach count confirmation, etc.)
-          let handledAsFlow = false;
-          try {
-            const { handleFlowMessage } = await import("@/lib/ai/owner-flows");
-            const flowResult = await handleFlowMessage(supabase, userId, message.text ?? "");
-            if (flowResult) {
-              const sendViaBaileys = async (msg: string) => {
-                const baseUrl = process.env.BAILEYS_SERVER_URL;
-                const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
-                if (!baseUrl) return;
-                await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-                  body: JSON.stringify({ userId, jid: replyJid, message: msg }),
-                }).catch(() => {});
-              };
-              await sendViaBaileys(flowResult.text);
-              handledAsFlow = true;
-            }
-          } catch (err: any) {
-            console.error(`[API:ai/whatsapp/webhook] owner flow failed: ${err?.message}`);
-          }
-
-          if (!handledAsFlow) {
-            // Personal-mode shortcut: detect explicit "personal" / "off record"
-            // keyword. When set, respond WITHOUT the business snapshot to avoid
-            // the AI inventing fake DataBuks data. Falls back to a plain LLM
-            // chat through the same provider. The user can switch back with
-            // "back to business" or "business mode".
-            const { isUserInPersonalMode } = await import("@/lib/ai/owner-personal");
-            const text = (message.text ?? "").toLowerCase();
-            const personalTriggers = /\b(personal|off record|chill mode|as a friend|not business|just chat|normal chat|back to personal)\b/i;
-            const businessTriggers = /\b(back to business|business mode|back to work|back to databuks)\b/i;
-            const isPersonal = personalTriggers.test(text) && !businessTriggers.test(text);
-            const wasPersonal = await isUserInPersonalMode(supabase, userId);
-
-            if (isPersonal || wasPersonal) {
-              // Update stored mode
-              try {
-                await supabase
-                  .from("profiles")
-                  .update({ updated_at: new Date().toISOString() })
-                  .eq("id", userId);
-              } catch {}
-              try {
-                const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
-                const reply = await handlePersonalChat({
-                  supabase,
-                  userId,
-                  messageText: message.text ?? "",
-                  isSticky: wasPersonal && !isPersonal === false,
-                });
-                const sendViaBaileys = async (msg: string) => {
-                  const baseUrl = process.env.BAILEYS_SERVER_URL;
-                  const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
-                  if (!baseUrl) return;
-                  await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-                    body: JSON.stringify({ userId, jid: replyJid, message: msg }),
-                  }).catch(() => {});
-                };
-                await sendViaBaileys(reply);
-                if (businessTriggers.test(text)) {
-                  await sendViaBaileys("ok business mode on. ab data-aware replies dunga.");
-                }
-              } catch (err: any) {
-                console.error(`[API:ai/whatsapp/webhook] personal chat failed: ${err?.message}`);
-              }
-            } else {
-              const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
-              await handleOwnerWhatsAppCommand(supabase, {
-                userId,
-                text: message.text,
-                replyJid,
-              });
-            }
-          }
-        }
+        const { routeOwnerMessage } = await import("@/lib/ai/whatsapp/owner-router");
+        await routeOwnerMessage(supabase, {
+          userId,
+          text: message.text,
+          replyJid,
+        });
       } catch (err: any) {
         console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
       }
@@ -230,8 +117,8 @@ export async function POST(request: NextRequest) {
           const boundUserId = bound.id;
           // Run synchronously — after() on Vercel delays up to 6 min
           try {
-            const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
-            await handleOwnerWhatsAppCommand(supabase, {
+            const { routeOwnerMessage } = await import("@/lib/ai/whatsapp/owner-router");
+            await routeOwnerMessage(supabase, {
               userId: boundUserId,
               text: message.text,
               replyJid: message.remoteJid,

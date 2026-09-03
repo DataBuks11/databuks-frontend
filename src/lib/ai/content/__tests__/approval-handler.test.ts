@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseApprovalReply } from "@/lib/ai/content/approval-handler";
+import { buildPublishRow } from "@/lib/ai/content/approval-handler";
 
 describe("parseApprovalReply", () => {
   it("returns 'approved' for yes", () => {
@@ -34,5 +35,35 @@ describe("parseApprovalReply", () => {
   });
   it("handles Hinglish no (nah)", () => {
     expect(parseApprovalReply("nah").decision).toBe("rejected");
+  });
+});
+
+describe("buildPublishRow (approved mirror)", () => {
+  const draft = {
+    id: "d1",
+    user_id: "u1",
+    topic: "Diwali Offer",
+    caption: "Great deals this Diwali",
+    content_type: "post",
+    provider: "instagram",
+    hashtags: ["diwali", "sale"],
+    cta: "DM us",
+    image_url: "https://img.example.com/1.jpg",
+    image_prompt: "diwali themed",
+  };
+
+  it("produces a due-now scheduled row when approved", () => {
+    const row = buildPublishRow(draft as any, "approved", null);
+    expect(row.status).toBe("scheduled");
+    expect(row.platform).toBe("instagram");
+    expect(row.hashtags).toContain("diwali");
+    expect(row.scheduled_date).toBeTruthy();
+  });
+
+  it("uses the requested time when scheduled", () => {
+    const at = new Date(Date.now() + 3600_000).toISOString();
+    const row = buildPublishRow(draft as any, "scheduled", at);
+    expect(row.status).toBe("scheduled");
+    expect(row.scheduled_date).toBe(at);
   });
 });

@@ -127,7 +127,8 @@ export default function SettingsPage() {
     testSending: boolean;
     testResult: string | null;
     phoneInput: string;
-  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "" });
+    mode: "business" | "personal" | null;
+  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "", mode: null });
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -140,6 +141,7 @@ export default function SettingsPage() {
             enabled: d.enabled ?? false,
             jid: d.jid ?? null,
             phoneInput: d.jid ? d.jid.replace("@s.whatsapp.net", "") : "",
+            mode: d.mode ?? "business",
             loading: false,
           }));
         } else {
@@ -519,6 +521,33 @@ export default function SettingsPage() {
                             setPersonalWA((prev) => ({ ...prev, enabled: checked }))
                           }
                         />
+                      </div>
+
+                      {/* Assistant Mode */}
+                      <div className="glass-card rounded-xl border border-white/[0.08] p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-sky-400/10 flex items-center justify-center">
+                              <MessageSquare className="w-4 h-4 text-sky-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-white">
+                                Assistant Mode:{" "}
+                                <span className="capitalize">{personalWA.mode ?? "business"}</span>
+                              </p>
+                              <p className="text-xs text-white/40">
+                                WhatsApp pe "personal" ya "back to business" likh ke switch karo.
+                                Personal = casual chat (no business data), Business = data-aware replies.
+                              </p>
+                            </div>
+                          </div>
+                          <Badge
+                            variant={personalWA.mode === "personal" ? "warning" : "success"}
+                            className="text-xs"
+                          >
+                            {personalWA.mode === "personal" ? "Personal" : "Business"}
+                          </Badge>
+                        </div>
                       </div>
 
                       {/* Action Buttons */}

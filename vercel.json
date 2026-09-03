@@ -28,6 +28,14 @@
     {
       "path": "/api/cron/backfill-lead-contacts",
       "schedule": "30 1 * * *"
+    },
+    {
+      "path": "/api/cron/lead-followups",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/content-publisher",
+      "schedule": "0 * * * *"
     }
   ]
 }
