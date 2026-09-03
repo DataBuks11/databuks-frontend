@@ -82,7 +82,17 @@ interface OutreachStats {
   meetingsBooked: number;
   repliesToday: number;
   followUpsToday: number;
+  /** Today's funnel/lead counts (real DB values) */
+  enrichedToday: number;
+  qualifiedToday: number;
+  interestedToday: number;
+  inProgressToday: number;
+  rejectedToday: number;
+  /** Channel connectivity — which channels can actually send today */
+  channelStatus: { channel: string; connected: boolean; reason: string }[];
 }
+
+const CHANNEL_ORDER = ["whatsapp", "instagram", "facebook", "linkedin", "email"];
 
 async function fetchOutreachStats(supabase: any, userId: string): Promise<OutreachStats> {
   const today = startOfTodayISO();
@@ -93,6 +103,12 @@ async function fetchOutreachStats(supabase: any, userId: string): Promise<Outrea
     meetingsBooked: 0,
     repliesToday: 0,
     followUpsToday: 0,
+    enrichedToday: 0,
+    qualifiedToday: 0,
+    interestedToday: 0,
+    inProgressToday: 0,
+    rejectedToday: 0,
+    channelStatus: [],
   };
   try {
     const { data: events } = await supabase
@@ -110,7 +126,6 @@ async function fetchOutreachStats(supabase: any, userId: string): Promise<Outrea
         }
         empty.sentToday += 1;
       } else if (e.event_type === "WHATSAPP_INBOUND" || e.event_type === "INBOUND_REPLY") {
-        // Inbound lead messages = replies to our outreach
         empty.repliesToday += 1;
       } else if (e.event_type === "FOLLOWUP_SENT") {
         empty.followUpsToday += 1;
@@ -129,8 +144,112 @@ async function fetchOutreachStats(supabase: any, userId: string): Promise<Outrea
       .eq("status", "scheduled")
       .gte("scheduled_at", today);
     empty.meetingsBooked = meetings ?? 0;
+
+    // ─── Real funnel counts for today ────────────────────────────────────
+    // enriched: discovered today with actual contact values
+    const { data: discoveredToday } = await supabase
+      .from("discovered_leads")
+      .select("id, lead_score, evidence")
+      .eq("user_id", userId)
+      .gte("created_at", today)
+      .limit(200);
+    let enriched = 0;
+    let qualified = 0;
+    for (const d of discoveredToday ?? []) {
+      const cd = d?.evidence?.contact_details ?? {};
+      if (cd.phone || cd.email || cd.instagram) enriched += 1;
+      if ((d?.lead_score ?? 0) >= 60) qualified += 1;
+    }
+    empty.enrichedToday = enriched;
+    empty.qualifiedToday = qualified;
+
+    // interested / in-progress / rejected from the leads table (today's rows)
+    const { data: leadsToday } = await supabase
+      .from("leads")
+      .select("status, funnel_stage")
+      .eq("user_id", userId)
+      .gte("created_at", today)
+      .limit(200);
+    for (const l of leadsToday ?? []) {
+      const st = String(l?.status ?? "");
+      const fs = String(l?.funnel_stage ?? "");
+      if (/reject|cold|closed_lost|not_relevant/i.test(st) || /rejected|not_relevant/i.test(fs)) {
+        empty.rejectedToday += 1;
+      } else if (/interest|qualified|proposal/i.test(fs) || /interested|qualified/i.test(st)) {
+        empty.interestedToday += 1;
+      } else {
+        empty.inProgressToday += 1;
+      }
+    }
+
+    // ─── Channel connectivity (real statuses) ────────────────────────────
+    const { data: connections } = await supabase
+      .from("social_connections")
+      .select("platform, status")
+      .eq("user_id", userId);
+    const connMap: Record<string, string> = {};
+    for (const c of connections ?? []) {
+      const p = String(c?.platform ?? "").toLowerCase();
+      const s = String(c?.status ?? "");
+      if (!connMap[p] || s !== "connected") connMap[p] = s;
+    }
+    // WhatsApp counts as connected when a baileys session or profile phone exists
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("phone, personal_assistant_enabled, personal_whatsapp_jid")
+      .eq("id", userId)
+      .maybeSingle();
+    const whatsappOk = !!(profile?.phone || profile?.personal_whatsapp_jid);
+    const profileData = profile as any;
+    empty.channelStatus = CHANNEL_ORDER.map((ch) => {
+      if (ch === "whatsapp") {
+        return whatsappOk
+          ? { channel: ch, connected: true, reason: "" }
+          : { channel: ch, connected: false, reason: "profile phone not set" };
+      }
+      const st = connMap[ch] ?? "not_connected";
+      if (st === "connected") return { channel: ch, connected: true, reason: "" };
+      if (st === "expired") return { channel: ch, connected: false, reason: "token expired" };
+      if (st === "pending") return { channel: ch, connected: false, reason: "pending connection" };
+      return { channel: ch, connected: false, reason: "not connected" };
+    });
   } catch {}
   return empty;
+}
+
+async function fetchMonthlyMeetingStats(supabase: any, userId: string): Promise<{
+  target: number;
+  booked: number;
+  remaining: number;
+  pct: number;
+} | null> {
+  try {
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+    const { data: ctx } = await supabase
+      .from("business_context")
+      .select("monthly_meeting_target")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const target = Number((ctx as any)?.monthly_meeting_target ?? 0);
+    if (!target || target <= 0) return null;
+    const { count } = await supabase
+      .from("meetings")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("status", ["scheduled", "confirmed"])
+      .gte("scheduled_at", startOfMonth.toISOString());
+    const booked = count ?? 0;
+    return {
+      target,
+      booked,
+      remaining: Math.max(0, target - booked),
+      pct: Math.min(100, Math.round((booked / target) * 100)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchPendingApprovals(supabase: any, userId: string): Promise<{ posts: number; drafts: number }> {
@@ -158,7 +277,8 @@ export function composeDailySummary(
   newToday: LeadRow[],
   hot: LeadRow[],
   outreach?: OutreachStats,
-  approvals?: { posts: number; drafts: number }
+  approvals?: { posts: number; drafts: number },
+  monthly?: { target: number; booked: number; remaining: number; pct: number } | null
 ): string {
   const lines: string[] = ["Aaj ka business summary:"];
 
@@ -172,6 +292,17 @@ export function composeDailySummary(
 
   if (hot.length) {
     lines.push(`• Garam leads: ${hot.map((l) => `${shortName(l.name)} ${l.funnel_stage || ""}`.trim()).join(", ")}`);
+  }
+
+  // Today's funnel counts (REAL DB values)
+  if (outreach) {
+    const funnelBits: string[] = [];
+    if (outreach.enrichedToday > 0) funnelBits.push(`${outreach.enrichedToday} contact-details mili`);
+    if (outreach.qualifiedToday > 0) funnelBits.push(`${outreach.qualifiedToday} qualified`);
+    if (outreach.interestedToday > 0) funnelBits.push(`${outreach.interestedToday} interested`);
+    if (outreach.inProgressToday > 0) funnelBits.push(`${outreach.inProgressToday} in progress`);
+    if (outreach.rejectedToday > 0) funnelBits.push(`${outreach.rejectedToday} rejected/not relevant`);
+    if (funnelBits.length) lines.push(`• Pipeline aaj: ${funnelBits.join(", ")}`);
   }
 
   // Outreach pipeline (multi-channel)
@@ -194,6 +325,15 @@ export function composeDailySummary(
     lines.push(`• Follow-ups aaj: ${outreach.followUpsToday} bheje`);
   }
 
+  // Channel connectivity — which channels were NOT usable and why
+  if (outreach && outreach.channelStatus.length) {
+    const notConnected = outreach.channelStatus.filter((c) => !c.connected);
+    if (notConnected.length) {
+      const skipped = notConnected.map((c) => `${c.channel} (${c.reason})`);
+      lines.push(`• Connected nahi (isliye skip): ${skipped.join(", ")}`);
+    }
+  }
+
   lines.push(
     `• Meetings: ${s.meetingsScheduled} booked, ${s.meetingsUpcoming} upcoming`,
     `• Content: ${s.postsPublishedToday} aaj publish hue (total ${s.postsPublishedTotal}), ${s.postsDraft} draft, ${s.postsScheduled} scheduled`,
@@ -206,6 +346,20 @@ export function composeDailySummary(
 
   if (approvals && (approvals.posts > 0 || approvals.drafts > 0)) {
     lines.push(`• Pending approvals: ${approvals.posts} posts review ke liye (yes/no bol kar approve karo)`);
+  }
+
+  // Monthly meeting target progress
+  if (monthly && monthly.target > 0) {
+    lines.push(
+      `• Monthly meeting target: ${monthly.booked}/${monthly.target} (${monthly.pct}%), ${monthly.remaining} remaining`
+    );
+    if (monthly.pct < 50) {
+      lines.push(`  → Action: outreach focus karo — "${'outreach chalao'}" se top leads ko message bhejo.`);
+    } else if (monthly.remaining > 0) {
+      lines.push(`  → Action: interested leads se follow-up karo meetings book karne ke liye.`);
+    } else {
+      lines.push(`  → Target achieved ✅ pais!`);
+    }
   }
 
   if (s.meetingsUpcoming > 0 || s.discoveredQualified >= 60) {
@@ -232,12 +386,13 @@ export async function sendDailySummaries(supabase: any): Promise<DailySummaryRes
     const jid = await resolveUserJid(supabase, p.id);
     if (!jid) continue;
     try {
-      const [snapshot, newToday, hot, outreach, approvals] = await Promise.all([
+      const [snapshot, newToday, hot, outreach, approvals, monthly] = await Promise.all([
         gatherOwnerSnapshot(supabase, p.id),
         fetchNewToday(supabase, p.id),
         fetchHotLeads(supabase, p.id),
         fetchOutreachStats(supabase, p.id),
         fetchPendingApprovals(supabase, p.id),
+        fetchMonthlyMeetingStats(supabase, p.id),
       ]);
       // Skip silent accounts entirely — no noise for zero-activity users
       const hasActivity =
@@ -251,7 +406,7 @@ export async function sendDailySummaries(supabase: any): Promise<DailySummaryRes
         results.push({ userId: p.id, phoneJid: jid, ok: true, error: "skipped_empty_account" });
         continue;
       }
-      const message = composeDailySummary(snapshot, newToday, hot, outreach, approvals);
+      const message = composeDailySummary(snapshot, newToday, hot, outreach, approvals, monthly);
       await sendViaBaileys({ userId: p.id, jid, message });
       results.push({ userId: p.id, phoneJid: jid, ok: true });
     } catch (err: any) {

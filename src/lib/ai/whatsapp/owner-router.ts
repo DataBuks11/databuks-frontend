@@ -13,7 +13,40 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendViaBaileys } from "@/lib/whatsapp/jid-utils";
+import { sendViaBaileys, resolveUserJid } from "@/lib/whatsapp/jid-utils";
+
+/** After a post is rejected, generate one replacement draft and push it to
+ *  the owner's WhatsApp so the pipeline keeps moving instead of stalling. */
+async function generateReplacementPost(
+  supabase: SupabaseClient,
+  userId: string,
+  replyJid: string
+): Promise<string | null> {
+  try {
+    const { generateDailyPostsForUser } = await import("@/lib/ai/content/daily-generator");
+    const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
+    const result = await generateDailyPostsForUser(supabase, userId, { maxPosts: 1 });
+    if (result.count === 0 || result.posts.length === 0) {
+      return "replacement generate nahi ho paya (business context check karo).";
+    }
+    const baseUrl = process.env.BAILEYS_SERVER_URL;
+    const jid = replyJid || (await resolveUserJid(supabase, userId));
+    if (baseUrl && jid) {
+      await pushDailyPostsToWhatsApp(
+        baseUrl,
+        process.env.BAILEYS_API_KEY || "dev-key",
+        userId,
+        jid,
+        result.posts
+      );
+      return null; // replacement already pushed as a normal review message
+    }
+    return "replacement ready hai par WhatsApp send nahi ho paya (Baileys URL missing).";
+  } catch (err: any) {
+    console.error(`[owner-router] replacement gen failed: ${err?.message}`);
+    return "replacement generate karte waqt error aaya, dobara try karo.";
+  }
+}
 
 export async function routeOwnerMessage(
   supabase: SupabaseClient,
@@ -26,17 +59,26 @@ export async function routeOwnerMessage(
     const { handleApprovalReply } = await import("@/lib/ai/content/approval-handler");
     const approval = await handleApprovalReply(supabase, userId, txt);
     if (approval.status !== "not-approval") {
+      if (approval.status === "no-pending") {
+        await sendViaBaileys({ userId, jid: replyJid, message: "koi pending post nahi hai abhi." });
+        return { handled: true };
+      }
       const ack =
-        approval.status === "no-pending"
-          ? "koi pending post nahi hai abhi."
-          : approval.status === "approved"
-            ? "approved ✓ ab post publish hone ke liye queue mein hai."
-            : approval.status === "rejected"
-              ? "rejected ✗ skip kar diya."
-              : approval.status === "edited"
-                ? "edit saved. naya version bhej raha hoon."
-                : `scheduled ✓ ${(approval as any).topic ?? ""} schedule ho gaya.`;
+        approval.status === "approved"
+          ? "approved ✓ ab post publish hone ke liye queue mein hai."
+          : approval.status === "rejected"
+            ? "rejected ✗ skip kar diya. replacement bana raha hoon..."
+            : approval.status === "edited"
+              ? "edit saved. naya version bhej raha hoon."
+              : `scheduled ✓ ${(approval as any).topic ?? ""} schedule ho gaya.`;
       await sendViaBaileys({ userId, jid: replyJid, message: ack });
+      // Replacement post for rejected drafts
+      if (approval.status === "rejected") {
+        const replacementMsg = await generateReplacementPost(supabase, userId, replyJid);
+        if (replacementMsg) {
+          await sendViaBaileys({ userId, jid: replyJid, message: replacementMsg });
+        }
+      }
       return { handled: true };
     }
   } catch (err: any) {
