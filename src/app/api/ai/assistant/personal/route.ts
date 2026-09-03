@@ -56,10 +56,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { enabled, jid } = body as { enabled?: boolean; jid?: string };
+    const { enabled, jid, mode } = body as { enabled?: boolean; jid?: string; mode?: "business" | "personal" };
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     if (typeof enabled === "boolean") update.personal_assistant_enabled = enabled;
     if (typeof jid === "string") update.personal_whatsapp_jid = jid || null;
+    if (mode === "business" || mode === "personal") update.assistant_mode = mode;
 
     const { error } = await supabase
       .from("profiles")

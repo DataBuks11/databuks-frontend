@@ -128,7 +128,8 @@ export default function SettingsPage() {
     testResult: string | null;
     phoneInput: string;
     mode: "business" | "personal" | null;
-  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "", mode: null });
+    modeUpdating: boolean;
+  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "", mode: null, modeUpdating: false });
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -523,7 +524,7 @@ export default function SettingsPage() {
                         />
                       </div>
 
-                      {/* Assistant Mode */}
+                      {/* Assistant Mode — switch between Personal Assistant & Business Chatbot */}
                       <div className="glass-card rounded-xl border border-white/[0.08] p-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
@@ -536,8 +537,8 @@ export default function SettingsPage() {
                                 <span className="capitalize">{personalWA.mode ?? "business"}</span>
                               </p>
                               <p className="text-xs text-white/40">
-                                WhatsApp pe "personal" ya "back to business" likh ke switch karo.
-                                Personal = casual chat (no business data), Business = data-aware replies.
+                                WhatsApp pe "personal" ya "back to business" likh ke bhi switch ho sakta hai.
+                                Personal = casual chat (no business data), Business = business context ke hisaab se replies.
                               </p>
                             </div>
                           </div>
@@ -547,6 +548,43 @@ export default function SettingsPage() {
                           >
                             {personalWA.mode === "personal" ? "Personal" : "Business"}
                           </Badge>
+                        </div>
+                        <div className="mt-4 flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/[0.06] p-3">
+                          <div>
+                            <p className="text-sm font-medium text-white">
+                              {personalWA.mode === "personal" ? "Personal Assistant ON" : "Business Chatbot ON"}
+                            </p>
+                            <p className="text-xs text-white/40">
+                              {personalWA.mode === "personal"
+                                ? "Casual chats, no business data shared"
+                                : "Replies using your business context (services, tone, leads)"}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={personalWA.mode === "personal"}
+                            disabled={personalWA.modeUpdating}
+                            onCheckedChange={async (checked) => {
+                              const nextMode = checked ? "personal" : "business";
+                              setPersonalWA((prev) => ({ ...prev, modeUpdating: true }));
+                              try {
+                                const res = await fetch("/api/ai/assistant/personal", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ mode: nextMode }),
+                                });
+                                if (res.ok) {
+                                  setPersonalWA((prev) => ({ ...prev, mode: nextMode, testResult: `${nextMode} mode on ✓` }));
+                                } else {
+                                  setPersonalWA((prev) => ({ ...prev, testResult: "Mode switch failed" }));
+                                }
+                              } catch {
+                                setPersonalWA((prev) => ({ ...prev, testResult: "Mode switch failed" }));
+                              } finally {
+                                setPersonalWA((prev) => ({ ...prev, modeUpdating: false }));
+                                setTimeout(() => setPersonalWA((prev) => ({ ...prev, testResult: null })), 3000);
+                              }
+                            }}
+                          />
                         </div>
                       </div>
 
