@@ -81,7 +81,13 @@ export const settingsData: SettingsData = {
     contentNotifications: false,
     weeklyReport: true,
   },
-  integrations: [],
+  integrations: [
+    {
+      name: "Personal WhatsApp Assistant",
+      connected: false,
+      lastSync: "Never",
+    },
+  ],
   apiKeys: [],
   security: {
     twoFactorEnabled: false,
