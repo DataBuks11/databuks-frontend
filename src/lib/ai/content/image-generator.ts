@@ -29,6 +29,7 @@ export async function generateImage(prompt: string): Promise<GeneratedImage> {
     return placeholderImage(prompt);
   }
 
+  const timeoutMs = 120_000;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -37,18 +38,38 @@ export async function generateImage(prompt: string): Promise<GeneratedImage> {
         ...(key ? { Authorization: `Bearer ${key}` } : {}),
       },
       body: JSON.stringify({ prompt }),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       console.warn(`[image-generator] upstream ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return placeholderImage(prompt);
     }
-    const mimeType = (res.headers.get("content-type") ?? "image/jpeg").split(";")[0].trim();
+    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+
+    // V2 upstream returns JSON: { ok, key, url } — image already persisted to
+    // KV/R2 with a public URL. Prefer that: no base64 bloat in the DB, and the
+    // URL is directly usable by Composio for publishing.
+    if (contentType.includes("json")) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data.url === "string" && /^https?:\/\//i.test(data.url)) {
+        return {
+          url: data.url,
+          mimeType: "image/jpeg",
+          prompt,
+          bytes: Number(data.bytes ?? 0),
+        };
+      }
+      console.warn(`[image-generator] upstream JSON without url: ${JSON.stringify(data).slice(0, 200)}`);
+      return placeholderImage(prompt);
+    }
+
+    // V1 upstream returns raw binary image
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 200) {
       // Some upstream errors return tiny JSON even on non-2xx; treat as failure
       return placeholderImage(prompt);
     }
+    const mimeType = contentType || "image/jpeg";
     const base64 = buf.toString("base64");
     return {
       url: `data:${mimeType};base64,${base64}`,
