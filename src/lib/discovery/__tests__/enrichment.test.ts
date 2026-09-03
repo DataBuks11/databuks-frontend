@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizePhone,
   normalizeEmail,
+  isUsableEmail,
   enrichFromWebsite,
 } from "@/lib/discovery/enrichment";
 
@@ -49,6 +50,46 @@ describe("email normalization", () => {
     expect(normalizeEmail("not-an-email")).toBeNull();
     expect(normalizeEmail("@no-local.com")).toBeNull();
     expect(normalizeEmail("no-domain@")).toBeNull();
+  });
+
+  // Regression: scraped retina asset filenames matched the naive email
+  // pattern ("@2x" read as domain, "png" as TLD) and were stored as lead
+  // emails, producing hard bounces on outreach.
+  it("rejects retina/asset filenames that look like emails", () => {
+    expect(normalizeEmail("logo@2x.png")).toBeNull();
+    expect(normalizeEmail("preloader@2x.gif")).toBeNull();
+    expect(normalizeEmail("flags@2x.png")).toBeNull();
+    expect(normalizeEmail("bg-info@2x.png")).toBeNull();
+    expect(normalizeEmail("logo-startupsd-black@2x.png.png")).toBeNull();
+    expect(normalizeEmail("icon@3x.svg")).toBeNull();
+    expect(normalizeEmail("sprite@2x.css")).toBeNull();
+  });
+
+  it("rejects hash-like local parts (error/monitoring mailboxes)", () => {
+    expect(normalizeEmail("605a7baede844d278b89dc95ae0a9123@sentry-next.wixpress.com")).toBeNull();
+  });
+
+  it("still accepts legitimate business emails", () => {
+    expect(normalizeEmail("info@iwebindia.com")).toBe("info@iwebindia.com");
+    expect(normalizeEmail("contact@nagpurwebdesign.com")).toBe("contact@nagpurwebdesign.com");
+    expect(normalizeEmail("first.last+tag@sub.domain.co.in")).toBe("first.last+tag@sub.domain.co.in");
+    // A real address whose local part is short hex must not be mistaken for a hash
+    expect(normalizeEmail("abc123@example.com")).toBe("abc123@example.com");
+  });
+});
+
+describe("isUsableEmail", () => {
+  it("accepts valid addresses", () => {
+    expect(isUsableEmail("info@iwebindia.com")).toBe(true);
+  });
+
+  it("rejects junk, empty and non-string values", () => {
+    expect(isUsableEmail("logo@2x.png")).toBe(false);
+    expect(isUsableEmail("")).toBe(false);
+    expect(isUsableEmail(null)).toBe(false);
+    expect(isUsableEmail(undefined)).toBe(false);
+    expect(isUsableEmail(12345)).toBe(false);
+    expect(isUsableEmail(`${"a".repeat(250)}@example.com`)).toBe(false);
   });
 });
 

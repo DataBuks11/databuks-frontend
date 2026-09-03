@@ -1,5 +1,6 @@
 import { getActiveProvider } from "../providers";
 import { sendEmail } from "./email-adapter";
+import { isUsableEmail } from "@/lib/discovery/enrichment";
 
 /**
  * MULTI-CHANNEL OUTREACH ORCHESTRATOR
@@ -137,6 +138,11 @@ async function fetchCandidateChannels(
       .maybeSingle();
     email = lead?.email ?? null;
   }
+  // Scraped contact data contains junk that matches a naive email regex
+  // (retina asset names like "logo@2x.png", Sentry hash mailboxes). Sending
+  // to those hard-bounces and damages sender reputation, so drop them here
+  // as well as at extraction time — rows written before this fix still exist.
+  if (!isUsableEmail(email)) email = null;
   return { whatsapp, instagram, facebook, linkedin, email };
 }
 

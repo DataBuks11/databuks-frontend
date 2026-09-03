@@ -56,11 +56,37 @@ export function normalizePhone(raw: string): string | null {
   return cleaned;
 }
 
+/**
+ * Asset/web-file extensions that must never be treated as an email TLD.
+ * Retina image filenames ("logo@2x.png") match the naive email pattern
+ * because "@2x" parses as a domain and the image extension as a TLD.
+ */
+const ASSET_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "bmp",
+  "css", "js", "mjs", "json", "xml", "map", "woff", "woff2", "ttf", "otf",
+  "mp4", "webm", "mov", "mp3", "wav", "pdf", "zip", "gz", "txt", "html",
+]);
+
+/** Local parts that are pure hex hashes — internal/error mailboxes
+ * (e.g. "605a7b…9123@sentry-next.wixpress.com"), never a business contact. */
+const HASH_LOCAL_PART = /^[0-9a-f]{16,}$/i;
+
 export function normalizeEmail(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase();
   const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   if (!emailPattern.test(trimmed)) return null;
+  const at = trimmed.lastIndexOf("@");
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  const tld = domain.slice(domain.lastIndexOf(".") + 1).toLowerCase();
+  if (ASSET_EXTENSIONS.has(tld)) return null; // "logo@2x.png" and friends
+  if (HASH_LOCAL_PART.test(local)) return null; // sentry/error mailboxes
   return trimmed;
+}
+
+/** Cheap sanity check before using a stored email as a send target. */
+export function isUsableEmail(email: unknown): email is string {
+  return typeof email === "string" && email.length > 3 && email.length <= 254 && normalizeEmail(email) !== null;
 }
 
 // ─── Extraction Helpers ─────────────────────────────────────────────────────
