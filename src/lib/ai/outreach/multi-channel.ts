@@ -474,9 +474,9 @@ export async function runMultiChannelOutreachForUser(
   const limit = opts.limit ?? 5;
   const minScore = opts.minScore ?? 60;
 
-  const { data: candidates } = await supabase
+const { data: candidates } = await supabase
     .from("discovered_leads")
-    .select("id, user_id, author_name, author_handle, author_profile_url, source_platform, source_url, detected_requirement, business_context_match, lead_score, intent_score, relevance_score, evidence, conversation_stage, opportunity_id, lead_id, raw_metadata")
+    .select("id, user_id, author_name, author_handle, author_profile_url, source_platform, source_url, detected_requirement, business_context_match, lead_score, intent_score, relevance_score, evidence, conversation_stage, opportunity_id, lead_id")
     .eq("user_id", userId)
     .in("conversation_stage", ["DISCOVER", "QUALIFY"])
     .gte("lead_score", minScore)
