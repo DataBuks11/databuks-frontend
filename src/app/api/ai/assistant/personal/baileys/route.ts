@@ -26,6 +26,17 @@ function baileysBase(): string | null {
   return process.env.BAILEYS_SERVER_URL ?? null;
 }
 
+/**
+ * The Baileys server keeps ONE session per userId. The business WhatsApp
+ * session already uses the raw admin userId — a personal assistant number
+ * must NOT reuse that (QR would never generate; we'd just see the business
+ * session's "connected" state). Namespace the personal session under a
+ * distinct key so both are independent linked devices.
+ */
+function personalScope(userId: string): string {
+  return `personal__${userId}`;
+}
+
 function baileysHeaders() {
   return {
     "Content-Type": "application/json",
@@ -40,11 +51,14 @@ export async function GET(request: NextRequest) {
   const base = baileysBase();
   if (!base) return NextResponse.json({ error: "BAILEYS_SERVER_URL not configured" }, { status: 500 });
   if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+  const scope = personalScope(userId);
 
   try {
     if (action === "qr") {
-      // Poll baileys for a QR after connect was requested
-      const res = await fetch(`${base.replace(/\/+$/, "")}/qr/${userId}`, {
+      // Poll baileys for a QR after connect was requested. NOTE: baileys
+      // returns the QR under `qrCode`, not `qr` — reading the wrong field
+      // here made the dashboard show "preparing QR..." forever.
+      const res = await fetch(`${base.replace(/\/+$/, "")}/qr/${scope}`, {
         headers: baileysHeaders(),
         cache: "no-store",
       });
@@ -53,15 +67,21 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ ok: false, error: `baileys ${res.status}: ${t.slice(0, 200)}` }, { status: res.status });
       }
       const data = await res.json();
-      return NextResponse.json({ ok: true, qr: data?.qr ?? null, connected: data?.connected ?? false });
+      return NextResponse.json({ ok: true, qr: data?.qrCode ?? null, connected: data?.connected ?? false });
     }
     if (action === "status") {
-      const res = await fetch(`${base.replace(/\/+$/, "")}/status/${userId}`, {
+      const res = await fetch(`${base.replace(/\/+$/, "")}/status/${scope}`, {
         headers: baileysHeaders(),
         cache: "no-store",
       });
       const data = await res.json().catch(() => ({}));
-      return NextResponse.json({ ok: res.ok, connected: data?.connected ?? false, phone: data?.phone ?? null, error: res.ok ? null : String(data?.error ?? "status failed").slice(0, 200) });
+      return NextResponse.json({
+        ok: res.ok,
+        connected: data?.connected ?? false,
+        hasQr: data?.hasQr ?? false,
+        phone: data?.phoneNumber ?? data?.phone ?? null,
+        error: res.ok ? null : String(data?.error ?? "status failed").slice(0, 200),
+      });
     }
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   } catch (err: any) {
@@ -76,22 +96,23 @@ export async function POST(request: NextRequest) {
   const base = baileysBase();
   if (!base) return NextResponse.json({ error: "BAILEYS_SERVER_URL not configured" }, { status: 500 });
   if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+  const scope = personalScope(userId);
 
   try {
     if (action === "connect") {
       const res = await fetch(`${base.replace(/\/+$/, "")}/connect`, {
         method: "POST",
         headers: baileysHeaders(),
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId: scope }),
       });
       const data = await res.json().catch(() => ({}));
-      return NextResponse.json({ ok: res.ok, error: res.ok ? null : String(data?.error ?? "connect failed").slice(0, 200) });
+      return NextResponse.json({ ok: res.ok, qr: data?.qrCode ?? null, error: res.ok ? null : String(data?.error ?? "connect failed").slice(0, 200) });
     }
     if (action === "disconnect") {
       const res = await fetch(`${base.replace(/\/+$/, "")}/disconnect`, {
         method: "POST",
         headers: baileysHeaders(),
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId: scope }),
       });
       const data = await res.json().catch(() => ({}));
       return NextResponse.json({ ok: res.ok, error: res.ok ? null : String(data?.error ?? "disconnect failed").slice(0, 200) });
