@@ -56,7 +56,43 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { enabled, jid, mode } = body as { enabled?: boolean; jid?: string; mode?: "business" | "personal" };
+    const { enabled, jid, mode, test_message } = body as {
+      enabled?: boolean;
+      jid?: string;
+      mode?: "business" | "personal";
+      test_message?: boolean;
+    };
+
+    // Real WhatsApp test send to the owner's number via Baileys. The old
+    // "Send Test Message" button only returned ok without sending anything —
+    // this actually forwards to Baileys /send so the user SEES the message.
+    if (test_message === true) {
+      const baseUrl = process.env.BAILEYS_SERVER_URL;
+      const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
+      const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+      if (!baseUrl || ownerPhone.length < 10) {
+        return NextResponse.json({ ok: false, error: "Baileys URL or owner number not configured" }, { status: 500 });
+      }
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+          body: JSON.stringify({
+            userId: user.id,
+            jid: `${ownerPhone}@s.whatsapp.net`,
+            message: `hi ${(user.user_metadata?.full_name ?? "boss").split(" ")[0]}, DataBuks AI assistant yahan hai. ye test message aapke personal WhatsApp par aaya hai. reply karke dekh sakte ho.`,
+          }),
+        });
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          return NextResponse.json({ ok: false, error: `Baileys ${res.status}: ${t.slice(0, 160)}` }, { status: 502 });
+        }
+        return NextResponse.json({ ok: true, sent: true });
+      } catch (err: any) {
+        return NextResponse.json({ ok: false, error: err?.message ?? "send failed" }, { status: 500 });
+      }
+    }
+
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     if (typeof enabled === "boolean") update.personal_assistant_enabled = enabled;
     if (typeof jid === "string") update.personal_whatsapp_jid = jid || null;
