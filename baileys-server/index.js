@@ -248,13 +248,21 @@ function setupMessageHandler(socket, userId) {
       const ownPhones = resolveOwnPhones();
       const isSelfChat =
         fromMe && !!remotePhone && (ownPhones.has(remotePhone) || [...ownPhones].some((p) => p && (p.includes(remotePhone) || remotePhone.includes(p))));
-      // WhatsApp addresses linked devices with @lid (logical ID) JIDs. When a
-      // message arrives from one of OUR OWN linked devices (the owner chatting
-      // with their own assistant number from another device), the remote looks
-      // like "203568816590886@lid" — not a phone — so the self-chat check above
-      // fails and the message is mislabeled as a LEAD (then the webhook skips
-      // it as outbound and the AI never replies). Treat @lid remotes as self.
-      const isLidSelfChat = !fromMe && /@lid$/i.test(String(msg.key.remoteJid ?? ""));
+      // Own LID resolution: Baileys v7 exposes the account's own LID via
+      // socket.user.lid ("123...@lid"). A message whose remoteJid matches OUR
+      // OWN LID is a self-chat from one of our linked devices (assistant
+      // command). Everyone else's @lid JIDs are REAL PEOPLE — never treat a
+      // generic @lid remote as self; that misroutes customer messages into
+      // the owner-assistant path and they never get a lead reply.
+      const ownLid = String(socket.user?.lid ?? "").split("@")[0].replace(/\D/g, "");
+      const ownLidSuffix = String(socket.user?.lid ?? "").split("@")[1] ?? "";
+      const remoteLidRaw = String(msg.key.remoteJid ?? "").split("@")[0].replace(/\D/g, "");
+      const remoteSuffix = String(msg.key.remoteJid ?? "").split("@")[1] ?? "";
+      const isLidSelfChat =
+        !fromMe &&
+        !!ownLid &&
+        remoteLidRaw === ownLid &&
+        (!ownLidSuffix || ownLidSuffix === remoteSuffix);
       const ownerPhone = process.env.OWNER_WHATSAPP_NUMBER
         ? process.env.OWNER_WHATSAPP_NUMBER.replace(/\D/g, "")
         : "";
@@ -313,7 +321,7 @@ function setupMessageHandler(socket, userId) {
       };
 
       console.log(
-        `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
+        `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] ownLid=${ownLid || "none"} remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
 
       // Store in Supabase. Self-chat (owner commands) is stored unprocessed

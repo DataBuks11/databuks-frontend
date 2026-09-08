@@ -222,6 +222,15 @@ export async function processIncomingWhatsAppMessage(
   const phone = normalizeWhatsAppPhone(input.remoteJid);
   if (!phone) return { processed: false, skippedReason: "invalid_jid", replySent: false };
 
+  // Show "typing…" to the sender IMMEDIATELY — before any DB work — so the
+  // reply feels instant even while lead/conversation rows are being created
+  // and the (free, reasoning-heavy) LLM call is in flight.
+  if (sendReply) {
+    try {
+      await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "composing" });
+    } catch {}
+  }
+
   const inboundKey = idempotencyKey("wa:in", input.userId, input.messageId);
   const { data: existingInbound } = await supabase
     .from("messages")
@@ -411,14 +420,20 @@ export async function processIncomingWhatsAppMessage(
       replyText = isHinglish ? `${ph.hi}${bizBit}` : `${ph.en}${bizBit}`;
     }
     usedFastPath = true;
+  } else if (
+    // Common short conversational acknowledgments in Hindi/Marathi/Hinglish —
+    // reply instantly instead of burning a 20s reasoning-LLM call on them.
+    trimmed.length <= 40 &&
+    /^(thik|thika|theek|thik\s*aahe|thik\s*ahe|acha|achha|accha|ok\s*dada|hoil|chalte|chaley|chalel|za|jho|hmm+|ha+|ho+|ji+|yes|yeah|sahi|barobar|thik\s*hote|baghat|bagh|pahije|hota|kaay|kay|koni|kuthe|kadhi|kashala|amhi|mi|tu|tujhya|majhya|tyacha|aapli|apan|aapan)\b/i.test(lower) &&
+    !/\?/.test(trimmed)
+  ) {
+    const isMarathi = /(thik\s*aahe|thik\s*ahe|kaay|kay|koni|kuthe|kadhi|hoil|barobar|pahije|baghat|amhi|apan|tujhya|majhya)\b/i.test(lower);
+    replyText = isMarathi ? "thik aahe 👍" : "theek hai 👍";
+    usedFastPath = true;
   }
   if (usedFastPath) {
     console.log(`[LIB:ai:whatsapp] fast-path used for "${trimmed.slice(0, 30)}" — skipping LLM`);
   }
-
-  try {
-    await presenceFn({ userId: input.userId, jid: input.remoteJid, presence: "composing" });
-  } catch {}
 
   if (!usedFastPath && context) {
     try {
