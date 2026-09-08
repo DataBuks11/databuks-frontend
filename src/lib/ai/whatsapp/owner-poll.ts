@@ -80,6 +80,9 @@ export async function pollOwnerWhatsAppCommands(
     }
 
     // Self-chat filter: remote_jid must be the user's OWN number.
+    // Linked-device LID rows ("...@lid") fail the phone compare below — but
+    // the Baileys server never stores self-chat rows anyway (origin=self is
+    // skipped at store time), so LID rows here are foreign outbound chats.
     const ownPhone = await getOwnPhone(row.user_id);
     const remotePhone = String(row.remote_jid ?? "").split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
     const isSelfChat =
@@ -106,10 +109,15 @@ export async function pollOwnerWhatsAppCommands(
     }
 
     try {
+      // Reply to the owner's real phone JID — @lid remotes can't receive
+      // outbound sends via Baileys, so replies to LID rows would vanish.
+      const replyJid = /@lid$/i.test(String(row.remote_jid))
+        ? `${ownPhone}@s.whatsapp.net`
+        : row.remote_jid;
       const reply = await handleOwnerWhatsAppCommand(supabase, {
         userId: row.user_id,
         text,
-        replyJid: row.remote_jid,
+        replyJid,
       });
       await supabase
         .from("whatsapp_messages")

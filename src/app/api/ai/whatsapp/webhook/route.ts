@@ -66,9 +66,21 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const replyJid = String(message.remoteJid).includes("@")
-        ? message.remoteJid
-        : `${inboundPhone}@s.whatsapp.net`;
+      // Reply JID: owner self-chat messages arrive from a linked-device LID
+      // ("...@lid") — Baileys can only SEND to @s.whatsapp.net phone JIDs,
+      // so replying to a @lid JID silently fails. Always reply to the real
+      // phone JID instead (sender is the owner by definition in this path).
+      const ownerPhoneEnv = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+      const remoteIsLid = /@lid$/i.test(String(message.remoteJid));
+      const replyPhone =
+        ownerPhoneEnv.length >= 10
+          ? ownerPhoneEnv
+          : inboundPhone.replace(/\D/g, "");
+      const replyJid = remoteIsLid
+        ? `${replyPhone}@s.whatsapp.net`
+        : String(message.remoteJid).includes("@")
+          ? message.remoteJid
+          : `${replyPhone}@s.whatsapp.net`;
 
       // Run synchronously — after() on Vercel delays up to 6 min
       try {
@@ -118,10 +130,15 @@ export async function POST(request: NextRequest) {
           // Run synchronously — after() on Vercel delays up to 6 min
           try {
             const { routeOwnerMessage } = await import("@/lib/ai/whatsapp/owner-router");
+            // @lid JIDs can't receive outbound sends — rewrite to the bound
+            // user's real phone JID so the reply actually delivers.
+            const boundReplyJid = /@lid$/i.test(String(message.remoteJid))
+              ? `${String(bound.phone ?? "").replace(/\D/g, "")}@s.whatsapp.net`
+              : message.remoteJid;
             await routeOwnerMessage(supabase, {
               userId: boundUserId,
               text: message.text,
-              replyJid: message.remoteJid,
+              replyJid: boundReplyJid,
             });
           } catch (err: any) {
             console.error(`[API:ai/whatsapp/webhook] bound assistant failed: ${err?.message}`);
