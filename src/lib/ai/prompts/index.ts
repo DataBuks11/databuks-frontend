@@ -113,6 +113,11 @@ export interface PromptTemplate {
   /** Cap response tokens — prevents large-default model 402-credit errors on
    *  OpenRouter when the user account has limited balance. */
   maxTokens?: number;
+  /** Reasoning-effort control for reasoning models (GLM 5.3). "low" keeps
+   *  the hidden reasoning short so the final answer actually fits inside
+   *  maxTokens — without it GLM burns the whole budget on thinking and
+   *  returns null content ("returned no content" errors). */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTemplate {
@@ -473,7 +478,9 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
     }),
   ].join("\n\n");
 
-  return { system, user };
+  // "low" — short replies need barely any hidden reasoning; high-effort
+  // thinking made GLM 5.3 return null content (budget eaten by reasoning).
+  return { system, user, maxTokens: 1200, reasoningEffort: "low" };
 }
 
 export function buildSocialEventPrompt(
