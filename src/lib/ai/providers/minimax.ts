@@ -57,7 +57,7 @@ export class MiniMaxProvider implements AiProvider {
         timeoutMs: input.timeoutMs,
         providerLabel: "GLM 5.3",
       },
-      { maxAttempts: 2, baseBackoffMs: 800 }
+      { maxAttempts: 3, baseBackoffMs: 800 }
     );
   }
 }

@@ -227,13 +227,35 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
 
   const data = await response.json();
   const message = data?.choices?.[0]?.message;
-  // Reasoning models may return null `content` with the answer (or part of
-  // it) in a reasoning field. TokenRouter exposes `reasoning_content`;
-  // OpenRouter uses `reasoning`. Fallback chain covers both.
+  // Reasoning models (GLM 5.3 free) sometimes emit ALL tokens into hidden
+  // reasoning and return null `content`. Fallback chain:
+  //   1. content
+  //   2. reasoning_content (TokenRouter) — GLM drafts the final JSON there
+  //   3. reasoning (OpenRouter)
   let content: string | null = typeof message?.content === "string" ? message.content : null;
   if ((!content || content.trim() === "") && typeof message?.reasoning_content === "string" && message.reasoning_content.trim() !== "") {
-    const jsonMatch = message.reasoning_content.match(/\{[\s\S]*\}/);
-    content = jsonMatch ? jsonMatch[0] : null;
+    // The drafted final answer usually appears as the LAST {...} block in the
+    // reasoning text ("...so my reply should be {"reply": "..."}"). Grab the
+    // last JSON-looking block first; fall back to the first one.
+    const blocks = message.reasoning_content.match(/\{[\s\S]*?\}/g);
+    if (blocks && blocks.length > 0) {
+      const candidates = blocks.length > 1 ? [...blocks].reverse() : blocks;
+      for (const b of candidates) {
+        try {
+          const parsed = JSON.parse(b);
+          if (parsed && typeof parsed === "object") {
+            content = b;
+            break;
+          }
+        } catch {
+          // try the next block
+        }
+      }
+    }
+    if (!content) {
+      const anyJson = message.reasoning_content.match(/\{[\s\S]*\}/);
+      content = anyJson ? anyJson[0] : null;
+    }
   }
   if ((!content || content.trim() === "") && typeof message?.reasoning === "string") {
     // Try to extract JSON from reasoning text
@@ -241,7 +263,7 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
     content = jsonMatch ? jsonMatch[0] : null;
   }
   if (!content || content.trim() === "") {
-    throw new Error(`${params.providerLabel} returned no content`);
+    throw new Error(`${params.providerLabel} returned no content (empty response)`);
   }
 
   let parsed: unknown;
