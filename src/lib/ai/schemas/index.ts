@@ -68,7 +68,7 @@ export const qualificationSchema = z
     why_now: z.string().max(1000),
     evidence: z.array(evidenceItemSchema).max(20),
     recommended_channel: channelSchema.nullable(),
-    recommended_action: z.string().max(300).nullable(),
+    recommended_action: z.string().max(1000).nullable(),
   })
   .strict();
 
@@ -295,7 +295,7 @@ export const whatsappReplySchema = z
     task: z.literal("whatsapp_reply"),
     conversation_id: uuid,
     reply: z.string().min(1).max(1200),
-    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    language: z.enum(["english", "hindi", "hinglish", "marathi", "other"]),
     meeting_intent: z.boolean(),
     meeting_intent_evidence: z.array(evidenceItemSchema).max(5),
     needs_clarification: z.boolean(),
@@ -373,7 +373,7 @@ export const socialReplySchema = z
     task: z.literal("social_reply"),
     reply: z.string().min(1).max(600),
     tone: z.string().max(100),
-    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    language: z.enum(["english", "hindi", "hinglish", "marathi", "other"]),
     contains_claim: z.boolean(),
     confidence,
   })
@@ -486,7 +486,7 @@ export const nurtureReplySchema = z
   .object({
     task: z.literal("nurture_reply"),
     reply: z.string().min(1).max(1200),
-    language: z.enum(["english", "hindi", "hinglish", "other"]),
+    language: z.enum(["english", "hindi", "hinglish", "marathi", "other"]),
     tone: z.string().max(100),
     meeting_intent_detected: z.boolean(),
     interest_confirmed: z.boolean(),
