@@ -181,8 +181,8 @@ export async function processSocialEvent(
       await logAiDecision(supabase, {
         user_id: userId,
         task_type: "SOCIAL_ESCALATION",
-        model: "deepseek-v4-flash",
-        model_version: "v4-flash",
+        model: "glm-5.3-free",
+        model_version: "glm-5.3-free",
         prompt_version: "n/a",
         input_context: { event: content.slice(0, 300), provider: event.provider },
         output: {},

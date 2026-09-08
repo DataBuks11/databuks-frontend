@@ -227,10 +227,14 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
 
   const data = await response.json();
   const message = data?.choices?.[0]?.message;
-  // Some reasoning models (e.g. GLM 5.3 Flash) put text in `content` but
-  // may return null content if max_tokens was consumed by reasoning.
-  // Fallback: try the `reasoning` field for extractable JSON.
+  // Reasoning models may return null `content` with the answer (or part of
+  // it) in a reasoning field. TokenRouter exposes `reasoning_content`;
+  // OpenRouter uses `reasoning`. Fallback chain covers both.
   let content: string | null = typeof message?.content === "string" ? message.content : null;
+  if ((!content || content.trim() === "") && typeof message?.reasoning_content === "string" && message.reasoning_content.trim() !== "") {
+    const jsonMatch = message.reasoning_content.match(/\{[\s\S]*\}/);
+    content = jsonMatch ? jsonMatch[0] : null;
+  }
   if ((!content || content.trim() === "") && typeof message?.reasoning === "string") {
     // Try to extract JSON from reasoning text
     const jsonMatch = message.reasoning.match(/\{[\s\S]*\}/);
