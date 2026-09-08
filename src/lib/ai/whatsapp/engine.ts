@@ -339,7 +339,10 @@ export async function processIncomingWhatsAppMessage(
       userId: input.userId,
       leadId: lead.id,
       conversationId: conversation.id,
-      messageLimit: 25,
+      // 6 messages (not 25): GLM 5.3-free reliably chokes on big payloads —
+      // upstream 503s or null content. Recent context is enough for a 1-2
+      // line WhatsApp reply, and it keeps us well inside the 60s lambda.
+      messageLimit: 6,
     });
   } catch (err: any) {
     console.error(`[LIB:ai:whatsapp] context build failed: ${err?.message}`);
@@ -438,6 +441,7 @@ export async function processIncomingWhatsAppMessage(
   if (!usedFastPath && context) {
     try {
       // First attempt — provider handles network retries internally.
+      const llmStartedAt = Date.now();
       let replyTask = await runAiTask(supabase, {
         userId: input.userId,
         taskType: "GENERATE_WHATSAPP_REPLY",
@@ -447,10 +451,13 @@ export async function processIncomingWhatsAppMessage(
         idempotencyKey: idempotencyKey("wa:reply", input.userId, input.messageId),
         prebuiltContext: context,
       });
-      // Schema-validation retry — the LLM often returns loose JSON, so
-      // we give it one more shot with a different idempotency key. The
-      // provider has already retried network-level failures.
-      if (replyTask.status !== "COMPLETED") {
+      // Schema-validation retry — the LLM often returns loose JSON, so we
+      // give it one more shot with a different idempotency key. The provider
+      // has already retried network-level failures. ONLY retry when there is
+      // still lambda budget left (webhook dies at 60s; reserve 15s for
+      // rules + send + funnel events).
+      const elapsedMs = Date.now() - llmStartedAt;
+      if (replyTask.status !== "COMPLETED" && elapsedMs < 30_000) {
         try {
           replyTask = await runAiTask(supabase, {
             userId: input.userId,
