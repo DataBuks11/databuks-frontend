@@ -118,6 +118,9 @@ export interface PromptTemplate {
    *  maxTokens — without it GLM burns the whole budget on thinking and
    *  returns null content ("returned no content" errors). */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Hard per-attempt timeout. WhatsApp replies must stay well inside the
+   *  60s serverless budget — 28s leaves room for one retry in slow cases. */
+  timeoutMs?: number;
 }
 
 export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTemplate {
@@ -480,7 +483,9 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
 
   // "low" — short replies need barely any hidden reasoning; high-effort
   // thinking made GLM 5.3 return null content (budget eaten by reasoning).
-  return { system, user, maxTokens: 1200, reasoningEffort: "low" };
+  // 28s cap: the WhatsApp webhook lambda has a hard 60s budget; keeping a
+  // single LLM attempt inside ~30s leaves room for ingestion + rules + send.
+  return { system, user, maxTokens: 1200, reasoningEffort: "low", timeoutMs: 28_000 };
 }
 
 export function buildSocialEventPrompt(

@@ -57,7 +57,9 @@ export class MiniMaxProvider implements AiProvider {
         timeoutMs: input.timeoutMs,
         providerLabel: "GLM 5.3",
       },
-      { maxAttempts: 3, baseBackoffMs: 800 }
+      // 2 attempts max: WhatsApp webhook lambdas die at 60s — 2×28s LLM
+      // worst-case still fits only without extra waiting, so keep this low.
+      { maxAttempts: 2, baseBackoffMs: 500 }
     );
   }
 }
