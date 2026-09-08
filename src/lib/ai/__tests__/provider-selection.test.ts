@@ -43,7 +43,7 @@ describe("provider selection", () => {
   it("throws a clear error when OX_ALPHA_API_KEY is missing (needed for OpenRouter auth)", () => {
     delete process.env.OX_ALPHA_API_KEY;
     resetActiveProviderForTests();
-    expect(() => getActiveProvider()).toThrow(/OX_ALPHA_API_KEY is not configured/);
+    expect(() => getActiveProvider()).toThrow(/TOKENROUTER_API_KEY \(or OX_ALPHA_API_KEY\) is not configured/);
   });
 });
 
