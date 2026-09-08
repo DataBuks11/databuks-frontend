@@ -4,19 +4,19 @@ import {
 } from "./base-url";
 import type { AiCompletionInput, AiProvider } from "./types";
 
-const DEFAULT_MODEL = "minimax/minimax-m3:free";
+const DEFAULT_MODEL = "z-ai/glm-5.3";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 /**
- * MiniMax (free) provider — same OpenRouter infrastructure as Ox Alpha, but
- * routes to the free :free model so the app keeps working when OpenRouter
- * credit balance is depleted. Up to 3 retries with exponential backoff for
- * transient failures (timeout, 429, 5xx, empty JSON).
+ * GLM 5.3 provider (OpenRouter) — replaces the retired free MiniMax slug
+ * ("minimax/minimax-m3:free" started returning 404 "model is unavailable
+ * for free"). Up to 3 retries with exponential backoff for transient
+ * failures (timeout, 429, 5xx, empty JSON).
  */
 export class MiniMaxProvider implements AiProvider {
   readonly id = "minimax";
   readonly model: string;
-  readonly modelVersion = "minimax-m3-free";
+  readonly modelVersion = "glm-5.3";
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
 
@@ -25,14 +25,14 @@ export class MiniMaxProvider implements AiProvider {
     this.apiKey = env.OX_ALPHA_API_KEY;
     if (!this.apiKey) {
       throw new Error(
-        "OX_ALPHA_API_KEY is not configured (required for MiniMax)"
+        "OX_ALPHA_API_KEY is not configured (required for GLM 5.3)"
       );
     }
     this.model = env.MINIMAX_MODEL || DEFAULT_MODEL;
     const resolution = resolveBaseUrl(env.OX_ALPHA_BASE_URL, { defaultUrl: DEFAULT_BASE_URL });
     if (!resolution.ok || !resolution.url) {
       throw new Error(
-        `Failed to resolve OpenRouter base URL for MiniMax: ${resolution.errorCode ?? "unknown"}`
+        `Failed to resolve OpenRouter base URL for GLM 5.3: ${resolution.errorCode ?? "unknown"}`
       );
     }
     this.baseUrl = resolution.url;
@@ -50,7 +50,7 @@ export class MiniMaxProvider implements AiProvider {
         maxTokens: input.maxTokens,
         reasoningEffort: input.reasoningEffort,
         timeoutMs: input.timeoutMs,
-        providerLabel: "MiniMax",
+        providerLabel: "GLM 5.3",
       },
       { maxAttempts: 2, baseBackoffMs: 800 }
     );

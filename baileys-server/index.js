@@ -248,6 +248,13 @@ function setupMessageHandler(socket, userId) {
       const ownPhones = resolveOwnPhones();
       const isSelfChat =
         fromMe && !!remotePhone && (ownPhones.has(remotePhone) || [...ownPhones].some((p) => p && (p.includes(remotePhone) || remotePhone.includes(p))));
+      // WhatsApp addresses linked devices with @lid (logical ID) JIDs. When a
+      // message arrives from one of OUR OWN linked devices (the owner chatting
+      // with their own assistant number from another device), the remote looks
+      // like "203568816590886@lid" — not a phone — so the self-chat check above
+      // fails and the message is mislabeled as a LEAD (then the webhook skips
+      // it as outbound and the AI never replies). Treat @lid remotes as self.
+      const isLidSelfChat = !fromMe && /@lid$/i.test(String(msg.key.remoteJid ?? ""));
       const ownerPhone = process.env.OWNER_WHATSAPP_NUMBER
         ? process.env.OWNER_WHATSAPP_NUMBER.replace(/\D/g, "")
         : "";
@@ -302,7 +309,7 @@ function setupMessageHandler(socket, userId) {
         timestamp: new Date((msg.messageTimestamp || 0) * 1000).toISOString(),
         pushName: msg.pushName || "",
         raw: JSON.stringify(msg.message || {}),
-        origin: isSelfChat ? "self" : isOwnerDevice ? "owner_device" : "lead",
+        origin: isSelfChat || isLidSelfChat ? "self" : isOwnerDevice ? "owner_device" : "lead",
       };
 
       console.log(
@@ -313,7 +320,7 @@ function setupMessageHandler(socket, userId) {
       // for the polling bridge. fromMe messages to OTHER people are just the
       // user's own outbound chats — stored marked processed so the owner
       // assistant never mistakes them for commands.
-      if (!isSelfChat) {
+      if (!isSelfChat && !isLidSelfChat) {
         await storeMessage(userId, parsedMsg, fromMe ? true : false);
       }
 
