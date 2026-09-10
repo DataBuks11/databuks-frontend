@@ -68,9 +68,9 @@ export class MiniMaxProvider implements AiProvider {
         timeoutMs: input.timeoutMs,
         providerLabel: "DeepSeek 4.1",
       },
-      // 2 attempts max: WhatsApp webhook lambdas die at 60s — 2×28s LLM
-      // worst-case still fits only without extra waiting, so keep this low.
-      { maxAttempts: 2, baseBackoffMs: 500 }
+      // Default 2 attempts; callers on tight lambda budgets (WhatsApp
+      // webhook = 60s) pass maxAttempts: 1 with a longer single timeout.
+      { maxAttempts: input.maxAttempts ?? 2, baseBackoffMs: 500 }
     );
   }
 }

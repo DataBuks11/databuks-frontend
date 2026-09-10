@@ -121,6 +121,10 @@ export interface PromptTemplate {
   /** Hard per-attempt timeout. WhatsApp replies must stay well inside the
    *  60s serverless budget — 28s leaves room for one retry in slow cases. */
   timeoutMs?: number;
+  /** Max LLM attempts for this prompt (default 2). WhatsApp replies use 1 —
+   *  a single slow attempt plus fallback+retry-cron beats two attempts that
+   *  together blow the 60s lambda budget on free-tier models. */
+  maxAttempts?: number;
 }
 
 export function buildPrompt(taskType: AiTaskType, ctx: TaskContext): PromptTemplate {
@@ -501,9 +505,10 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
 
   // "low" — short replies need barely any hidden reasoning; high-effort
   // thinking made GLM 5.3 return null content (budget eaten by reasoning).
-  // 28s cap: the WhatsApp webhook lambda has a hard 60s budget; keeping a
-  // single LLM attempt inside ~30s leaves room for ingestion + rules + send.
-  return { system, user, maxTokens: 1200, reasoningEffort: "low", timeoutMs: 28_000 };
+  // Single 40s attempt: free-tier DeepSeek answers in 14-50s, and one slow
+  // attempt plus instant fallback plus next-day retry-cron beats two attempts
+  // that together blow the 60s lambda budget (FUNCTION_INVOCATION_TIMEOUT).
+  return { system, user, maxTokens: 1200, reasoningEffort: "low", timeoutMs: 40_000, maxAttempts: 1 };
 }
 
 export function buildSocialEventPrompt(
