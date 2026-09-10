@@ -74,7 +74,9 @@ export default function ContentPage() {
   const { content, total, loading, error, refetch } = useContent({
     status: filter === "all" ? undefined : filter,
   });
-  const { createContent, updateContent, deleteContent, loading: mutating } = useContentMutations();
+  const { createContent, updateContent, deleteContent, generateContent, loading: mutating } = useContentMutations();
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   const filteredItems = content;
 
@@ -97,6 +99,22 @@ export default function ContentPage() {
     refetch();
   }
 
+  // AI generation (defaults to whatsapp). Uses the same backend as
+  // WhatsApp "post banao"; review + approval still happen on WhatsApp only.
+  const [genPlatform, setGenPlatform] = useState<"whatsapp" | "instagram" | "facebook" | "linkedin">("whatsapp");
+  async function handleGenerate() {
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      await generateContent({ provider: genPlatform, content_type: "post" });
+      refetch();
+    } catch (err: any) {
+      setGenerateError(err?.message ?? "Generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function handleDelete(id: string) {
     await deleteContent(id);
     refetch();
@@ -117,6 +135,22 @@ export default function ContentPage() {
         <Button className="liquid-glass rounded-full gap-2" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="h-4 w-4" />Create New
         </Button>
+        <div className="flex items-center gap-2">
+          <select
+            value={genPlatform}
+            onChange={(e) => setGenPlatform(e.target.value as typeof genPlatform)}
+            className="h-10 rounded-full bg-white/5 border border-white/10 text-sm text-white/80 px-3 outline-none"
+          >
+            <option value="whatsapp">WhatsApp</option>
+            <option value="instagram">Instagram</option>
+            <option value="facebook">Facebook</option>
+            <option value="linkedin">LinkedIn</option>
+          </select>
+          <Button className="rounded-full gap-2" variant="primary" onClick={handleGenerate} disabled={generating}>
+            {generating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}Generate with AI
+          </Button>
+        </div>
+        {generateError && <p className="text-sm text-red-400">{generateError}</p>}
       </motion.div>
 
       <div className="flex items-center justify-between gap-4">

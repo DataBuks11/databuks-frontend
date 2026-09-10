@@ -436,14 +436,45 @@ async function recordOutreachEvent(
   channel: string
 ) {
   try {
+    // Promote discovered lead into `leads` on first successful outreach.
+    // funnel_events.lead_id is NOT NULL + FK to leads(id), so without a
+    // promoted row the OUTREACH_SENT insert fails silently and the pipeline
+    // looks like it never ran (no events, no history).
+    let leadId: string | null = candidate.lead_id ?? null;
+    if (!leadId) {
+      const cd = candidate.evidence?.contact_details ?? {};
+      const { data: promoted, error: promoteError } = await supabase
+        .from("leads")
+        .insert({
+          user_id: candidate.user_id,
+          name: candidate.author_name ?? candidate.author_handle ?? "Unknown",
+          phone: cd.phone ? String(cd.phone).slice(0, 30) : null,
+          email: cd.email ? String(cd.email).slice(0, 120) : null,
+          lead_score: candidate.lead_score ?? 0,
+          status: "contacted",
+          funnel_stage: "CONVERSATION",
+          source_platform: candidate.source_platform ?? null,
+          discovery_source_id: candidate.id,
+        })
+        .select("id")
+        .single();
+      if (promoteError || !promoted?.id) {
+        console.warn(`[outreach-orchestrator] promote failed: ${promoteError?.message ?? "no id"}`);
+        return;
+      }
+      leadId = promoted.id;
+      candidate.lead_id = leadId;
+      await supabase.from("discovered_leads").update({ lead_id: leadId }).eq("id", candidate.id);
+    }
     await supabase.from("funnel_events").insert({
       user_id: candidate.user_id,
+      lead_id: leadId,
       event_type: "OUTREACH_SENT",
       from_stage: candidate.conversation_stage ?? "DISCOVER",
       to_stage: null,
       metadata: {
         discovered_lead_id: candidate.id,
-        lead_id: candidate.lead_id,
+        lead_id: leadId,
         channel,
         score: candidate.lead_score,
       },

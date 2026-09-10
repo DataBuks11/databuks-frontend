@@ -95,5 +95,23 @@ export function useContentMutations() {
     return true;
   };
 
-  return { createContent, updateContent, deleteContent, loading };
+  // AI generation via the existing backend (same endpoint WhatsApp
+  // "post banao" uses). Approval still happens on WhatsApp only.
+  const generateContent = async (data: { provider: string; content_type: string; topic?: string }) => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/ai/social/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to generate content");
+      return result.post;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return { createContent, updateContent, deleteContent, generateContent, loading };
 }
