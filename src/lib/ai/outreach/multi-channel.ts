@@ -454,7 +454,10 @@ async function recordOutreachEvent(
           status: "contacted",
           funnel_stage: "CONVERSATION",
           source_platform: candidate.source_platform ?? null,
-          discovery_source_id: candidate.id,
+          // NOTE: discovery_source_id has FK to discovery_sources — the
+          // discovered-lead link lives in discovered_leads.lead_id +
+          // funnel_events.metadata.discovered_lead_id instead.
+          notes: `Promoted from discovered lead ${candidate.id} on first outreach.`,
         })
         .select("id")
         .single();
