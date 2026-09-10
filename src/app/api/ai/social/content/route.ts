@@ -116,6 +116,28 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Mirror into `content` table so the Content Hub list (which reads from
+    // `content`, not `social_posts`) shows the generated draft immediately.
+    // Approval/publish still happen on WhatsApp only.
+    try {
+      await supabase.from("content").insert({
+        user_id: user.id,
+        title: output.topic ?? body.topic ?? "Untitled",
+        body: output.caption ?? null,
+        type: output.content_type ?? body.content_type,
+        platform: body.provider,
+        status: "draft",
+        author: null,
+        image_url: imageUrl,
+        image_prompt: imagePrompt,
+        hashtags: output.hashtags ?? [],
+        cta: output.cta ?? null,
+      });
+    } catch (err: any) {
+      console.warn(`[API:ai/social/content] content mirror failed: ${err?.message}`);
+    }
+
     return NextResponse.json({ post, generation: result }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
