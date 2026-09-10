@@ -1,4 +1,4 @@
-﻿import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAiTask } from "../ai/orchestrator";
 import { buildBusinessContext } from "../ai/context/business-context";
 import { logAiDecision } from "../ai/audit/log";
@@ -181,8 +181,8 @@ export async function processSocialEvent(
       await logAiDecision(supabase, {
         user_id: userId,
         task_type: "SOCIAL_ESCALATION",
-        model: "glm-5.3-free",
-        model_version: "glm-5.3-free",
+        model: "deepseek-v4.1-flash:free",
+        model_version: "deepseek-v4.1-flash:free",
         prompt_version: "n/a",
         input_context: { event: content.slice(0, 300), provider: event.provider },
         output: {},

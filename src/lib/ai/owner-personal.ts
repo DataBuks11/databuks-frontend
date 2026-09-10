@@ -31,6 +31,25 @@ export async function isUserInPersonalMode(
   } catch {
     return false;
   }
+  // Fallback: webhook userId kabhi UI wale account se alag hota hai (dono
+  // owner profiles ek hi WhatsApp number share karte hain). Agar owner phone
+  // wala KOI profile personal mode mein hai, to personal treat karo.
+  try {
+    const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+    if (ownerPhone.length >= 10) {
+      const { data: rows } = await supabase
+        .from("profiles")
+        .select("assistant_mode, phone")
+        .eq("assistant_mode", "personal");
+      for (const r of (rows as any[]) ?? []) {
+        const pd = String(r?.phone ?? "").replace(/\D/g, "");
+        if (pd.length >= 10 && (pd === ownerPhone || pd.endsWith(ownerPhone.slice(-10)) || ownerPhone.endsWith(pd.slice(-10)))) {
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
 }
 
 export async function setAssistantMode(
@@ -38,18 +57,33 @@ export async function setAssistantMode(
   userId: string,
   mode: "business" | "personal"
 ): Promise<void> {
+  const stamp = {
+    assistant_mode: mode,
+    assistant_mode_updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
   try {
-    await supabase
-      .from("profiles")
-      .update({
-        assistant_mode: mode,
-        assistant_mode_updated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", userId);
+    await supabase.from("profiles").update(stamp).eq("id", userId);
   } catch (err: any) {
     console.warn(`[owner-personal] setAssistantMode failed: ${err?.message}`);
   }
+  // Mirror to every profile sharing the owner phone so UI toggle aur webhook
+  // read hamesha consistent rahe, chahe koi bhi account id use ho.
+  try {
+    const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+    if (ownerPhone.length >= 10) {
+      const { data: rows } = await supabase.from("profiles").select("id, phone");
+      for (const r of (rows as any[]) ?? []) {
+        if (r?.id === userId) continue;
+        const pd = String(r?.phone ?? "").replace(/\D/g, "");
+        if (pd.length >= 10 && (pd === ownerPhone || pd.endsWith(ownerPhone.slice(-10)) || ownerPhone.endsWith(pd.slice(-10)))) {
+          try {
+            await supabase.from("profiles").update(stamp).eq("id", r.id);
+          } catch {}
+        }
+      }
+    }
+  } catch {}
 }
 
 export interface PersonalChatOpts {
@@ -81,6 +115,7 @@ export async function handlePersonalChat(opts: PersonalChatOpts): Promise<string
       system: [
         "You are the user's casual personal WhatsApp assistant — NOT a business bot.",
         "Be warm, brief, human. No bullet points, no corporate language, no marketing fluff.",
+        "NEVER mention DataBuks, business, leads, clients, meetings, posts, outreach, or anything work-related — you are strictly personal. If the user asks business things, say 'business mode me jao — wahan sab bata dunga' and NOTHING about the business itself.",
         "CRITICAL: do NOT invent IDs, passwords, account numbers, OTPs, company registration numbers, employee names, client names, ticket numbers, or any concrete identifier.",
         "If asked for credentials, account info, or anything you don't have, say 'share your email, I'll send it' or 'check your email'.",
         "If asked 'who are you' or 'what is your business': say 'your casual personal assistant, not a business tool'.",
