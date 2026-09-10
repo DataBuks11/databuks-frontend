@@ -463,9 +463,27 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
     "Return ONLY a single valid JSON object. Booleans are JSON true/false, not strings.",
   ].join("\n");
 
+  // COMPACT context: GLM-5.3-free burns its whole token budget on hidden
+  // reasoning when the prompt is fat (measured: reasoning eats max_tokens and
+  // returns null content). A 1-2 line WhatsApp reply only needs: who we are,
+  // what we do (service NAMES), tone, the lead's name, and recent messages.
+  // Full buildBusinessBlock/buildLeadBlock JSON dumps are for analysis tasks.
+  const biz = ctx.business;
+  const serviceNames = Array.isArray(biz?.services)
+    ? biz.services.map((s: any) => (typeof s === "string" ? s : s?.name)).filter(Boolean).slice(0, 8)
+    : [];
+  const toneLine = typeof biz?.tone === "string" && biz.tone.trim() !== "" ? ` Tone: ${biz.tone.trim().slice(0, 120)}.` : "";
+  const bizLine =
+    `BUSINESS: ${biz?.business_name ?? "our business"}` +
+    (serviceNames.length > 0 ? ` — ${serviceNames.join(", ")}` : "") +
+    (biz?.locations && biz.locations.length > 0 ? ` (${biz.locations.slice(0, 3).join(", ")})` : "") +
+    `.${toneLine}`;
+  const leadName = (ctx.lead as any)?.name ?? (ctx.lead as any)?.author_name ?? "there";
+  const leadLine = `LEAD: ${leadName} (stage: ${(ctx.lead as any)?.funnel_stage ?? (ctx.lead as any)?.conversation_stage ?? "new"})`;
+
   const user = [
-    buildBusinessBlock(ctx.business),
-    buildLeadBlock(ctx),
+    bizLine,
+    leadLine,
     buildConversationBlock(ctx),
     "Return JSON:",
     JSON.stringify({
