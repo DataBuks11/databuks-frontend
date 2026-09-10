@@ -873,4 +873,42 @@ describe("AI reply retry queue (LLM outage backstop)", () => {
     expect(second.checked).toBe(0);
     expect(sendFn).not.toHaveBeenCalled();
   });
+
+  it("counts a still-failing retry as failed WITHOUT a RETRIED marker (stays eligible)", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    // Model still down during the retry run.
+    runAiTaskMock.mockRejectedValue(new Error("model overloaded"));
+    state.conversations.push({ id: "conv-1", user_id: USER_ID, lead_id: LEAD_ID, platform: "whatsapp" });
+    state.messages.push({
+      conversation_id: "conv-1",
+      user_id: USER_ID,
+      content: "Do you offer website maintenance plans?",
+      sender: "user",
+      idempotency_key: `wa:in:${USER_ID}:retry-msg-1`,
+    });
+    state.funnelEvents.push({
+      user_id: USER_ID,
+      event_type: "WHATSAPP_REPLY_QUEUED",
+      created_at: new Date().toISOString(),
+      metadata: {
+        message_id: "retry-msg-1",
+        conversation_id: "conv-1",
+        lead_id: LEAD_ID,
+        remote_jid: "919000000001@s.whatsapp.net",
+        text: "Do you offer website maintenance plans?",
+      },
+    });
+
+    const result = await retryQueuedAiReplies(supabase, USER_ID, { sendFn, limit: 5 });
+
+    // Fallback was re-sent, but it is NOT a real AI reply...
+    expect(result.failed).toBe(1);
+    expect(result.resent).toBe(0);
+    // ...so no RETRIED marker — the next cron can try again.
+    expect(
+      state.funnelEvents.some((e) => e.event_type === "WHATSAPP_REPLY_RETRIED")
+    ).toBe(false);
+  });
 });
