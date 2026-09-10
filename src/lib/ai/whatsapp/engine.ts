@@ -371,6 +371,10 @@ export async function processIncomingWhatsAppMessage(
   let replyText: string | null = null;
   let meetingIntentDetected = false;
   let language = "other";
+  // True only when the LLM path was attempted and produced nothing, so the
+  // template fallback below was used. Fast-path replies and empty messages
+  // never set this — they must NOT be queued for AI retry.
+  let llmFailed = false;
 
   // ─── Fast-path: pre-cached replies for trivial messages ───
   // Skip the slow LLM call (10-40s on MiniMax free) for very common,
@@ -482,6 +486,12 @@ export async function processIncomingWhatsAppMessage(
     } catch (error: any) {
       console.error(`[LIB:ai:whatsapp] reply generation failed after provider retries: ${error?.message}`);
     }
+  }
+
+  // Mark LLM failure (but NOT fast-path or empty-message cases) so the
+  // message can be queued for a real AI retry once model capacity recovers.
+  if (!replyText && trimmed.length > 0) {
+    llmFailed = true;
   }
 
   // ─── Fallback reply when the LLM failed both attempts ───
@@ -737,6 +747,32 @@ export async function processIncomingWhatsAppMessage(
   }
 
   await markWhatsAppProcessed(supabase, input, sendError ? null : replyText);
+
+  // ─── Queue for AI retry ───
+  // The lead got a template fallback because the LLM was unavailable
+  // (free-tier outage). Record it so a later cron can regenerate a real AI
+  // reply once capacity recovers. Never queue: fast-path replies, empty
+  // messages, or retry runs themselves (id ends with the retry suffix).
+  if (llmFailed && replyText && !/:ai-retry$/.test(input.messageId)) {
+    try {
+      await recordFunnelEvent(supabase, {
+        userId: input.userId,
+        leadId: lead.id,
+        eventType: "WHATSAPP_REPLY_QUEUED",
+        fromStage: lead.funnel_stage ?? null,
+        toStage: null,
+        metadata: {
+          conversation_id: conversation.id,
+          message_id: input.messageId,
+          remote_jid: input.remoteJid,
+          text: input.text.slice(0, 500),
+          push_name: input.pushName ?? null,
+          fallback_reply: replyText.slice(0, 200),
+        },
+        idempotencyKey: `wa:retry-queued:${input.userId}:${input.messageId}`,
+      });
+    } catch {}
+  }
 
   await logAiDecision(supabase, {
     user_id: input.userId,
@@ -1011,4 +1047,122 @@ export async function processPendingWhatsAppMessages(
     results.push(fast);
   }
   return results;
+}
+
+/** Suffix marking synthetic retry runs — retry runs must never queue again. */
+export const AI_RETRY_SUFFIX = ":ai-retry";
+
+export interface QueuedReplyRetryResult {
+  checked: number;
+  resent: number;
+  skipped: number;
+  failed: number;
+}
+
+/**
+ * Re-generate real AI replies for messages that earlier got a template
+ * fallback because the LLM was unavailable (free-tier outage / overload).
+ *
+ * Bounded by design: only events from the last `maxAgeHrs` (default 24),
+ * one retry per message (a WHATSAPP_REPLY_RETRIED event is recorded for
+ * every terminal outcome), and a message is skipped when the conversation
+ * has since moved on (a newer inbound user message exists).
+ */
+export async function retryQueuedAiReplies(
+  supabase: SupabaseClient,
+  userId: string,
+  opts: ProcessWhatsAppOptions & { limit?: number; maxAgeHrs?: number } = {}
+): Promise<QueuedReplyRetryResult> {
+  const limit = Math.min(opts.limit ?? 5, 10);
+  const maxAgeHrs = opts.maxAgeHrs ?? 24;
+  const since = new Date(Date.now() - maxAgeHrs * 3600_000).toISOString();
+  const result: QueuedReplyRetryResult = { checked: 0, resent: 0, skipped: 0, failed: 0 };
+
+  const { data: queued } = await supabase
+    .from("funnel_events")
+    .select("id, created_at, metadata")
+    .eq("user_id", userId)
+    .eq("event_type", "WHATSAPP_REPLY_QUEUED")
+    .gte("created_at", since)
+    .order("created_at", { ascending: true })
+    .limit(limit * 2);
+  const { data: already } = await supabase
+    .from("funnel_events")
+    .select("metadata")
+    .eq("user_id", userId)
+    .eq("event_type", "WHATSAPP_REPLY_RETRIED")
+    .gte("created_at", since)
+    .limit(limit * 2);
+  const retriedIds = new Set(
+    ((already ?? []) as any[]).map((e) => e?.metadata?.message_id).filter(Boolean)
+  );
+
+  for (const q of (((queued ?? []) as any[]).slice(0, limit))) {
+    const md = q?.metadata ?? {};
+    const origId: string | null = md.message_id ?? null;
+    const convId: string | null = md.conversation_id ?? null;
+    if (!origId || !convId || !md.remote_jid || !md.text) continue;
+    if (retriedIds.has(origId)) continue;
+    result.checked += 1;
+
+    const markRetried = async (status: string, extra: Record<string, unknown> = {}) => {
+      try {
+        await recordFunnelEvent(supabase, {
+          userId,
+          leadId: md.lead_id ?? null,
+          eventType: "WHATSAPP_REPLY_RETRIED",
+          fromStage: null,
+          toStage: null,
+          metadata: { message_id: origId, conversation_id: convId, status, ...extra },
+          idempotencyKey: `wa:retry-done:${userId}:${origId}`,
+        });
+      } catch {}
+    };
+
+    try {
+      // Only retry when the queued message is still the latest inbound in
+      // this conversation — otherwise the chat moved on and a late reply to
+      // an old message would be confusing.
+      const { data: latestInbound } = await supabase
+        .from("messages")
+        .select("idempotency_key, created_at")
+        .eq("user_id", userId)
+        .eq("conversation_id", convId)
+        .eq("sender", "user")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const rows = Array.isArray(latestInbound) ? latestInbound : latestInbound ? [latestInbound] : [];
+      const newestKey = String(rows[0]?.idempotency_key ?? "");
+      if (!newestKey.endsWith(`:${origId}`)) {
+        result.skipped += 1;
+        await markRetried("skipped_moved_on");
+        continue;
+      }
+
+      const res = await processIncomingWhatsAppMessage(
+        supabase,
+        {
+          userId,
+          remoteJid: md.remote_jid,
+          messageId: `${origId}${AI_RETRY_SUFFIX}`,
+          text: md.text,
+          timestamp: new Date().toISOString(),
+          pushName: md.push_name ?? undefined,
+        },
+        { sendReply: true, sendFn: opts.sendFn, presenceFn: opts.presenceFn }
+      );
+      if (res.replySent) {
+        result.resent += 1;
+        await markRetried("resent", { reply_text: String((res as any).replyText ?? "").slice(0, 200) });
+      } else {
+        result.failed += 1;
+        await markRetried("still_failing", { reason: (res as any).skippedReason ?? "no_reply" });
+      }
+    } catch (err: any) {
+      result.failed += 1;
+      await markRetried("error", { error: String(err?.message ?? err).slice(0, 200) });
+    }
+  }
+
+  return result;
 }

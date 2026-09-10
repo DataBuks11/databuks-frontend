@@ -16,6 +16,7 @@ vi.mock("@/lib/ai/meeting/engine", () => ({
 import {
   processIncomingWhatsAppMessage,
   runBackgroundWhatsAppIntelligence,
+  retryQueuedAiReplies,
 } from "@/lib/ai/whatsapp/engine";
 
 const USER_ID = "22222222-2222-2222-2222-222222222222";
@@ -758,5 +759,118 @@ describe("WhatsApp background intelligence path", () => {
     });
 
     expect(state.leads[0].funnel_stage).toBe("ENRICHED");
+  });
+});
+
+describe("AI reply retry queue (LLM outage backstop)", () => {
+  it("queues a WHATSAPP_REPLY_QUEUED event when the LLM fails and a fallback is sent", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    runAiTaskMock.mockRejectedValue(new Error("model overloaded"));
+
+    const result = await processIncomingWhatsAppMessage(
+      supabase,
+      { ...baseInput, messageId: "queue-1", text: "Do you offer website maintenance plans?" },
+      { sendFn }
+    );
+
+    expect(result.replySent).toBe(true);
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    const queued = state.funnelEvents.filter((e) => e.event_type === "WHATSAPP_REPLY_QUEUED");
+    expect(queued.length).toBe(1);
+    expect(queued[0].metadata.message_id).toBe("queue-1");
+    expect(queued[0].metadata.text).toContain("maintenance");
+    expect(queued[0].metadata.conversation_id).toBeTruthy();
+  });
+
+  it("does not queue fast-path replies (greetings need no AI retry)", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    runAiTaskMock.mockRejectedValue(new Error("model overloaded"));
+
+    await processIncomingWhatsAppMessage(
+      supabase,
+      { ...baseInput, messageId: "greet-q-1", text: "hii" },
+      { sendFn }
+    );
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(state.funnelEvents.some((e) => e.event_type === "WHATSAPP_REPLY_QUEUED")).toBe(false);
+  });
+
+  it("retries a queued message with a real AI reply once capacity recovers", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    state.conversations.push({ id: "conv-1", user_id: USER_ID, lead_id: LEAD_ID, platform: "whatsapp" });
+    state.messages.push({
+      conversation_id: "conv-1",
+      user_id: USER_ID,
+      content: "Do you offer website maintenance plans?",
+      sender: "user",
+      idempotency_key: `wa:in:${USER_ID}:retry-msg-1`,
+    });
+    state.funnelEvents.push({
+      user_id: USER_ID,
+      event_type: "WHATSAPP_REPLY_QUEUED",
+      created_at: new Date().toISOString(),
+      metadata: {
+        message_id: "retry-msg-1",
+        conversation_id: "conv-1",
+        lead_id: LEAD_ID,
+        remote_jid: "919000000001@s.whatsapp.net",
+        text: "Do you offer website maintenance plans?",
+      },
+    });
+
+    const result = await retryQueuedAiReplies(supabase, USER_ID, { sendFn, limit: 5 });
+
+    expect(result.resent).toBe(1);
+    expect(sendFn).toHaveBeenCalled();
+    const sentMessage = (sendFn.mock.calls[0] as any[])[0]?.message as string;
+    expect(sentMessage).toContain("what kind of site");
+    expect(
+      state.funnelEvents.some(
+        (e) => e.event_type === "WHATSAPP_REPLY_RETRIED" && e.metadata?.message_id === "retry-msg-1"
+      )
+    ).toBe(true);
+  });
+
+  it("skips retry when the conversation moved on, and never retries twice", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    state.conversations.push({ id: "conv-1", user_id: USER_ID, lead_id: LEAD_ID, platform: "whatsapp" });
+    // Only a NEWER inbound exists — the queued message is stale.
+    state.messages.push({
+      conversation_id: "conv-1",
+      user_id: USER_ID,
+      content: "actually never mind",
+      sender: "user",
+      idempotency_key: `wa:in:${USER_ID}:newer-msg-9`,
+    });
+    state.funnelEvents.push({
+      user_id: USER_ID,
+      event_type: "WHATSAPP_REPLY_QUEUED",
+      created_at: new Date().toISOString(),
+      metadata: {
+        message_id: "retry-msg-1",
+        conversation_id: "conv-1",
+        lead_id: LEAD_ID,
+        remote_jid: "919000000001@s.whatsapp.net",
+        text: "Do you offer website maintenance plans?",
+      },
+    });
+
+    const first = await retryQueuedAiReplies(supabase, USER_ID, { sendFn, limit: 5 });
+    expect(first.skipped).toBe(1);
+    expect(sendFn).not.toHaveBeenCalled();
+
+    // Second run finds the RETRIED marker and does nothing at all.
+    const second = await retryQueuedAiReplies(supabase, USER_ID, { sendFn, limit: 5 });
+    expect(second.checked).toBe(0);
+    expect(sendFn).not.toHaveBeenCalled();
   });
 });
