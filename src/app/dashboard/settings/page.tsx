@@ -211,15 +211,43 @@ export default function SettingsPage() {
   const refreshSessionStatus = async () => {
     try {
       const uid = await currentUserId();
-      if (!uid) return;
+      if (!uid) {
+        setPersonalWA((prev) => ({ ...prev, qrError: "Not signed in — please log in again" }));
+        return;
+      }
+      setPersonalWA((prev) => ({ ...prev, sessionBusy: true, qrError: null }));
       const res = await fetch(`/api/ai/assistant/personal/baileys?action=status&userId=${uid}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPersonalWA((prev) => ({
+          ...prev,
+          sessionBusy: false,
+          sessionStatus: "disconnected",
+          qrError: data?.error ?? `Status check failed (${res.status})`,
+        }));
+        return;
+      }
       setPersonalWA((prev) => ({
         ...prev,
+        sessionBusy: false,
         sessionStatus: data.connected ? "connected" : "disconnected",
       }));
-    } catch {}
+    } catch (err: any) {
+      setPersonalWA((prev) => ({
+        ...prev,
+        sessionBusy: false,
+        qrError: `Status check failed: ${err?.message ?? "network error"}`,
+      }));
+    }
   };
+
+  // Auto-fetch session status once the admin identity is known, so the
+  // badge never sits on "Unknown" when the backend is actually reachable.
+  useEffect(() => {
+    if (!isAdmin) return;
+    refreshSessionStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   const startQrConnect = async () => {
     setPersonalWA((prev) => ({ ...prev, connecting: true, qr: null, qrError: null }));
