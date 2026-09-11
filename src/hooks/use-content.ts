@@ -97,6 +97,7 @@ export function useContentMutations() {
 
   // AI generation via the existing backend (same endpoint WhatsApp
   // "post banao" uses). Approval still happens on WhatsApp only.
+  // Returns the full API result ({ post, generation, whatsappPushed }).
   const generateContent = async (data: { provider: string; content_type: string; topic?: string }) => {
     setLoading(true);
     try {
@@ -107,7 +108,7 @@ export function useContentMutations() {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Failed to generate content");
-      return result.post;
+      return result;
     } finally {
       setLoading(false);
     }

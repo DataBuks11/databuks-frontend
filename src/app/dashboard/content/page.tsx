@@ -77,6 +77,7 @@ export default function ContentPage() {
   const { createContent, updateContent, deleteContent, generateContent, loading: mutating } = useContentMutations();
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateNote, setGenerateNote] = useState<string | null>(null);
 
   const filteredItems = content;
 
@@ -105,8 +106,14 @@ export default function ContentPage() {
   async function handleGenerate() {
     setGenerating(true);
     setGenerateError(null);
+    setGenerateNote(null);
     try {
-      await generateContent({ provider: genPlatform, content_type: "post" });
+      const result: any = await generateContent({ provider: genPlatform, content_type: "post" });
+      setGenerateNote(
+        result?.whatsappPushed
+          ? "Draft ready + sent to WhatsApp for review (reply yes/no there)."
+          : "Draft ready in Hub, but WhatsApp push failed — approve from WhatsApp 'post banao' flow or check Baileys."
+      );
       refetch();
     } catch (err: any) {
       setGenerateError(err?.message ?? "Generation failed");
@@ -151,6 +158,7 @@ export default function ContentPage() {
           </Button>
         </div>
         {generateError && <p className="text-sm text-red-400">{generateError}</p>}
+        {generateNote && !generateError && <p className="text-sm text-emerald-400">{generateNote}</p>}
       </motion.div>
 
       <div className="flex items-center justify-between gap-4">

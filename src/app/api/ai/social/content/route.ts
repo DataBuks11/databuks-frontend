@@ -138,7 +138,38 @@ export async function POST(request: NextRequest) {
       console.warn(`[API:ai/social/content] content mirror failed: ${err?.message}`);
     }
 
-    return NextResponse.json({ post, generation: result }, { status: 201 });
+    // Push to WhatsApp for review (same as "post banao" flow). Without this
+    // the draft just sits in the Hub and the user never gets the yes/no
+    // approval prompt. Best-effort: never fail the request on push errors.
+    let whatsappPushed = false;
+    try {
+      const { resolveUserJid } = await import("@/lib/whatsapp/jid-utils");
+      const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
+      const baseUrl = process.env.BAILEYS_SERVER_URL;
+      const apiKey = process.env.BAILEYS_API_KEY || "dev-key";
+      const jid = await resolveUserJid(supabase, user.id);
+      if (baseUrl && jid && post) {
+        const pushResult = await pushDailyPostsToWhatsApp(baseUrl, apiKey, user.id, jid, [{
+          id: post.id,
+          topic: post.topic ?? body.topic ?? "Untitled",
+          caption: post.caption ?? "",
+          hashtags: post.hashtags ?? [],
+          cta: post.cta ?? null,
+          image_url: post.image_url ?? null,
+          image_prompt: post.image_prompt ?? null,
+          content_type: post.content_type ?? body.content_type,
+          status: post.status ?? "DRAFT",
+        }]);
+        whatsappPushed = pushResult.sent > 0;
+        if (pushResult.failed > 0) {
+          console.warn(`[API:ai/social/content] whatsapp push partial: ${pushResult.errors.join("; ")}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[API:ai/social/content] whatsapp push failed: ${err?.message}`);
+    }
+
+    return NextResponse.json({ post, generation: result, whatsappPushed }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
