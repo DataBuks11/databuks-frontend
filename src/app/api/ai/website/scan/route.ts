@@ -7,7 +7,7 @@ import { normalizeUrl } from "@/lib/ai/website-scanner/crawler";
 export const maxDuration = 60;
 
 const RATE_LIMIT_WINDOW_MS = 120 * 1000;
-const RATE_LIMIT_MAX_SCANS = 3;
+const RATE_LIMIT_MAX_SCANS = 15;
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,8 +35,20 @@ export async function POST(request: NextRequest) {
       .gte("created_at", since);
     if (countError) return NextResponse.json({ error: countError.message }, { status: 500 });
     if ((count ?? 0) >= RATE_LIMIT_MAX_SCANS) {
-      return NextResponse.json({ error: "Too many scans. Please wait a couple of minutes." }, { status: 429 });
+      return NextResponse.json({ error: "Too many scans. Please wait a moment." }, { status: 429 });
     }
+
+    // Cancel any previous scans that are still in progress for this user
+    await supabase
+      .from("website_scans")
+      .update({
+        status: "FAILED",
+        error_message: "Superseded by new scan",
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", user.id)
+      .in("status", ["QUEUED", "SCANNING", "EXTRACTING", "ANALYZING"]);
 
     const { data: scan, error } = await supabase
       .from("website_scans")

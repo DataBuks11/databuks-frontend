@@ -26,25 +26,30 @@ export class MiniMaxProvider implements AiProvider {
     // existing deployments keep working.
     const usingTokenHarbor = !!env.TOKENHARBOR_API_KEY;
     const usingTokenRouter = !usingTokenHarbor && !!env.TOKENROUTER_API_KEY;
-    this.apiKey = env.TOKENHARBOR_API_KEY || env.TOKENROUTER_API_KEY || env.OX_ALPHA_API_KEY;
+    const usingDeepSeek = !usingTokenHarbor && !usingTokenRouter && !!env.DEEPSEEK_API_KEY;
+    this.apiKey = env.TOKENHARBOR_API_KEY || env.TOKENROUTER_API_KEY || env.OX_ALPHA_API_KEY || env.DEEPSEEK_API_KEY;
     if (!this.apiKey) {
       throw new Error(
-        "TOKENHARBOR_API_KEY (or TOKENROUTER_API_KEY / OX_ALPHA_API_KEY) is not configured (required for DeepSeek 4.1 Flash)"
+        "TOKENHARBOR_API_KEY (or TOKENROUTER_API_KEY / OX_ALPHA_API_KEY / DEEPSEEK_API_KEY) is not configured (required for DeepSeek 4.1 Flash)"
       );
     }
-    this.model = env.MINIMAX_MODEL || DEFAULT_MODEL;
+    this.model = env.MINIMAX_MODEL || env.TOKENHARBOR_MODEL || (usingDeepSeek ? (env.DEEPSEEK_MODEL || "deepseek-chat") : DEFAULT_MODEL);
     // With a Token Harbor key, ALWAYS talk to Token Harbor (any other base
     // URL would reject the key). Legacy setups keep their env.
     const rawBase = usingTokenHarbor
       ? env.TOKENHARBOR_BASE_URL
       : usingTokenRouter
         ? env.TOKENROUTER_BASE_URL
-        : env.OX_ALPHA_BASE_URL;
+        : usingDeepSeek
+          ? env.DEEPSEEK_BASE_URL
+          : env.OX_ALPHA_BASE_URL;
     const fallbackBase = usingTokenHarbor
       ? DEFAULT_BASE_URL
       : usingTokenRouter
         ? "https://api.tokenrouter.com/v1"
-        : "https://openrouter.ai/api/v1";
+        : usingDeepSeek
+          ? "https://api.deepseek.com"
+          : "https://openrouter.ai/api/v1";
     const resolution = resolveBaseUrl(rawBase, { defaultUrl: fallbackBase });
     if (!resolution.ok || !resolution.url) {
       throw new Error(
@@ -64,13 +69,12 @@ export class MiniMaxProvider implements AiProvider {
         user: input.user,
         temperature: input.temperature,
         maxTokens: input.maxTokens,
-        reasoningEffort: input.reasoningEffort,
+        reasoningEffort: input.reasoningEffort ?? "low",
         timeoutMs: input.timeoutMs,
         providerLabel: "DeepSeek 4.1",
       },
-      // Default 2 attempts; callers on tight lambda budgets (WhatsApp
-      // webhook = 60s) pass maxAttempts: 1 with a longer single timeout.
-      { maxAttempts: input.maxAttempts ?? 2, baseBackoffMs: 500 }
+      // Default 3 attempts for resilience
+      { maxAttempts: input.maxAttempts ?? 3, baseBackoffMs: 500 }
     );
   }
 }

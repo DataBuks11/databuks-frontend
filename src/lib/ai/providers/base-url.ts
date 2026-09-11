@@ -226,24 +226,43 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
   }
 
   const data = await response.json();
-  const message = data?.choices?.[0]?.message;
-  // Reasoning models (GLM 5.3 free) sometimes emit ALL tokens into hidden
-  // reasoning and return null `content`. Fallback chain:
-  //   1. content
-  //   2. reasoning_content (TokenRouter) — GLM drafts the final JSON there
-  //   3. reasoning (OpenRouter)
-  let content: string | null = typeof message?.content === "string" ? message.content : null;
-  if ((!content || content.trim() === "") && typeof message?.reasoning_content === "string" && message.reasoning_content.trim() !== "") {
+  const choice = data?.choices?.[0];
+  const message = choice?.message;
+
+  // Modern endpoints / reasoning models emit content in various properties:
+  // 1. message.content (string or array of text blocks)
+  // 2. choice.text (legacy completion format)
+  // 3. message.reasoning_content / reasoning (drafted response or reasoning text)
+  let content: string | null = null;
+  if (typeof message?.content === "string") {
+    content = message.content;
+  } else if (Array.isArray(message?.content)) {
+    content = message.content
+      .map((c: any) => (typeof c === "string" ? c : c?.text ?? ""))
+      .join("");
+  } else if (typeof choice?.text === "string" && choice.text.trim()) {
+    content = choice.text;
+  }
+
+  // Fallback to reasoning fields if content is still empty
+  const reasoningText: string =
+    (typeof message?.reasoning_content === "string" && message.reasoning_content) ||
+    (typeof message?.reasoning === "string" && message.reasoning) ||
+    (typeof choice?.reasoning_content === "string" && choice.reasoning_content) ||
+    (typeof choice?.reasoning === "string" && choice.reasoning) ||
+    "";
+
+  if ((!content || content.trim() === "") && reasoningText.trim() !== "") {
     // The drafted final answer usually appears as the LAST {...} block in the
     // reasoning text ("...so my reply should be {"reply": "..."}"). Grab the
     // last JSON-looking block first; fall back to the first one.
-    const blocks = message.reasoning_content.match(/\{[\s\S]*?\}/g);
+    const blocks = reasoningText.match(/\{[\s\S]*?\}/g);
     if (blocks && blocks.length > 0) {
       const candidates = blocks.length > 1 ? [...blocks].reverse() : blocks;
       for (const b of candidates) {
         try {
-          const parsed = JSON.parse(b);
-          if (parsed && typeof parsed === "object") {
+          const parsedCandidate = JSON.parse(b);
+          if (parsedCandidate && typeof parsedCandidate === "object") {
             content = b;
             break;
           }
@@ -253,15 +272,27 @@ export async function postChatCompletionJson(params: ChatCompletionParams): Prom
       }
     }
     if (!content) {
-      const anyJson = message.reasoning_content.match(/\{[\s\S]*\}/);
+      const anyJson = reasoningText.match(/\{[\s\S]*\}/);
       content = anyJson ? anyJson[0] : null;
     }
   }
-  if ((!content || content.trim() === "") && typeof message?.reasoning === "string") {
-    // Try to extract JSON from reasoning text
-    const jsonMatch = message.reasoning.match(/\{[\s\S]*\}/);
-    content = jsonMatch ? jsonMatch[0] : null;
+
+  if (!content || content.trim() === "") {
+    // Check if the entire choice has any json payload
+    if (data?.choices?.[0] && typeof data.choices[0] === "object") {
+      const choiceStr = JSON.stringify(data.choices[0]);
+      const jsonCandidate = choiceStr.match(/\{[\s\S]*\}/);
+      if (jsonCandidate) {
+        try {
+          const testParse = JSON.parse(jsonCandidate[0]);
+          if (testParse && (testParse.task || testParse.business_name || testParse.services || testParse.facts)) {
+            content = jsonCandidate[0];
+          }
+        } catch {}
+      }
+    }
   }
+
   if (!content || content.trim() === "") {
     throw new Error(`${params.providerLabel} returned no content (empty response)`);
   }

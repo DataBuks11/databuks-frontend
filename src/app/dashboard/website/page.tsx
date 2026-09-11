@@ -26,6 +26,7 @@ import {
   Target,
   TrendingUp,
   AlertTriangle,
+  Square,
 } from "lucide-react";
 import {
   Card,
@@ -243,6 +244,7 @@ export default function WebsiteIntelligencePage() {
   const [scan, setScan] = useState<WebsiteScan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const view = useMemo(() => buildView(scan?.results ?? null), [scan]);
@@ -253,6 +255,23 @@ export default function WebsiteIntelligencePage() {
       pollRef.current = null;
     }
   }, []);
+
+  const stopScan = useCallback(async () => {
+    setStopping(true);
+    stopPolling();
+    setScanning(false);
+    try {
+      await fetch("/api/ai/website/scan/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scan_id: scan?.id }),
+      });
+      setScan((current) =>
+        current ? { ...current, status: "FAILED", error_message: "Scan stopped by user" } : null
+      );
+    } catch {}
+    setStopping(false);
+  }, [scan?.id, stopPolling]);
 
   const pollScan = useCallback((scanId: string) => {
     stopPolling();
@@ -325,6 +344,15 @@ export default function WebsiteIntelligencePage() {
       setError("Please enter your business website URL first.");
       return;
     }
+    // Cancel previous scan if one was running
+    if (scanning) {
+      stopPolling();
+      fetch("/api/ai/website/scan/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scan_id: scan?.id }),
+      }).catch(() => {});
+    }
     setScanning(true);
     try {
       const res = await fetch("/api/ai/website/scan", {
@@ -349,6 +377,7 @@ export default function WebsiteIntelligencePage() {
   const scanInProgress = scan && !TERMINAL_STATUSES.includes(scan.status);
   const hasResults = scan && TERMINAL_STATUSES.includes(scan.status) && scan.status !== "FAILED" && scan.results;
   const results = scan?.results ?? null;
+  const isUrlDifferent = scan?.url && url.trim().toLowerCase() !== scan.url.toLowerCase();
 
   return (
     <div className="space-y-8">
@@ -386,16 +415,34 @@ export default function WebsiteIntelligencePage() {
               : "Scan your business website to build your AI business profile."}
           </p>
         </div>
-        <Button
-          variant="glass"
-          size="sm"
-          className="shrink-0 gap-2"
-          onClick={startScan}
-          disabled={scanning}
-        >
-          {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Re-scan Website
-        </Button>
+        <div className="flex items-center gap-2">
+          {scanInProgress && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="shrink-0 gap-1.5"
+              onClick={stopScan}
+              disabled={stopping}
+            >
+              {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-3.5 w-3.5 fill-current" />}
+              Stop Scan
+            </Button>
+          )}
+          <Button
+            variant="glass"
+            size="sm"
+            className="shrink-0 gap-2"
+            onClick={startScan}
+            disabled={stopping}
+          >
+            {scanning && !isUrlDifferent ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Re-scan Website
+          </Button>
+        </div>
       </motion.div>
 
       <Card className="glass-card">
@@ -410,34 +457,62 @@ export default function WebsiteIntelligencePage() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="pl-9"
-                disabled={scanning}
+                disabled={stopping}
               />
             </div>
-            <Button onClick={startScan} disabled={scanning} className="gap-2 shrink-0">
-              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
-              Scan Website
-            </Button>
+            {scanInProgress && !isUrlDifferent ? (
+              <Button
+                variant="destructive"
+                onClick={stopScan}
+                disabled={stopping}
+                className="gap-2 shrink-0"
+              >
+                {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4 fill-current" />}
+                Stop Scan
+              </Button>
+            ) : (
+              <Button onClick={startScan} disabled={stopping} className="gap-2 shrink-0">
+                {scanning && !isUrlDifferent ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ScanLine className="h-4 w-4" />
+                )}
+                {scanInProgress && isUrlDifferent ? "Scan New Website" : "Scan Website"}
+              </Button>
+            )}
           </div>
 
           {scanInProgress && (
-            <div className="flex items-center gap-3 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-4">
-              <Loader2 className="h-4 w-4 animate-spin text-sky-400 shrink-0" />
-              <div className="space-y-1">
-                <p className="text-sm text-white/80 font-medium">{SCAN_LABELS[scan.status]}</p>
-                <p className="text-xs text-white/40">
-                  {displayUrl(scan.url)}
-                  {typeof scan.pages_discovered === "number" && scan.pages_discovered > 0 && (
-                    <span className="ml-2 text-sky-400/80">
-                      · Discovered {scan.pages_discovered} pages
-                    </span>
-                  )}
-                  {typeof scan.pages_crawled === "number" && scan.pages_crawled > 0 && (
-                    <span className="ml-2 text-sky-400/80">
-                      · Scanned {scan.pages_crawled}
-                    </span>
-                  )}
-                </p>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-4 w-4 animate-spin text-sky-400 shrink-0" />
+                <div className="space-y-1">
+                  <p className="text-sm text-white/80 font-medium">{SCAN_LABELS[scan.status]}</p>
+                  <p className="text-xs text-white/40">
+                    {displayUrl(scan.url)}
+                    {typeof scan.pages_discovered === "number" && scan.pages_discovered > 0 && (
+                      <span className="ml-2 text-sky-400/80">
+                        · Discovered {scan.pages_discovered} pages
+                      </span>
+                    )}
+                    {typeof scan.pages_crawled === "number" && scan.pages_crawled > 0 && (
+                      <span className="ml-2 text-sky-400/80">
+                        · Scanned {scan.pages_crawled}
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={stopScan}
+                disabled={stopping}
+                className="border-rose-500/30 text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 gap-1.5 shrink-0"
+              >
+                <Square className="h-3.5 w-3.5 fill-current text-rose-400" />
+                Stop Scan
+              </Button>
             </div>
           )}
 

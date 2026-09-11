@@ -385,7 +385,7 @@ export function buildWebsiteFactsPrompt(pages: CorpusPage[], siteType: string = 
     }),
   ].join("\n\n");
 
-  return { system, user, maxTokens: 2500 };
+  return { system, user, maxTokens: 4000, reasoningEffort: "low" };
 }
 
 export function buildWebsiteSynthesisPrompt(
@@ -397,7 +397,7 @@ export function buildWebsiteSynthesisPrompt(
   const system = [
     "You synthesize verified business facts into a structured business profile.",
     "Never fabricate. Only use the facts provided. If information is missing, use null or empty arrays.",
-    "Adapt the profile to the detected website type. Do not force agency categories onto content, ecommerce or documentation sites.",
+    "Adapt the profile to the detected website type. Do not force agency categories onto content, ecommerce, education or documentation sites.",
     "Fill every section you have facts for: products, services, target customers, industries, problems solved, value proposition, offers, pricing, locations, testimonials, content themes, business signals, brand voice. Do not leave a section empty when facts support it. Do not invent competitors.",
     "Build competitors ONLY from facts with category 'competitor'. Each competitor needs name, website_url (from the fact when available), reason, source_url, evidence_quote and evidence_type. If no competitor facts exist, competitors must be [].",
     "Each extracted item must keep its original source_url and evidence_quote from the facts it came from.",
@@ -410,15 +410,26 @@ export function buildWebsiteSynthesisPrompt(
       ? `SOCIAL LINKS FOUND:\n${socialLinks.map((s) => `- ${s.platform}: ${s.url} (found on ${s.source_url})`).join("\n")}`
       : "SOCIAL LINKS FOUND: none";
 
+  // Limit per-category facts to top 15 to avoid overloading the model prompt
+  const factsByCategory: Record<string, typeof facts> = {};
+  for (const f of facts) {
+    const cat = f.category || "other";
+    if (!factsByCategory[cat]) factsByCategory[cat] = [];
+    if (factsByCategory[cat].length < 15) {
+      factsByCategory[cat].push(f);
+    }
+  }
+  const selectedFacts = Object.values(factsByCategory).flat();
+
   const user = [
     `Task: synthesize the business profile from the verified facts below. Detected website type: ${siteType}.`,
     coverageNote ? `COVERAGE: ${coverageNote}` : "",
     socialBlock,
     "VERIFIED FACTS:",
-    facts
+    selectedFacts
       .map(
         (f) =>
-          `- [${f.category}] ${f.fact}\n  source: ${f.source_url ?? "unknown"} | page: ${f.page_title ?? "unknown"} | quote: ${f.evidence_quote ?? "none"} | confidence: ${f.confidence ?? "?"}`
+          `- [${f.category}] ${String(f.fact).slice(0, 300)}\n  source: ${f.source_url ?? "unknown"} | page: ${f.page_title ?? "unknown"} | quote: ${f.evidence_quote ? String(f.evidence_quote).slice(0, 200) : "none"} | confidence: ${f.confidence ?? 0.8}`
       )
       .join("\n"),
     "Return JSON:",
@@ -449,7 +460,7 @@ export function buildWebsiteSynthesisPrompt(
     }),
   ].join("\n\n");
 
-  return { system, user, maxTokens: 3500 };
+  return { system, user, maxTokens: 8000, reasoningEffort: "low" };
 }
 
 export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
