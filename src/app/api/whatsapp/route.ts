@@ -85,7 +85,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "connect") {
-      const data = await proxyPost("/connect", { userId });
+      // Mutual exclusion: connecting business auto-disconnects the personal
+      // session first (one number = one active AI session).
+      try {
+        await proxyPost("/disconnect", { userId: `personal__${userId}` });
+      } catch {}
+      const data = await proxyPost("/connect", { userId, fresh: true, deviceName: "DataBuks Business" });
       return NextResponse.json(data);
     }
 

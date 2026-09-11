@@ -85,6 +85,11 @@ function makeMockSupabase(state: MockState) {
         return state.conversations;
       case "messages":
         return state.messages;
+      case "whatsapp_messages":
+        // Raw Baileys message log shares the in-memory messages array in
+        // tests; rows without from_me/remote_jid simply never match those
+        // filters, so existing tests are unaffected.
+        return state.messages;
       case "lead_intelligence":
         return state.intelligence;
       case "funnel_events":
@@ -910,5 +915,58 @@ describe("AI reply retry queue (LLM outage backstop)", () => {
     expect(
       state.funnelEvents.some((e) => e.event_type === "WHATSAPP_REPLY_RETRIED")
     ).toBe(false);
+  });
+});
+
+describe("human takeover 90s idle window", () => {
+  it("stays quiet when the owner messaged the lead within the last 90s", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    // Owner sent a manual message 30s ago — actively chatting.
+    state.messages.push({
+      conversation_id: "conv-1",
+      user_id: USER_ID,
+      content: "haan batao, kya chahiye?",
+      sender: "ai",
+      from_me: true,
+      remote_jid: "919000000001@s.whatsapp.net",
+      timestamp: new Date(Date.now() - 30 * 1000).toISOString(),
+    });
+
+    const result = await processIncomingWhatsAppMessage(
+      supabase,
+      { ...baseInput, messageId: "takeover-1", text: "mujhe website chahiye" },
+      { sendFn }
+    );
+
+    expect(result.replySent).toBe(false);
+    expect(sendFn).not.toHaveBeenCalled();
+    expect(state.funnelEvents.some((e) => e.event_type === "AI_REPLY_HELD")).toBe(true);
+  });
+
+  it("replies when the owner's last message is older than 90s", async () => {
+    const state = makeState();
+    const supabase = makeMockSupabase(state);
+    const sendFn = vi.fn(async () => {});
+    // Owner's last manual message was 5 min ago — idle, AI should reply.
+    state.messages.push({
+      conversation_id: "conv-1",
+      user_id: USER_ID,
+      content: "haan batao",
+      sender: "ai",
+      from_me: true,
+      remote_jid: "919000000001@s.whatsapp.net",
+      timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    });
+
+    const result = await processIncomingWhatsAppMessage(
+      supabase,
+      { ...baseInput, messageId: "takeover-2", text: "mujhe website chahiye, price kya hai?" },
+      { sendFn }
+    );
+
+    expect(result.replySent).toBe(true);
+    expect(sendFn).toHaveBeenCalledTimes(1);
   });
 });

@@ -563,36 +563,23 @@ export async function processIncomingWhatsAppMessage(
   // inbound we're processing (i.e. owner raced to reply manually). The previous
   // 30-minute blanket silence was too aggressive â€” it kept the AI from
   // continuing the conversation the owner wanted it to handle.
-  const TWO_MIN_MS = 2 * 60 * 1000;
-  const inboundIso = input.timestamp ?? new Date(startedAt).toISOString();
-  // Strictly newer than inbound â€” use gte with +1ms because PostgREST has .gt
-  // but we want the same semantics across the Supabase JS client + test mocks.
-  const newerThanInbound = new Date(new Date(inboundIso).getTime() + 1).toISOString();
-  const { data: raceManual } = await supabase
+  const HUMAN_IDLE_MS = 90 * 1000;
+  // Human takeover: if the owner messaged this lead within the last 90s
+  // (before OR after this inbound - i.e. owner is actively chatting), the
+  // AI stays quiet. Only after 90s of owner silence does the AI reply, so
+  // it never talks over the owner mid-conversation but never leaves a lead
+  // hanging either.
+  const idleCutoff = new Date(Date.now() - HUMAN_IDLE_MS).toISOString();
+  const { data: recentOwnerMsgs } = await supabase
     .from("whatsapp_messages")
     .select("id, timestamp")
     .eq("user_id", input.userId)
     .eq("remote_jid", input.remoteJid)
     .eq("from_me", true)
-    .gte("timestamp", newerThanInbound)
+    .gte("timestamp", idleCutoff)
+    .order("timestamp", { ascending: false })
     .limit(1);
-  let humanTakeover = (raceManual?.length ?? 0) > 0;
-
-  // Fallback: if the inbound had no timestamp (older poller path), still hold
-  // a very short window after the owner's most recent manual send so we don't
-  // double-message.
-  if (!humanTakeover && !input.timestamp) {
-    const shortWindow = new Date(Date.now() - TWO_MIN_MS).toISOString();
-    const { data: recentManual } = await supabase
-      .from("whatsapp_messages")
-      .select("id")
-      .eq("user_id", input.userId)
-      .eq("remote_jid", input.remoteJid)
-      .eq("from_me", true)
-      .gte("timestamp", shortWindow)
-      .limit(1);
-    humanTakeover = (recentManual?.length ?? 0) > 0;
-  }
+  let humanTakeover = (recentOwnerMsgs?.length ?? 0) > 0;
 
   if (!sendReply || !replyText || humanTakeover) {
     await markWhatsAppProcessed(supabase, input, null);

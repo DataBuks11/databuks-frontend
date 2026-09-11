@@ -442,7 +442,7 @@ async function restoreFullAuthState(userId, authDir) {
 }
 
 // ─── Connect WhatsApp ───
-async function connectWhatsApp(userId) {
+async function connectWhatsApp(userId, opts = {}) {
   const existing = sessions.get(userId);
   if (existing?.connected) {
     return { connected: true, message: "Already connected" };
@@ -451,6 +451,12 @@ async function connectWhatsApp(userId) {
   if (existing?.socket) {
     try { existing.socket.ws?.close(); } catch {}
   }
+
+  // Per-session device label so the phone's Linked Devices screen shows
+  // "DataBuks Business" vs "DataBuks Personal" instead of one generic name.
+  const deviceName = typeof opts.deviceName === "string" && opts.deviceName.trim() !== ""
+    ? opts.deviceName.trim().slice(0, 32)
+    : "DataBuks";
 
   const authDir = getAuthDir(userId);
 
@@ -476,7 +482,7 @@ async function connectWhatsApp(userId) {
       logger,
       // Register as a different device type than WhatsApp Desktop ("Chrome")
       // so both can coexist as linked devices without 440 conflicts.
-      browser: ["DataBuks", "Ubuntu", "22.04"],
+      browser: [deviceName, "Ubuntu", "22.04"],
       connectTimeoutMs: 30000,
       keepAliveIntervalMs: 30000,
       retryRequestDelayMs: 250,
@@ -630,13 +636,21 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Connect WhatsApp
+// Connect WhatsApp. Accepts { userId, fresh?, deviceName? }.
+// fresh=true wipes stale auth state FIRST so the QR is always pairing-ready —
+// without this, re-linking after an unlink reuses dead creds and WhatsApp
+// rejects pairing with "couldn't link device".
+// deviceName sets the linked-device label (e.g. "DataBuks Business").
 app.post("/connect", async (req, res) => {
-  const { userId } = req.body;
+  const { userId, fresh, deviceName } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
   try {
-    const result = await connectWhatsApp(userId);
+    if (fresh) {
+      console.log(`[Connect] fresh pairing requested for ${userId} — wiping auth state first`);
+      await clearAuthState(userId);
+    }
+    const result = await connectWhatsApp(userId, { deviceName });
     res.json(result);
   } catch (err) {
     // Corrupt auth state can make Baileys crash mid-handshake with raw

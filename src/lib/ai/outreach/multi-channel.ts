@@ -183,6 +183,7 @@ async function generateOpeners(
     "  - LinkedIn: more professional, 1 short paragraph, max 400 chars",
     "  - Email: subject line + 2-3 short paragraphs, professional but human",
     "Personalize using the lead's name/handle and their actual detected requirement.",
+    "CRITICAL: write like a real human texting a stranger. NEVER output internal labels such as SERVICE_REQUIRED, POTENTIAL_INTEREST, UNKNOWN, or platform slugs like google_maps/instagram/facebook/linkedin as words in the message. If the requirement looks like a code or enum, just say 'your business' instead. No placeholders, no brackets, no ALL-CAPS codes.",
     "Return JSON with the requested channel fields only.",
   ].join("\n");
 
@@ -217,30 +218,77 @@ async function generateOpeners(
       maxTokens: 500,
       timeoutMs: 25_000,
     });
-    if (channels.whatsapp && typeof raw.whatsapp === "string") out.whatsapp = raw.whatsapp.trim();
-    if (channels.instagram && typeof raw.instagram === "string") out.instagram = raw.instagram.trim();
-    if (channels.facebook && typeof raw.facebook === "string") out.facebook = raw.facebook.trim();
-    if (channels.linkedin && typeof raw.linkedin === "string") out.linkedin = raw.linkedin.trim();
+    if (channels.whatsapp && typeof raw.whatsapp === "string") out.whatsapp = sanitizeOutreachText(raw.whatsapp);
+    if (channels.instagram && typeof raw.instagram === "string") out.instagram = sanitizeOutreachText(raw.instagram);
+    if (channels.facebook && typeof raw.facebook === "string") out.facebook = sanitizeOutreachText(raw.facebook);
+    if (channels.linkedin && typeof raw.linkedin === "string") out.linkedin = sanitizeOutreachText(raw.linkedin);
     if (channels.email) {
-      if (typeof raw.emailSubject === "string") out.emailSubject = raw.emailSubject.trim();
-      if (typeof raw.emailBody === "string") out.emailBody = raw.emailBody.trim();
+      if (typeof raw.emailSubject === "string") out.emailSubject = sanitizeOutreachText(raw.emailSubject);
+      if (typeof raw.emailBody === "string") out.emailBody = sanitizeOutreachText(raw.emailBody);
     }
   } catch (err: any) {
     console.warn(`[outreach-orchestrator] LLM opener generation failed: ${err?.message}`);
   }
 
-  // Fallback templates if LLM didn't return
+  // Fallback templates if LLM didn't return — 100% human, zero placeholders.
+  // NEVER leak internal enum slugs (SERVICE_REQUIRED) or platform slugs
+  // (google_maps) into a real message; a human would never write those.
   const name = c.author_name ?? c.author_handle ?? "there";
-  const req = c.detected_requirement ?? "your business needs";
-  if (channels.whatsapp && !out.whatsapp) out.whatsapp = `hey ${name}, saw your post on ${c.source_platform} about ${req}. we actually do exactly that at DataBuks. want to chat 5 min?`;
-  if (channels.instagram && !out.instagram) out.instagram = `hey ${name}, saw your post about ${req} — we build this stuff. interested?`;
-  if (channels.facebook && !out.facebook) out.facebook = `hey ${name}, came across your post on ${req}. DataBuks does this — would love to chat if useful`;
-  if (channels.linkedin && !out.linkedin) out.linkedin = `Hi ${name}, your post about ${req} caught my attention. At DataBuks we work on exactly this — websites, MVPs, AI features and automations. Worth a quick conversation?`;
+  const req = humanizeRequirement(c.detected_requirement);
+  const where = humanizeSource(c.source_platform);
+  if (channels.whatsapp && !out.whatsapp) out.whatsapp = `hey ${name}, ${where} — we help businesses like yours with websites and online growth at databuks. worth a quick 5 min chat?`;
+  if (channels.instagram && !out.instagram) out.instagram = `hey ${name}, ${where} — we build websites and online stuff for businesses like yours. interested?`;
+  if (channels.facebook && !out.facebook) out.facebook = `hey ${name}, ${where}. databuks does websites and growth for local businesses — would love to chat if useful`;
+  if (channels.linkedin && !out.linkedin) out.linkedin = `Hi ${name}, ${where}. At DataBuks we build websites, MVPs and automations for growing businesses. Worth a quick conversation?`;
   if (channels.email) {
     if (!out.emailSubject) out.emailSubject = `quick thought re: ${req}`;
-    if (!out.emailBody) out.emailBody = `hi ${name},\n\nsaw your post on ${c.source_platform} about ${req}. we help founders with exactly this at DataBuks (websites, MVPs, AI features, automations).\n\nworth a 10 min call this week?\n\nthanks`;
+    if (!out.emailBody) out.emailBody = `hi ${name},\n\n${cap(where)} — we help businesses like yours with exactly this at databuks (websites, MVPs, AI features, automations).\n\nworth a 10 min call this week?\n\nthanks`;
   }
   return out;
+}
+
+/** Map internal requirement enums to human words. Anything ALLCAPS-ish is
+ *  an internal label — never send it to a real person. */
+function humanizeRequirement(raw: string | null | undefined): string {
+  const v = (raw ?? "").trim();
+  if (!v || v === "(unspecified)") return "your business needs";
+  if (/^[A-Z][A-Z0-9_ ]+$/.test(v)) {
+    if (/SERVICE|REQUIREMENT|NEED/.test(v)) return "your business needs";
+    if (/WEBSITE/.test(v)) return "your website";
+    if (/INTEREST|LEAD/.test(v)) return "growing your business";
+    return "your business needs";
+  }
+  // If it reads like a sentence already, keep it short.
+  return v.length > 80 ? "your business needs" : v;
+}
+
+/** Map platform slugs to how a human would reference discovering someone. */
+function humanizeSource(platform: string | null | undefined): string {
+  const p = (platform ?? "").toLowerCase();
+  if (p.includes("google") || p.includes("maps")) return "found your business on google";
+  if (p.includes("instagram")) return "saw your instagram";
+  if (p.includes("facebook")) return "saw your page on facebook";
+  if (p.includes("linkedin")) return "came across your profile";
+  return "came across your business";
+}
+
+/** Capitalize first letter for email-body sentence starts. */
+function cap(s: string): string {
+  return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+/** Last-line defense: scrub any leaked internal labels from LLM output
+ *  before a real person ever sees the message. */
+function sanitizeOutreachText(raw: string): string {
+  let t = (raw ?? "").trim();
+  t = t
+    .replace(/\bSERVICE_REQUIRED\b/gi, "your business needs")
+    .replace(/\bPOTENTIAL_INTEREST\b/gi, "growing your business")
+    .replace(/\bgoogle_maps\b/gi, "google")
+    .replace(/\[[^\]]{0,60}\]/g, "");
+  // Collapse fallout whitespace from removals.
+  t = t.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return t;
 }
 
 async function sendWhatsApp(

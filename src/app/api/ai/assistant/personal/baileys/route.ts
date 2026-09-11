@@ -100,10 +100,20 @@ export async function POST(request: NextRequest) {
 
   try {
     if (action === "connect") {
-      const res = await fetch(`${base.replace(/\/+$/, "")}/connect`, {
+      const baseUrl = base.replace(/\/+$/, "");
+      // Mutual exclusion: one WhatsApp number = one active AI session.
+      // Connecting personal auto-disconnects the business session first.
+      try {
+        await fetch(`${baseUrl}/disconnect`, {
+          method: "POST",
+          headers: baileysHeaders(),
+          body: JSON.stringify({ userId }),
+        }).catch(() => null);
+      } catch {}
+      const res = await fetch(`${baseUrl}/connect`, {
         method: "POST",
         headers: baileysHeaders(),
-        body: JSON.stringify({ userId: scope }),
+        body: JSON.stringify({ userId: scope, fresh: true, deviceName: "DataBuks Personal" }),
       });
       const data = await res.json().catch(() => ({}));
       return NextResponse.json({ ok: res.ok, qr: data?.qrCode ?? null, error: res.ok ? null : String(data?.error ?? "connect failed").slice(0, 200) });
