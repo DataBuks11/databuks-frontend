@@ -454,9 +454,13 @@ async function connectWhatsApp(userId, opts = {}) {
 
   // Per-session device label so the phone's Linked Devices screen shows
   // "DataBuks Business" vs "DataBuks Personal" instead of one generic name.
-  const deviceName = typeof opts.deviceName === "string" && opts.deviceName.trim() !== ""
+  // Auto-restore passes no opts, so infer from the scope key as fallback.
+  let deviceName = typeof opts.deviceName === "string" && opts.deviceName.trim() !== ""
     ? opts.deviceName.trim().slice(0, 32)
-    : "DataBuks";
+    : null;
+  if (!deviceName) {
+    deviceName = String(userId).startsWith("personal__") ? "DataBuks Personal" : "DataBuks Business";
+  }
 
   const authDir = getAuthDir(userId);
 
@@ -784,7 +788,12 @@ app.post("/send", async (req, res) => {
     return res.status(400).json({ error: "userId, jid, and message required" });
   }
 
-  const session = sessions.get(userId);
+  // Session lookup with personal-scope fallback: the personal assistant
+  // session lives under `personal__<userId>`, but callers pass the raw
+  // userId. Without this fallback every personal send 400s.
+  const session = sessions.get(userId)
+    ?? sessions.get(`personal__${userId}`)
+    ?? [...sessions.values()].find((s) => s.connected && s.userId === userId);
   if (!session?.connected || !session?.socket) {
     return res.status(400).json({ error: "No active WhatsApp connection" });
   }
@@ -808,7 +817,9 @@ app.post("/presence", async (req, res) => {
     return res.status(400).json({ error: "presence must be composing, paused or available" });
   }
 
-  const session = sessions.get(userId);
+  const session = sessions.get(userId)
+    ?? sessions.get(`personal__${userId}`)
+    ?? [...sessions.values()].find((s) => s.connected && s.userId === userId);
   if (!session?.connected || !session?.socket) {
     return res.json({ success: false, reason: "no_active_connection" });
   }
