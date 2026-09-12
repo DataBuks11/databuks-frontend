@@ -159,6 +159,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ processed: false, skippedReason: "group_or_broadcast" });
     }
 
+    // ─── PERSONAL MODE ───
+    // When the owner runs the assistant in personal mode, EVERY inbound 1:1
+    // message gets a casual personal reply — no lead pipeline, no business
+    // data, no personal-contacts skip. Business mode falls through below.
+    try {
+      const { isUserInPersonalMode, handlePersonalChat } = await import("@/lib/ai/owner-personal");
+      if (await isUserInPersonalMode(supabase, userId)) {
+        const reply = await handlePersonalChat({
+          supabase,
+          userId,
+          messageText: message.text ?? "",
+          allowModeSwitch: false,
+        });
+        const targetJid = jid.includes("@")
+          ? jid
+          : `${jid.replace(/@.*$/, "").replace(/\D/g, "")}@s.whatsapp.net`;
+        const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+        await sendViaBaileys({ userId, jid: targetJid, message: reply });
+        return NextResponse.json({ processed: true, route: "personal_assistant" });
+      }
+    } catch (err: any) {
+      console.error(`[API:ai/whatsapp/webhook] personal reply failed: ${err?.message}`);
+      return NextResponse.json({ processed: false, skippedReason: "personal_reply_failed" });
+    }
+
     // ─── PERSONAL CONTACTS FILTER ───
     // Check if sender is marked as personal contact — skip AI reply
     const senderDigits = jid.replace(/@.*$/, "").replace(/\D/g, "");

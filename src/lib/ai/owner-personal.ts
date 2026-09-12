@@ -91,19 +91,21 @@ export interface PersonalChatOpts {
   userId: string;
   messageText: string;
   isSticky?: boolean;
+  // Strangers must never flip the owner's mode by typing trigger words.
+  allowModeSwitch?: boolean;
 }
 
 export async function handlePersonalChat(opts: PersonalChatOpts): Promise<string> {
-  const { supabase, userId, messageText } = opts;
+  const { supabase, userId, messageText, allowModeSwitch = true } = opts;
   const text = messageText.trim();
   const lower = text.toLowerCase();
 
-  // Mode toggles
-  if (BUSINESS_TRIGGERS.test(lower)) {
+  // Mode toggles (owner only — strangers chat, they don't switch modes)
+  if (allowModeSwitch && BUSINESS_TRIGGERS.test(lower)) {
     await setAssistantMode(supabase, userId, "business");
     return "business mode on. ab business data-aware replies dunga. 'leads count', 'business status' sab puch sakte ho.";
   }
-  if (PERSONAL_TRIGGERS.test(lower)) {
+  if (allowModeSwitch && PERSONAL_TRIGGERS.test(lower)) {
     await setAssistantMode(supabase, userId, "personal");
     return "ok personal mode on. abhi casual chat, koi business data inject nahi karunga.";
   }
