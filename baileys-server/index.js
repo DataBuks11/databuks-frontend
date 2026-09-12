@@ -243,6 +243,31 @@ function setupMessageHandler(socket, userId) {
       // Skip status messages
       if (msg.key.remoteJid === "status@broadcast") continue;
 
+      // Skip reactions and protocol noise — no replyable content, and
+      // forwarding them only produces webhook 400s (empty text).
+      const rawTop = msg.message || {};
+      if (rawTop.reactionMessage || rawTop.protocolMessage) continue;
+
+      // Unwrap container message types. WhatsApp wraps captioned media as
+      // documentWithCaptionMessage/imageWithCaptionMessage/videoWithCaption-
+      // Message, and view-once media in viewOnceMessage(V2). Without
+      // unwrapping, type detection falls to "unknown" with empty text and
+      // the webhook rejects with 400 — so PDFs/images with captions (or
+      // empty captions) NEVER get an AI reply.
+      let inner = rawTop;
+      for (let i = 0; i < 3; i++) {
+        const next =
+          inner.documentWithCaptionMessage?.message ||
+          inner.imageWithCaptionMessage?.message ||
+          inner.videoWithCaptionMessage?.message ||
+          inner.viewOnceMessage?.message ||
+          inner.viewOnceMessageV2?.message ||
+          inner.editedMessage?.message?.protocolMessage?.editedMessage ||
+          null;
+        if (!next || next === inner) break;
+        inner = next;
+      }
+
       const fromMe = msg.key.fromMe || false;
       const remotePhone = String(msg.key.remoteJid ?? "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
       const ownPhones = resolveOwnPhones();
@@ -271,21 +296,23 @@ function setupMessageHandler(socket, userId) {
       // Use a placeholder when the message has media but no caption so the
       // downstream pipeline (engine + AI) can acknowledge the attachment
       // instead of silently rejecting media-only messages.
-      const messageType = msg.message?.conversation
+      const messageType = inner.conversation
         ? "text"
-        : msg.message?.extendedTextMessage
+        : inner.extendedTextMessage
         ? "text"
-        : msg.message?.imageMessage
+        : inner.imageMessage
         ? "image"
-        : msg.message?.videoMessage
+        : inner.videoMessage
         ? "video"
-        : msg.message?.audioMessage
+        : inner.audioMessage
         ? "audio"
-        : msg.message?.documentMessage
+        : inner.documentMessage
         ? "document"
-        : msg.message?.contactMessage
+        : inner.stickerMessage
+        ? "sticker"
+        : inner.contactMessage
         ? "contact"
-        : msg.message?.locationMessage
+        : inner.locationMessage
         ? "location"
         : "unknown";
       const mediaTextFor = (type) => {
@@ -301,10 +328,11 @@ function setupMessageHandler(socket, userId) {
         }
       };
       const messageText =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        msg.message?.imageMessage?.caption ||
-        msg.message?.videoMessage?.caption ||
+        inner.conversation ||
+        inner.extendedTextMessage?.text ||
+        inner.imageMessage?.caption ||
+        inner.videoMessage?.caption ||
+        inner.documentMessage?.caption ||
         mediaTextFor(messageType) ||
         "";
 
