@@ -1093,8 +1093,20 @@ async function autoRestoreSessions() {
       .limit(20);
     for (const row of savedSessions ?? []) {
       const userId = row.user_id;
-      console.log(`[Auth] Auto-restoring session for user: ${userId}`);
-      connectWhatsApp(userId).catch((err) => {
+      // Preserve the correct device label across restarts: read the owner's
+      // assistant mode so a Personal session restores as "DataBuks Personal"
+      // (not the generic Business default).
+      let deviceName;
+      try {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("assistant_mode")
+          .eq("id", userId)
+          .maybeSingle();
+        deviceName = prof?.assistant_mode === "personal" ? "DataBuks Personal" : "DataBuks Business";
+      } catch {}
+      console.log(`[Auth] Auto-restoring session for user: ${userId} (${deviceName ?? "default"})`);
+      connectWhatsApp(userId, deviceName ? { deviceName } : {}).catch((err) => {
         console.error(`[Auth] Auto-restore failed for ${userId}:`, err.message);
       });
     }

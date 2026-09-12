@@ -27,14 +27,15 @@ function baileysBase(): string | null {
 }
 
 /**
- * The Baileys server keeps ONE session per userId. The business WhatsApp
- * session already uses the raw admin userId — a personal assistant number
- * must NOT reuse that (QR would never generate; we'd just see the business
- * session's "connected" state). Namespace the personal session under a
- * distinct key so both are independent linked devices.
+ * NOTE (scope removal): sessions used to be namespaced as
+ * `personal__<userId>`, but whatsapp_sessions.user_id is a UUID column, so
+ * every DB write with a scoped key failed with 22P02 and the session could
+ * never persist/restore — every Railway restart wiped it. Since one number =
+ * one active session (mutual exclusion), the scope is gone: raw userId
+ * everywhere, device name distinguishes Business vs Personal on the phone.
  */
 function personalScope(userId: string): string {
-  return `personal__${userId}`;
+  return userId;
 }
 
 function baileysHeaders() {
