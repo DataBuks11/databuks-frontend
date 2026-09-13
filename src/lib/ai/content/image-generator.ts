@@ -100,10 +100,10 @@ function placeholderImage(prompt: string): GeneratedImage {
 export function buildImagePrompt(topic: string, caption: string): string {
   const t = (topic ?? "").trim();
   const c = (caption ?? "").trim();
-  // Keep it short, concrete, and style-aware. Caller can override.
   const parts: string[] = [];
   if (t) parts.push(t);
-  if (c) parts.push(c.slice(0, 200));
-  parts.push("editorial photography, soft natural light, modern minimal");
+  if (c) parts.push(c.slice(0, 160));
+  // Enforce authentic, raw, candid documentary photography (zero plastic AI look)
+  parts.push("raw candid documentary photograph, shot on 35mm lens fujifilm, natural ambient daylight, real skin texture with pores, authentic environment, unposed moment, realistic depth of field, no CGI, no plastic sheen, no airbrushing, no text, no watermark");
   return parts.join(", ");
 }
