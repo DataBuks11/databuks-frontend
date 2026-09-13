@@ -159,47 +159,84 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ processed: false, skippedReason: "group_or_broadcast" });
     }
 
-    // ─── PERSONAL MODE ───
-    // When the owner runs the assistant in personal mode, EVERY inbound 1:1
-    // message gets a casual personal reply — no lead pipeline, no business
-    // data, no personal-contacts skip. Business mode falls through below.
-    try {
-      const { isUserInPersonalMode, handlePersonalChat } = await import("@/lib/ai/owner-personal");
-      if (await isUserInPersonalMode(supabase, userId)) {
-        const reply = await handlePersonalChat({
-          supabase,
-          userId,
-          messageText: message.text ?? "",
-          allowModeSwitch: false,
-        });
-        const targetJid = jid.includes("@")
-          ? jid
-          : `${jid.replace(/@.*$/, "").replace(/\D/g, "")}@s.whatsapp.net`;
-        const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
-        await sendViaBaileys({ userId, jid: targetJid, message: reply });
-        return NextResponse.json({ processed: true, route: "personal_assistant" });
-      }
-    } catch (err: any) {
-      console.error(`[API:ai/whatsapp/webhook] personal reply failed: ${err?.message}`);
-      return NextResponse.json({ processed: false, skippedReason: "personal_reply_failed" });
-    }
-
-    // ─── PERSONAL CONTACTS FILTER ───
-    // Check if sender is marked as personal contact — skip AI reply
+    // ─── PERSONAL CONTACTS / PERSONAL ASSISTANT ROUTING ───
+    // If sender is a personal contact or the account is in personal mode,
+    // send an instant friendly personal AI reply instead of skipping or pitching.
     const senderDigits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+    let isPersonalContact = false;
+    let personalContactName = message.pushName || "";
     try {
       const { data: personalContact } = await supabase
         .from("personal_contacts")
-        .select("id")
+        .select("id, name")
         .eq("user_id", userId)
         .or(`jid.eq.${jid},phone.eq.${senderDigits}`)
         .limit(1)
         .maybeSingle();
       if (personalContact) {
-        return NextResponse.json({ processed: false, skippedReason: "personal_contact" });
+        isPersonalContact = true;
+        if (personalContact.name) personalContactName = personalContact.name;
       }
     } catch {
-      // Table may not exist yet — skip filter gracefully
+      // Table may not exist yet — skip gracefully
+    }
+
+    const { isUserInPersonalMode } = await import("@/lib/ai/owner-personal");
+    const inPersonalMode = isPersonalContact || (await isUserInPersonalMode(supabase, userId));
+
+    if (inPersonalMode) {
+      try {
+        const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+        const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
+
+        const trimmed = (message.text || "").trim();
+        const lower = trimmed.toLowerCase();
+
+        let reply: string;
+        // Fast-path greetings & casual reactions for sub-second latency
+        if (/^(hi+|hlo+|hlw+|hello+|hey+|heyy*|namaste|yo+|sup)\b/i.test(lower)) {
+          const firstName = personalContactName ? ` ${(personalContactName.split(" ")[0])}` : "";
+          reply = `hey${firstName}! kya haal hai?`;
+        } else if (/^(kaisa hai|kaise ho|kaisi ho|how are you|sab theek|kya chal raha hai)\b/i.test(lower)) {
+          reply = "sab badhiya! aap batao, kaisa chal raha hai?";
+        } else if (/^(ok|theek hai|hmm|haan|sure|chalo|done|cool|alright)\b/i.test(lower)) {
+          reply = "👍";
+        } else {
+          reply = await handlePersonalChat({
+            supabase,
+            userId,
+            messageText: trimmed,
+            isSticky: true,
+          });
+        }
+
+        const replyJid = /@lid$/i.test(String(message.remoteJid))
+          ? `${senderDigits}@s.whatsapp.net`
+          : message.remoteJid;
+
+        await sendViaBaileys({ userId, jid: replyJid, message: reply });
+
+        try {
+          await supabase.from("whatsapp_messages").insert({
+            user_id: userId,
+            remote_jid: replyJid,
+            message_id: message.messageId,
+            text: message.text,
+            from_me: false,
+            timestamp: new Date().toISOString(),
+            processed: true,
+          });
+        } catch {}
+
+        return NextResponse.json({
+          processed: true,
+          route: isPersonalContact ? "personal_contact_assistant" : "personal_mode_assistant",
+          replySent: true,
+          replyText: reply,
+        });
+      } catch (err: any) {
+        console.error(`[API:ai/whatsapp/webhook] personal reply failed: ${err?.message}`);
+      }
     }
 
     const result = await processIncomingWhatsAppMessage(supabase, {

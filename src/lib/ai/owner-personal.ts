@@ -27,10 +27,10 @@ export async function isUserInPersonalMode(
       .select("assistant_mode")
       .eq("id", userId)
       .maybeSingle();
-    return (data as any)?.assistant_mode === "personal";
-  } catch {
-    return false;
-  }
+    if ((data as any)?.assistant_mode === "personal") {
+      return true;
+    }
+  } catch {}
   // Fallback: webhook userId kabhi UI wale account se alag hota hai (dono
   // owner profiles ek hi WhatsApp number share karte hain). Agar owner phone
   // wala KOI profile personal mode mein hai, to personal treat karo.

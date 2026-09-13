@@ -4,5 +4,15 @@
   "compatibility_date": "2026-08-30",
   "ai": {
     "binding": "AI"
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "DATABUKS_IMAGES",
+      "id": "72bf108085344d84a41e709ecdd1be80"
+    },
+    {
+      "binding": "IMAGES_KV",
+      "id": "72bf108085344d84a41e709ecdd1be80"
+    }
+  ]
 }

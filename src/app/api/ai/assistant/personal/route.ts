@@ -7,7 +7,10 @@ import { createClient } from "@/lib/supabase/server";
  * if the user's email is the allowed admin (databuksllc@gmail.com). All other
  * users get 403 — they cannot use the personal WhatsApp feature.
  */
-const ALLOWED_ADMIN_EMAILS = ["databuksllc@gmail.com"];
+const ALLOWED_ADMIN_EMAILS = [
+  "databuksllc@gmail.com",
+  "jaychheniya0@gmail.com",
+];
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,11 +18,13 @@ export async function GET(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    if (!user.email || !ALLOWED_ADMIN_EMAILS.includes(user.email)) {
+    const userEmail = (user.email ?? "").toLowerCase();
+    const isAdmin = ALLOWED_ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    if (!isAdmin) {
       return NextResponse.json({
         ok: false,
         error: "personal_assistant_not_available",
-        message: "Personal WhatsApp Assistant is only available for the admin account.",
+        message: "Personal WhatsApp Assistant is only available for authorized accounts.",
       }, { status: 403 });
     }
 
@@ -48,7 +53,9 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    if (!user.email || !ALLOWED_ADMIN_EMAILS.includes(user.email)) {
+    const userEmail = (user.email ?? "").toLowerCase();
+    const isAdmin = ALLOWED_ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    if (!isAdmin) {
       return NextResponse.json({
         ok: false,
         error: "personal_assistant_not_available",
