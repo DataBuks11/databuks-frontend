@@ -547,13 +547,30 @@ async function recordOutreachEvent(
   }
 }
 
+/**
+ * Combined evidence + confidence rank (0-100+):
+ * - lead_score = evidence-based interest (base, 1x)
+ * - intent_score / relevance_score = conversion confidence (+0.3x each)
+ * - solid evidence text (requirement/detail captured) = +10 bonus
+ * Roz ke 10-15 outreach isi ranking ke top se jaate hain.
+ */
+function rankScore(c: any): number {
+  const base = Number(c?.lead_score ?? 0);
+  const intent = Number(c?.intent_score ?? 0);
+  const relevance = Number(c?.relevance_score ?? 0);
+  const ev = String(c?.evidence ?? "");
+  const hasEvidence = ev.length > 40 ? 10 : ev.length > 10 ? 4 : 0;
+  const hasRequirement = String(c?.detected_requirement ?? "").length > 10 ? 5 : 0;
+  return base + intent * 0.3 + relevance * 0.3 + hasEvidence + hasRequirement;
+}
+
 /** Fetch top discovered leads for the user and run multi-channel outreach. */
 export async function runMultiChannelOutreachForUser(
   supabase: any,
   userId: string,
   opts: { limit?: number; minScore?: number } = {}
 ): Promise<{ processed: number; results: MultiOutreachResult[]; skipped: number; failed: number }> {
-  const limit = opts.limit ?? 5;
+  const limit = opts.limit ?? 12;
   const minScore = opts.minScore ?? 60;
 
 const { data: candidates } = await supabase
@@ -565,12 +582,16 @@ const { data: candidates } = await supabase
     .order("lead_score", { ascending: false })
     .limit(limit * 2);
 
+  // Evidence + confidence re-rank: lead_score ke saath intent/relevance signals
+  // aur solid evidence text ko weight do — sabse best leads pehle.
+  const ranked = [...(candidates ?? [])].sort((a: any, b: any) => rankScore(b) - rankScore(a));
+
   const results: MultiOutreachResult[] = [];
   let processed = 0;
   let skipped = 0;
   let failed = 0;
 
-  for (const c of (candidates ?? []).slice(0, limit)) {
+  for (const c of ranked.slice(0, limit)) {
     const r = await runMultiChannelOutreach(supabase, c as MultiChannelCandidate);
     results.push(r);
     if (r.channels.length === 0) {

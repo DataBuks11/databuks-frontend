@@ -5,12 +5,19 @@ export const maxDuration = 300;
 
 /**
  * GET/POST /api/cron/daily-posts
- * Vercel Cron handler: daily at 10:00 UTC (3:30 PM IST). For every user
- * with daily_post_count > 0, generate that many posts and push them to
- * the user's personal-assistant WhatsApp number for approval.
+ * Hourly cron. Har user ke post_preferences me post_time (default 10:00)
+ * + post_timezone (default Asia/Kolkata) hota hai. Jiska time is hour me
+ * match kare AUR aaj abhi tak post generate nahi hui, uske liye utne posts
+ * generate karke personal-assistant WhatsApp number par approval ke liye push.
  *
- * The user then replies "yes" / "no" / "edit: ..." / "schedule: ..."
- * and the WhatsApp engine's approval-handler applies the decision.
+ * Owner WhatsApp se: "roz subah 10 baje 2 post" → schedule set.
+ * "daily post band" → disable. Manual test: ?userId=...&force=1
+ *
+ * Approval via WhatsApp replies:
+ *   "yes" / "ok" / "done"    → approved, ready to publish
+ *   "no" / "cancel"          → rejected (+ auto replacement)
+ *   "edit: <text>"           → edited
+ *   "schedule: <time>"       → scheduled
  */
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -49,18 +56,25 @@ async function run(request: NextRequest) {
     // Optional: target a single user via ?userId=... for testing
     const url = new URL(request.url);
     const userIdParam = url.searchParams.get("userId");
+    const force = url.searchParams.get("force") === "1";
 
-    let userIds: string[] = [];
+    let profiles: any[] = [];
     if (userIdParam) {
-      userIds = [userIdParam];
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, daily_post_count, post_preferences")
+        .eq("id", userIdParam);
+      profiles = data ?? [];
     } else {
       // All users with daily_post_count > 0
-      const { data: profiles } = await supabase
+      const { data } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, daily_post_count, post_preferences")
         .gt("daily_post_count", 0);
-      userIds = (profiles ?? []).map((p: any) => p.id);
+      profiles = data ?? [];
     }
+    const userIds = profiles.map((p: any) => p.id);
+    const prefsByUser = new Map(profiles.map((p: any) => [p.id, p.post_preferences ?? {}]));
 
     const summary: {
       users_processed: number;
@@ -75,6 +89,29 @@ async function run(request: NextRequest) {
 
     for (const userId of userIds) {
       try {
+        const prefs: any = prefsByUser.get(userId) ?? {};
+
+        // --- Time gate: sirf jiska post_time is hour me hai (default 10:00 IST) ---
+        if (!force && !isDueNow(prefs.post_time ?? "10:00", prefs.post_timezone ?? "Asia/Kolkata")) {
+          summary.details.push({ userId, skipped: "not due yet" });
+          continue;
+        }
+
+        // --- Idempotency: aaj already generate ho gayi to dobara nahi ---
+        if (!force) {
+          const startOfDay = new Date();
+          startOfDay.setHours(0, 0, 0, 0);
+          const { count: doneToday } = await supabase
+            .from("social_posts")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId)
+            .gte("created_at", startOfDay.toISOString());
+          if ((doneToday ?? 0) > 0) {
+            summary.details.push({ userId, skipped: "already posted today" });
+            continue;
+          }
+        }
+
         const result = await generateDailyPostsForUser(supabase, userId);
         summary.users_processed += 1;
         summary.total_posts += result.count;
@@ -100,5 +137,21 @@ async function run(request: NextRequest) {
   } catch (err: any) {
     console.error(`[API:cron/daily-posts] ${err?.message}`);
     return NextResponse.json({ ok: false, error: err?.message }, { status: 500 });
+  }
+}
+
+/** "10:00" + timezone user ke local time me is hour me hai kya? */
+function isDueNow(postTime: string, timeZone: string, now = new Date()): boolean {
+  try {
+    const m = String(postTime).match(/(\d{1,2}):(\d{2})/);
+    if (!m) return now.getHours() === 10;
+    const wantH = parseInt(m[1], 10);
+    const fmt = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit", minute: "2-digit", hour12: false, timeZone,
+    });
+    const [h] = fmt.format(now).split(":").map(Number);
+    return h === wantH;
+  } catch {
+    return now.getHours() === 10;
   }
 }

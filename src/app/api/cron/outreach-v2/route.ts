@@ -45,7 +45,7 @@ async function runOutreachV2(request: NextRequest) {
     const supabase = adminClient();
     const url = new URL(request.url);
     const userId = url.searchParams.get("userId");
-    const limit = parseInt(url.searchParams.get("limit") ?? "5", 10);
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "12", 10) || 12, 1), 15);
 
     // Pull top leads that have actual contact data
     let query = supabase

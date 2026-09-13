@@ -52,6 +52,9 @@ interface ProfilePrefs {
     preferred_topics?: string[];
     style_overrides?: string;
     post_count_today_override?: number;
+    daily_enabled?: boolean;
+    post_time?: string;
+    post_timezone?: string;
   };
 }
 
@@ -88,7 +91,7 @@ export async function generateDailyPostsForUser(
   const count = Math.max(
     0,
     Math.min(
-      10,
+      15,
       options.maxPosts ?? overrideCount ?? prefs.daily_post_count ?? 0
     )
   );
@@ -114,7 +117,11 @@ export async function generateDailyPostsForUser(
 
   const userTopics = prefs.post_preferences?.preferred_topics ?? [];
   const avoid = prefs.post_preferences?.avoid_topics ?? [];
+  // Owner ka custom brief ("pehli price pe, dusri testimonial pe") sabse upar —
+  // business context ke hisaab se generate hoga, bas topic owner wala.
+  const briefTopics = (options.overrideTopics ?? []).filter(Boolean).slice(0, 15);
   const topicPool = [
+    ...briefTopics,
     ...userTopics,
     ...(business.services ?? []).map((s: any) => s.name),
     ...(business.industries ?? []),

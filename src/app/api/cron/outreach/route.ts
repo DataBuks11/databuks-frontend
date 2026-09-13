@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     const supabase = adminClient();
     const { runProactiveOutreach } = await import("@/lib/ai/outreach/runner");
     const results = await runProactiveOutreach(supabase, {
-      limit: dryRun ? 5 : 5,
+      limit: dryRun ? 5 : 12,
       dryRun,
     });
     const sent = results.filter((r) => r.ok && !r.gated && r.reason !== "dry_run").length;
