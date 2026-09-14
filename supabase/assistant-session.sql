@@ -6,7 +6,7 @@
 CREATE TABLE IF NOT EXISTS public.assistant_session (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   state TEXT NOT NULL DEFAULT 'idle'
-    CHECK (state IN ('idle', 'awaiting_post_count', 'generating_posts', 'awaiting_outreach_count', 'doing_outreach')),
+    CHECK (state IN ('idle', 'awaiting_post_count', 'generating_posts', 'awaiting_outreach_count', 'doing_outreach', 'posts_queued', 'outreach_queued')),
   data JSONB DEFAULT '{}'::jsonb,
   expires_at TIMESTAMPTZ DEFAULT (now() + interval '24 hours'),
   updated_at TIMESTAMPTZ DEFAULT now()
