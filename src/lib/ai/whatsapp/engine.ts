@@ -98,7 +98,7 @@ async function defaultSendReply(input: { userId: string; jid: string; message: s
       "Content-Type": "application/json",
       "x-api-key": apiKey || "dev-key",
     },
-    body: JSON.stringify({ userId: input.userId, jid: input.jid, message: input.message }),
+    body: JSON.stringify({ userId: input.userId, slot: "business", jid: input.jid, message: input.message }),
   });
   if (!response.ok) {
     throw new Error(`WhatsApp send failed (${response.status})`);
