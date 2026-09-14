@@ -1152,7 +1152,36 @@ app.listen(PORT, "0.0.0.0", () => {
 
   autoRestoreSessions();
   loadPendingReminders();
+  startNextJsBridge();
 });
+
+// ─── Next.js cron bridge ───
+// Vercel Hobby allows DAILY crons only, but owner-command polling (2 min)
+// and daily-post time matching (hourly) need frequent runs. This server
+// runs 24/7, so it pings those Next.js routes itself. Fire-and-forget:
+// the routes are idempotent + self-gating (time windows, dedup, skip-if-done).
+function startNextJsBridge() {
+  const appBase = String(WEBHOOK_URL || "").replace(/\/api\/ai\/whatsapp\/webhook\/?$/, "");
+  if (!appBase) {
+    console.log("[Bridge] WEBHOOK_URL not set — frequent jobs (poll, daily-posts) disabled");
+    return;
+  }
+  const ping = (path) => {
+    fetch(`${appBase}${path}`, { headers: { "x-api-key": API_KEY } })
+      .then(async (r) => {
+        if (!r.ok) console.warn(`[Bridge] ${path} → ${r.status}`);
+      })
+      .catch((err) => console.error(`[Bridge] ${path} failed:`, err.message));
+  };
+  // Owner self-chat backup (webhook realtime is primary; this catches misses)
+  setInterval(() => ping("/api/ai/whatsapp/poll"), 2 * 60 * 1000);
+  // Hourly post-time matcher (per-user custom times, default 10:00 IST)
+  setInterval(() => ping("/api/cron/daily-posts"), 60 * 60 * 1000);
+  // First runs shortly after boot (stagger to avoid cold-start pileup)
+  setTimeout(() => ping("/api/ai/whatsapp/poll"), 60 * 1000);
+  setTimeout(() => ping("/api/cron/daily-posts"), 5 * 60 * 1000);
+  console.log(`[Bridge] Next.js frequent jobs enabled → ${appBase}`);
+}
 
 async function autoRestoreSessions() {
   if (!supabase) return;
