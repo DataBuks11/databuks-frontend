@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     // lead pipeline (koi pitch nahi, koi lead capture nahi).
     if (slot === "personal" && !isOwnerCommand && message.fromMe !== true) {
       const jid = String(message.remoteJid ?? "");
-      if (!jid.includes("@g.us") && !jid.includes("@broadcast")) {
+      if (!jid.includes("@g.us") && !jid.includes("@broadcast") && !jid.includes("@newsletter")) {
         try {
           const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
           const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
@@ -213,10 +213,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ processed: false, skippedReason: "outbound" });
     }
 
-    // ─── SKIP GROUP MESSAGES ───
-    // AI should never auto-reply in group chats
+    // ─── SKIP GROUP/CHANNEL MESSAGES ───
+    // AI should never auto-reply in group chats or broadcast channels
     const jid = String(message.remoteJid ?? "");
-    if (jid.includes("@g.us") || jid.includes("@broadcast")) {
+    if (jid.includes("@g.us") || jid.includes("@broadcast") || jid.includes("@newsletter")) {
       return NextResponse.json({ processed: false, skippedReason: "group_or_broadcast" });
     }
 

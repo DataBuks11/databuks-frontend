@@ -253,6 +253,33 @@ async function forwardToWebhook(key, msg, ownPhone = "") {
   }
 }
 
+// ─── Echo suppression ───
+// Messages WE just sent via /send come back through messages.upsert as
+// fromMe=false echoes (LID addressing). Without suppression the AI replies
+// to its own reply forever. Keyed by session + remote + text prefix.
+const lastSent = new Map(); // `${key}|${remoteJid}` -> { text, at }
+function recordSent(key, remoteJid, text) {
+  try {
+    const t = String(text ?? "").slice(0, 120);
+    if (!t) return;
+    lastSent.set(`${key}|${String(remoteJid ?? "")}`, { text: t, at: Date.now() });
+    if (lastSent.size > 500) {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      for (const [k, v] of lastSent) if (v.at < cutoff) lastSent.delete(k);
+    }
+  } catch {}
+}
+function isOwnEcho(key, remoteJid, text) {
+  try {
+    const t = String(text ?? "").slice(0, 120);
+    if (!t) return false;
+    const rec = lastSent.get(`${key}|${String(remoteJid ?? "")}`);
+    return !!rec && rec.text === t && Date.now() - rec.at < 120 * 1000;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Message Handler ───
 function setupMessageHandler(socket, userId) {
   // Owner command center: messages the user sends to THEIR OWN number
@@ -277,8 +304,10 @@ function setupMessageHandler(socket, userId) {
     if (type !== "notify") return;
 
     for (const msg of messages) {
-      // Skip status messages
-      if (msg.key.remoteJid === "status@broadcast") continue;
+      // Skip status broadcasts + channels/newsletters — never leads, never
+      // commands. Replying inside a channel would spam thousands of people.
+      const rj = String(msg.key.remoteJid ?? "");
+      if (msg.key.remoteJid === "status@broadcast" || rj.endsWith("@newsletter") || rj.endsWith("@broadcast")) continue;
 
       // Skip reactions and protocol noise — no replyable content, and
       // forwarding them only produces webhook 400s (empty text).
@@ -388,6 +417,14 @@ function setupMessageHandler(socket, userId) {
       console.log(
         `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] ownLid=${ownLid || "none"} remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
+
+      // Own-reply echo: our just-sent message bounced back as inbound.
+      // Store as processed (audit) but NEVER forward — else infinite loop.
+      if (!fromMe && isOwnEcho(userId, msg.key.remoteJid, messageText)) {
+        console.log(`[Echo] suppressed own-reply echo in ${String(msg.key.remoteJid).slice(0, 30)}`);
+        await storeMessage(userId, parsedMsg, true);
+        continue;
+      }
 
       // Store in Supabase. Self-chat (owner commands) is stored UNPROCESSED
       // so the owner-poll bridge picks it up even if the webhook is
@@ -884,6 +921,7 @@ app.post("/send", async (req, res) => {
   try {
     const formattedJid = jid.includes("@") ? jid : `${jid}@s.whatsapp.net`;
     const sent = await session.socket.sendMessage(formattedJid, { text: message });
+    recordSent(session.userId, formattedJid, message);
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -941,6 +979,7 @@ app.post("/send-media", async (req, res) => {
     }
 
     const sent = await session.socket.sendMessage(formattedJid, messageContent);
+    recordSent(session.userId, formattedJid, caption || "");
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
