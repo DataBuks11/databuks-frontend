@@ -113,7 +113,7 @@ export function parseCount(text: string): number | null {
  */
 export function extractBriefTopics(text: string): string[] {
   const cleaned = text
-    .replace(/\b(mujhe|mere|liye|ke liye|for|instagram|facebook|linkedin|whatsapp|telegram|post|posts|reel|reels|story|stories|content|leads?|ko|message|msg|bhejo|bhej|chalao|bana|banake|banao|karo|kar|do|de|dijiye|please|plz|ek|aaj|roz|daily)\b/gi, " ")
+    .replace(/\b(mujhe|mere|liye|ke liye|for|instagram|facebook|linkedin|whatsapp|telegram|post|posts|reel|reels|story|stories|content|leads?|ko|message|msg|bhejo|bhej|chalao|bana|banake|banao|karo|kar|do|de|dijiye|chaiye|chahiye|please|plz|ek|aaj|roz|daily)\b/gi, " ")
     .replace(/\b\d{1,2}\b/g, " ")
     .replace(/[.,!?;|]+/g, "\n");
   const topics = cleaned
@@ -123,8 +123,12 @@ export function extractBriefTopics(text: string): string[] {
   return topics.slice(0, 15);
 }
 
-const POST_TRIGGERS =
-  /\b(post|posts|content|reel|story|update|create|make|generate|kahani|stories)\b.{0,30}\b(banao|create|generate|kar|karo|bana|banake|banaa|daalo|banana|banao|lagao|publish|karo|do)\b/i;
+const POST_NOUNS = "(post|posts|content|reel|reels|story|stories|update|kahani)";
+const POST_VERBS = "(banao|create|generate|kar|karo|bana|banake|banaa|daalo|banana|lagao|publish|do|de|dijiye|chaiye|chahiye|bhej|bhejo)";
+const POST_TRIGGERS = new RegExp(
+  `\\b${POST_NOUNS}\\b.{0,40}\\b${POST_VERBS}\\b|\\b${POST_VERBS}\\b.{0,40}\\b${POST_NOUNS}\\b`,
+  "i"
+);
 const POST_QUESTION = /\b(kitne|kitna|kitni)\s*(post|posts|content|reel|story|stories)\b/i;
 const POST_AFFIRM = /^(ha|haan|ok|okay|kar|karo|banao|sure|ji|yes|y|chal|karo ab)$/i;
 
