@@ -82,26 +82,33 @@ export async function POST(request: NextRequest) {
     // Owner's own numbers (BOTH slots + profile + env): a message from any
     // of them is an owner command on ANY slot — never stranger/lead traffic.
     // E.g. owner's business phone texting the personal number for "10 post".
+    // Sessions are keyed by LID as often as by phone — match BOTH, LIDs by
+    // prefix (device suffixes differ).
     let isOwnerNumber = false;
     try {
-      const ownerSet = new Set<string>();
-      if (ownerPhone.length >= 10) ownerSet.add(ownerPhone);
+      const ownerPhones = new Set<string>();
+      const ownerLids = new Set<string>();
+      if (ownerPhone.length >= 10) ownerPhones.add(ownerPhone);
       const { data: prof } = await supabase
         .from("profiles")
         .select("phone")
         .eq("id", userId)
         .maybeSingle();
       const pd = String((prof as any)?.phone ?? "").replace(/\D/g, "");
-      if (pd.length >= 10) ownerSet.add(pd);
+      if (pd.length >= 10) ownerPhones.add(pd);
       const { data: sessRows } = await supabase
         .from("whatsapp_sessions")
         .select("auth_state")
         .eq("user_id", userId);
       for (const r of (sessRows ?? []) as any[]) {
         const sp = String(r?.auth_state?.phone ?? "").replace(/\D/g, "");
-        if (sp.length >= 10) ownerSet.add(sp);
+        if (sp.length >= 10) ownerPhones.add(sp);
+        const sl = String(r?.auth_state?.lid ?? "").replace(/\D/g, "");
+        if (sl.length >= 10) ownerLids.add(sl);
       }
-      isOwnerNumber = [...ownerSet].some((p) => matchLast10(inboundPhone, p));
+      isOwnerNumber =
+        [...ownerPhones].some((p) => matchLast10(inboundPhone, p)) ||
+        [...ownerLids].some((l) => lidMatch(inboundPhone, l));
     } catch {
       isOwnerNumber = false;
     }
