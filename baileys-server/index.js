@@ -256,25 +256,42 @@ async function forwardToWebhook(key, msg, ownPhone = "") {
 // ─── Echo suppression ───
 // Messages WE just sent via /send come back through messages.upsert as
 // fromMe=false echoes (LID addressing). Without suppression the AI replies
-// to its own reply forever. Keyed by session + remote + text prefix.
+// to its own reply forever — including CROSS-SLOT loops where business-AI
+// and personal-AI keep answering each other. Keyed per session+remote, PLUS
+// a per-user global record so an AI text arriving on the OTHER slot (or the
+// other phone) is also recognized as ours. Exact-text + 120s window, so a
+// human retyping the same words later is unaffected.
 const lastSent = new Map(); // `${key}|${remoteJid}` -> { text, at }
+const globalSent = new Map(); // `${rawUserId}|${text}` -> { at }
+function pruneSentMap(map, key) {
+  try {
+    if (map.size > 500) {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      for (const [k, v] of map) if (v.at < cutoff) map.delete(k);
+    }
+  } catch {}
+}
 function recordSent(key, remoteJid, text) {
   try {
     const t = String(text ?? "").slice(0, 120);
     if (!t) return;
     lastSent.set(`${key}|${String(remoteJid ?? "")}`, { text: t, at: Date.now() });
-    if (lastSent.size > 500) {
-      const cutoff = Date.now() - 5 * 60 * 1000;
-      for (const [k, v] of lastSent) if (v.at < cutoff) lastSent.delete(k);
-    }
+    pruneSentMap(lastSent);
+    const { userId } = normalizeKey(key);
+    globalSent.set(`${userId}|${t}`, { at: Date.now() });
+    pruneSentMap(globalSent);
   } catch {}
 }
 function isOwnEcho(key, remoteJid, text) {
   try {
     const t = String(text ?? "").slice(0, 120);
     if (!t) return false;
+    const now = Date.now();
     const rec = lastSent.get(`${key}|${String(remoteJid ?? "")}`);
-    return !!rec && rec.text === t && Date.now() - rec.at < 120 * 1000;
+    if (rec && rec.text === t && now - rec.at < 120 * 1000) return true;
+    const { userId } = normalizeKey(key);
+    const g = globalSent.get(`${userId}|${t}`);
+    return !!g && now - g.at < 120 * 1000;
   } catch {
     return false;
   }
