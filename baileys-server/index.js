@@ -193,9 +193,34 @@ async function updateSupabaseStatus(key, connected) {
   if (!supabase) return;
   const { slot, userId } = normalizeKey(key);
   try {
-    await upsertSessionRow(userId, slot, { connected });
+    // Update-first: a bare upsert without auth_state would INSERT a row with
+    // auth_state=NULL and violate NOT NULL on fresh slots.
+    const { data, error } = await supabase
+      .from("whatsapp_sessions")
+      .update({ connected, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("slot", slot)
+      .select("id");
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      await upsertSessionRow(userId, slot, { connected, auth_state: {} });
+    }
   } catch (err) {
-    console.error("[Supabase Error]", err.message);
+    // Pre-migration fallback (no slot column): legacy single row.
+    try {
+      const { data } = await supabase
+        .from("whatsapp_sessions")
+        .update({ connected, updated_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .select("id");
+      if (!data || data.length === 0) {
+        await supabase.from("whatsapp_sessions").insert({
+          user_id: userId, connected, auth_state: {}, updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e2) {
+      console.error("[Supabase Error]", e2.message);
+    }
   }
 }
 
@@ -591,8 +616,16 @@ async function restoreFullAuthState(key, authDir) {
 }
 
 // ─── Connect WhatsApp ───
+// Guards against overlapping attempts: two sockets with identical creds
+// 440-kick each other into an endless storm. One attempt per key at a time;
+// a newer attempt cancels the older one before it can handshake.
+const connectLocks = new Map(); // key -> attemptId
 async function connectWhatsApp(sessionKey, opts = {}) {
   const { key, slot } = normalizeKey(sessionKey, opts.slot);
+  const attempt = (connectLocks.get(key) ?? 0) + 1;
+  connectLocks.set(key, attempt);
+  const alive = () => connectLocks.get(key) === attempt;
+
   const existing = sessions.get(key);
   if (existing?.connected) {
     return { connected: true, message: "Already connected" };
@@ -600,6 +633,11 @@ async function connectWhatsApp(sessionKey, opts = {}) {
 
   if (existing?.socket) {
     try { existing.socket.ws?.close(); } catch {}
+    try { existing.socket.end?.(); } catch {}
+    // Let the old socket die BEFORE the new handshake starts — otherwise
+    // WhatsApp sees two live sessions on the same identity and 440s both.
+    await new Promise((r) => setTimeout(r, 1500));
+    if (!alive()) return { error: "superseded by newer attempt" };
   }
 
   // Per-session device label so the phone's Linked Devices screen shows
@@ -686,6 +724,8 @@ async function connectWhatsApp(sessionKey, opts = {}) {
         console.log(`[WhatsApp] Connected for user: ${key}`);
         session.connected = true;
         session.qrCode = null;
+        // Successful handshake clears any 440 streak.
+        if (global.__reconnectCounts) delete global.__reconnectCounts[`440:${key}`];
 
         // Get phone number
         try {
@@ -723,25 +763,28 @@ async function connectWhatsApp(sessionKey, opts = {}) {
             resolve({ error: "Logged out from WhatsApp. Please reconnect." });
           }
         } else if (shouldReconnect) {
-          // Code 440 = session replaced on another device. Stop reconnecting
-          // after 3 attempts to avoid infinite loops that block all other sessions.
+          // Code 440 = session replaced on another device. Reconnect SLOWLY
+          // (30s) — instant reconnects overlap sockets and 440-storm. After 3
+          // CONSECUTIVE 440s stop entirely: something else holds this identity
+          // (duplicate container/process) and hammering won't fix it. A fresh
+          // QR re-pair (or killing the duplicate) is the way out.
           const reconnectKey = `440:${key}`;
+          let delayMs = 3000;
           if (statusCode === 440) {
             const count = (global.__reconnectCounts || (global.__reconnectCounts = {}))[reconnectKey] || 0;
             if (count >= 3) {
-              console.log(`[WhatsApp] STOPPED reconnecting for ${key} — 440 loop detected (${count} attempts). User must re-scan QR.`);
+              console.log(`[WhatsApp] STOPPED reconnecting for ${key} — 440 loop detected (${count} attempts). Fresh QR re-pair needed.`);
               sessions.delete(key);
               return;
             }
             global.__reconnectCounts[reconnectKey] = count + 1;
-          } else {
-            // Reset counter for non-440 disconnects
-            if (global.__reconnectCounts) delete global.__reconnectCounts[`440:${key}`];
+            delayMs = 30000;
           }
-          console.log(`[WhatsApp] Auto-reconnecting for user: ${key}`);
+          console.log(`[WhatsApp] Reconnecting for user: ${key} in ${delayMs}ms`);
           setTimeout(() => {
+            if (sessions.get(key)?.connected) return; // already back — don't double up
             connectWhatsApp(key).catch(() => {});
-          }, 3000);
+          }, delayMs);
         }
 
         if (!resolved) {
@@ -1219,6 +1262,7 @@ app.delete("/schedule-reminder/:id", requireApiKey, async (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Baileys server running on port ${PORT}`);
+  console.log(`   Instance: ${process.env.RAILWAY_REPLICA_ID || require("os").hostname()}`);
   console.log(`   Supabase: ${SUPABASE_URL ? "Connected" : "NOT configured"}`);
   console.log(`   Webhook: ${WEBHOOK_URL || "NOT configured"}`);
   console.log(`   API Key: ${API_KEY ? "Set" : "NOT set"}`);
