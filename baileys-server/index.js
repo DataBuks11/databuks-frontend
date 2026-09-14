@@ -257,7 +257,7 @@ async function storeMessage(key, msg, preProcessed = false) {
 }
 
 // Forward message to webhook (for AI agent processing)
-async function forwardToWebhook(key, msg, ownPhone = "") {
+async function forwardToWebhook(key, msg, ownPhone = "", ownLid = "") {
   if (!WEBHOOK_URL) { console.log("[Webhook] No WEBHOOK_URL set, skipping"); return; }
   const { slot, userId } = normalizeKey(key);
   try {
@@ -267,7 +267,7 @@ async function forwardToWebhook(key, msg, ownPhone = "") {
     const resp = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-      body: JSON.stringify({ userId, slot, ownPhone, message: msg }),
+      body: JSON.stringify({ userId, slot, ownPhone, ownLid, message: msg }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -341,6 +341,27 @@ function setupMessageHandler(socket, userId) {
     phones.delete("");
     return phones;
   };
+  // Own LIDs: socket.user.lid vs message remote LIDs often differ by a
+  // device suffix (e.g. ...886 vs ...88677) — compare by prefix, not exact.
+  const resolveOwnLids = () => {
+    const lids = new Set();
+    try {
+      const lid = String(socket.user?.lid ?? "").split("@")[0].replace(/\D/g, "");
+      if (lid) lids.add(lid);
+    } catch {}
+    try {
+      const s = String(sessions.get(userId)?.ownLid ?? "").replace(/\D/g, "");
+      if (s) lids.add(s);
+    } catch {}
+    lids.delete("");
+    return lids;
+  };
+  const lidMatch = (a, b) => {
+    const x = String(a ?? "").replace(/\D/g, "");
+    const y = String(b ?? "").replace(/\D/g, "");
+    if (x.length < 10 || y.length < 10) return false;
+    return x === y || x.startsWith(y) || y.startsWith(x);
+  };
 
   socket.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
@@ -379,22 +400,25 @@ function setupMessageHandler(socket, userId) {
       const fromMe = msg.key.fromMe || false;
       const remotePhone = String(msg.key.remoteJid ?? "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
       const ownPhones = resolveOwnPhones();
+      const ownLids = resolveOwnLids();
       const isSelfChat =
-        fromMe && !!remotePhone && (ownPhones.has(remotePhone) || [...ownPhones].some((p) => p && (p.includes(remotePhone) || remotePhone.includes(p))));
+        fromMe && !!remotePhone && (ownPhones.has(remotePhone) || [...ownPhones].some((p) => p && (p.includes(remotePhone) || remotePhone.includes(p))) || [...ownLids].some((l) => lidMatch(l, remotePhone)));
       // Own LID resolution: Baileys v7 exposes the account's own LID via
       // socket.user.lid ("123...@lid"). A message whose remoteJid matches OUR
       // OWN LID is a self-chat from one of our linked devices (assistant
-      // command). Everyone else's @lid JIDs are REAL PEOPLE — never treat a
-      // generic @lid remote as self; that misroutes customer messages into
-      // the owner-assistant path and they never get a lead reply.
+      // command) — whether fromMe or not (phone-sent self-chat arrives with
+      // fromMe=true AND our LID as remote). Everyone else's @lid JIDs are
+      // REAL PEOPLE — never treat a generic @lid remote as self; that
+      // misroutes customer messages into the owner-assistant path and they
+      // never get a lead reply.
       const ownLid = String(socket.user?.lid ?? "").split("@")[0].replace(/\D/g, "");
       const ownLidSuffix = String(socket.user?.lid ?? "").split("@")[1] ?? "";
       const remoteLidRaw = String(msg.key.remoteJid ?? "").split("@")[0].replace(/\D/g, "");
       const remoteSuffix = String(msg.key.remoteJid ?? "").split("@")[1] ?? "";
+      const lidIsOurs = !!ownLid && [...ownLids, ownLid].some((l) => lidMatch(l, remoteLidRaw));
       const isLidSelfChat =
-        !fromMe &&
         !!ownLid &&
-        remoteLidRaw === ownLid &&
+        lidIsOurs &&
         (!ownLidSuffix || ownLidSuffix === remoteSuffix);
       const ownerPhone = process.env.OWNER_WHATSAPP_NUMBER
         ? process.env.OWNER_WHATSAPP_NUMBER.replace(/\D/g, "")
@@ -505,7 +529,9 @@ function setupMessageHandler(socket, userId) {
       if (!fromMe || messageText) {
         const ownPhones = [...resolveOwnPhones()];
         const primaryOwn = ownPhones.find((p) => p && p.length >= 10) ?? "";
-        await forwardToWebhook(userId, parsedMsg, primaryOwn);
+        const ownLids = [...resolveOwnLids()];
+        const primaryOwnLid = ownLids.find((l) => l && l.length >= 10) ?? "";
+        await forwardToWebhook(userId, parsedMsg, primaryOwn, primaryOwnLid);
       }
     }
   });
@@ -554,8 +580,9 @@ async function persistFullAuthState(key, authDir, reason) {
     const files = readAuthFiles(authDir);
     if (!files["creds.json"]) return;
     const phone = String(sessions.get(key)?.phoneNumber ?? "").replace(/\D/g, "");
+    const lid = String(sessions.get(key)?.ownLid ?? "").replace(/\D/g, "");
     await upsertSessionRow(userId, slot, {
-      auth_state: { files, format: "full", phone },
+      auth_state: { files, format: "full", phone, lid },
       connected: true,
     });
     console.log(`[Auth] Full auth state persisted for ${key} (${Object.keys(files).length} files, phone=${phone ? "set" : "none"}, ${reason})`);
@@ -731,7 +758,8 @@ async function connectWhatsApp(sessionKey, opts = {}) {
         try {
           const user = socket.user;
           session.phoneNumber = user?.id?.split(":")[0] || null;
-          console.log(`[WhatsApp] Phone: ${session.phoneNumber}`);
+          session.ownLid = String(user?.lid ?? "").split("@")[0] || null;
+          console.log(`[WhatsApp] Phone: ${session.phoneNumber} LID: ${session.ownLid ?? "none"}`);
         } catch {}
 
         await updateSupabaseStatus(key, true);

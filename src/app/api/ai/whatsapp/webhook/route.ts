@@ -58,12 +58,24 @@ export async function POST(request: NextRequest) {
     const inboundPhone = serverPhone.length >= 10 ? serverPhone : jidPhone;
     // Server-declared own number (most reliable — straight from the socket).
     const serverOwn = String(body?.ownPhone ?? "").replace(/\D/g, "");
+    const serverOwnLid = String((body as any)?.ownLid ?? "").replace(/\D/g, "");
+    // LID identity: socket LID vs message LID often differ by a device
+    // suffix — prefix-match, never exact-only.
+    const lidMatch = (a: string, b: string) => {
+      const x = a.replace(/\D/g, "");
+      const y = b.replace(/\D/g, "");
+      if (x.length < 10 || y.length < 10) return false;
+      return x === y || x.startsWith(y) || y.startsWith(x);
+    };
     const matchLast10 = (a: string, b: string) =>
       !!a && !!b && a.length >= 10 && b.length >= 10 &&
       (a === b || a.endsWith(b.slice(-10)) || b.endsWith(a.slice(-10)));
     const samePhone = matchLast10(inboundPhone, ownerPhone);
     const isSelfNumber =
-      message.fromMe === true && (matchLast10(inboundPhone, serverOwn) || (slot === "personal" && matchLast10(inboundPhone, ownerPhone)));
+      message.fromMe === true &&
+      (matchLast10(inboundPhone, serverOwn) ||
+        lidMatch(inboundPhone, serverOwnLid) ||
+        (slot === "personal" && matchLast10(inboundPhone, ownerPhone)));
     const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone || isSelfNumber;
 
     const supabase = adminClient();

@@ -48,11 +48,21 @@ export async function pollOwnerWhatsAppCommands(
   // are the user's normal outbound chats — the assistant must NEVER reply
   // to those (it was replying to the user's leads!).
   // Dual slots: the command channel is the PERSONAL session, so read the
-  // personal slot's phone (fallback: legacy single row).
+  // personal slot's phone + LID (fallback: legacy single row).
+  // LID identity uses prefix-match: socket LID vs message LID often differ
+  // by a device suffix.
+  const lidMatch = (a: string, b: string) => {
+    const x = String(a ?? "").replace(/\D/g, "");
+    const y = String(b ?? "").replace(/\D/g, "");
+    if (x.length < 10 || y.length < 10) return false;
+    return x === y || x.startsWith(y) || y.startsWith(x);
+  };
   const phoneCache = new Map<string, string>();
-  const getOwnPhone = async (userId: string): Promise<string> => {
-    if (phoneCache.has(userId)) return phoneCache.get(userId)!;
+  const lidCache = new Map<string, string>();
+  const getOwnIds = async (userId: string): Promise<{ phone: string; lid: string }> => {
+    if (phoneCache.has(userId)) return { phone: phoneCache.get(userId)!, lid: lidCache.get(userId) ?? "" };
     let phone = "";
+    let lid = "";
     try {
       const { data: sess } = await supabase
         .from("whatsapp_sessions")
@@ -61,18 +71,22 @@ export async function pollOwnerWhatsAppCommands(
         .eq("slot", "personal")
         .maybeSingle();
       phone = String(sess?.auth_state?.phone ?? "").replace(/\D/g, "");
-      if (!phone) {
+      lid = String(sess?.auth_state?.lid ?? "").replace(/\D/g, "");
+      if (!phone && !lid) {
         const { data: legacy } = await supabase
           .from("whatsapp_sessions")
           .select("auth_state")
           .eq("user_id", userId)
           .maybeSingle();
         phone = String(legacy?.auth_state?.phone ?? "").replace(/\D/g, "");
+        lid = String(legacy?.auth_state?.lid ?? "").replace(/\D/g, "");
       }
     } catch {}
     phoneCache.set(userId, phone);
-    return phone;
+    lidCache.set(userId, lid);
+    return { phone, lid };
   };
+  const getOwnPhone = async (userId: string): Promise<string> => (await getOwnIds(userId)).phone;
 
   for (const row of pending ?? []) {
     result.checked += 1;
@@ -90,16 +104,17 @@ export async function pollOwnerWhatsAppCommands(
       continue;
     }
 
-    // Self-chat filter: remote_jid must be the user's OWN number.
-    // Linked-device LID rows ("...@lid") fail the phone compare below — but
-    // the Baileys server never stores self-chat rows anyway (origin=self is
-    // skipped at store time), so LID rows here are foreign outbound chats.
-    const ownPhone = await getOwnPhone(row.user_id);
+    // Self-chat filter: remote_jid must be the user's OWN number/LID.
+    // Linked-device LID rows ("...@lid") fail a phone compare — match the
+    // persisted own LID by prefix too (device suffixes differ).
+    const { phone: ownPhone, lid: ownLid } = await getOwnIds(row.user_id);
     const remotePhone = String(row.remote_jid ?? "").split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
+    const remoteIsLid = /@lid$/i.test(String(row.remote_jid ?? ""));
     const isSelfChat =
       ownPhone.length >= 10 &&
       remotePhone.length >= 10 &&
-      (remotePhone === ownPhone || remotePhone.endsWith(ownPhone.slice(-10)) || ownPhone.endsWith(remotePhone.slice(-10)));
+      (remotePhone === ownPhone || remotePhone.endsWith(ownPhone.slice(-10)) || ownPhone.endsWith(remotePhone.slice(-10))) ||
+      (remoteIsLid && lidMatch(remotePhone, ownLid));
 
     if (!isSelfChat) {
       // Outbound chat to someone else — never an assistant command.
