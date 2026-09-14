@@ -292,68 +292,26 @@ async function runPostGeneration(
   opts: { replyJid?: string; slot?: "business" | "personal" } = {}
 ): Promise<{ kind: "action"; text: string }> {
   const n = Math.min(Math.max(count, 1), 15);
-  // Heavy jobs (>2 posts) can't finish inside Vercel's 60s webhook window —
-  // queue them, ack instantly, worker (poll bridge, 2 min) completes in
-  // chunks and pushes each batch to WhatsApp for review.
-  if (n > 2) {
-    await setSession(supabase, userId, "posts_queued", {
-      job: "posts",
-      count: n,
-      briefs: briefTopics.slice(0, 15),
-      done: 0,
-      replyJid: opts.replyJid ?? null,
-      slot: opts.slot ?? "personal",
-      requestedAt: new Date().toISOString(),
-    });
-    return {
-      kind: "action",
-      text: `${n} post queue kar diye ✓ banaate hi ek-ek karke yahin bhejunga review ke liye (yes/no/edit reply karna). 3-5 min lag sakte hain.`,
-    };
-  }
-  await setSession(supabase, userId, "generating_posts", { count: n });
-  try {
-    const { generateDailyPostsForUser } = await import("@/lib/ai/content/daily-generator");
-    const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
-
-    const result = await generateDailyPostsForUser(supabase, userId, {
-      maxPosts: n,
-      overrideTopics: briefTopics.length > 0 ? briefTopics : undefined,
-    });
-    await resetSession(supabase, userId);
-
-    if (result.count === 0) {
-      return {
-        kind: "action",
-        text: "kuch generate nahi ho paya. business context check karo.",
-      };
-    }
-
-    // Push to WhatsApp
-    const baseUrl = process.env.BAILEYS_SERVER_URL;
-    if (baseUrl) {
-      const jid = await resolveUserJid(supabase, userId);
-      if (jid) {
-        await pushDailyPostsToWhatsApp(
-          baseUrl,
-          process.env.BAILEYS_API_KEY || "dev-key",
-          userId,
-          jid,
-          result.posts,
-          opts.slot === "business" ? "business" : "personal"
-        );
-      }
-    }
-
-    return {
-      kind: "action",
-      text: `${result.count} post ready. WhatsApp pe review ke liye bhej diye — yes/no/edit reply kar.`,
-    };
-  } catch (err: any) {
-    return {
-      kind: "action",
-      text: `post generation fail: ${err?.message ?? "unknown"}`,
-    };
-  }
+  // ALL generation goes through the queue: even 1-2 posts with images can
+  // exceed Vercel's 60s webhook window (LLM + image worker), dying mid-way
+  // with drafts saved but nothing pushed. Queue → instant ack → worker
+  // (poll bridge, ~2 min) completes in chunks and pushes each batch.
+  await setSession(supabase, userId, "posts_queued", {
+    job: "posts",
+    count: n,
+    briefs: briefTopics.slice(0, 15),
+    done: 0,
+    replyJid: opts.replyJid ?? null,
+    slot: opts.slot ?? "personal",
+    requestedAt: new Date().toISOString(),
+  });
+  return {
+    kind: "action",
+    text:
+      n === 1
+        ? `1 post queue kar diya ✓ banate hi yahin bhejunga review ke liye (yes/no/edit reply karna). 2-3 min lag sakte hain.`
+        : `${n} post queue kar diye ✓ banaate hi ek-ek karke yahin bhejunga review ke liye (yes/no/edit reply karna). 3-5 min lag sakte hain.`,
+  };
 }
 
 async function runOutreach(
@@ -450,7 +408,7 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
     const { data, error } = await supabase
       .from("assistant_session")
       .select("user_id, state, data, updated_at")
-      .in("state", ["posts_queued", "outreach_queued"])
+      .in("state", ["posts_queued", "outreach_queued", "generating_posts"])
       .limit(10);
     if (error) throw error;
     rows = data ?? [];
@@ -470,6 +428,22 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
       if (row.state === "posts_queued") {
         await runQueuedPostsBatch(supabase, userId, data);
         out.processed += 1;
+      } else if (row.state === "generating_posts") {
+        // Abandoned inline run (webhook killed mid-generation): adopt it as
+        // a queued job ONLY if it looks stuck (>3 min old). Fresh ones may
+        // still be running inside their webhook.
+        if (age > 3 * 60 * 1000 && (data as any).count) {
+          await runQueuedPostsBatch(supabase, userId, {
+            job: "posts",
+            count: (data as any).count,
+            briefs: [],
+            done: 0,
+            replyJid: null,
+            slot: "personal",
+            requestedAt: (data as any).requestedAt ?? row.updated_at,
+          });
+          out.processed += 1;
+        }
       } else if (row.state === "outreach_queued") {
         await runQueuedOutreach(supabase, userId, data);
         out.processed += 1;
