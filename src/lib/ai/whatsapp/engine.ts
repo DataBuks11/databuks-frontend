@@ -394,14 +394,14 @@ export async function processIncomingWhatsAppMessage(
     replyText = "hey, what's up?";
     usedFastPath = true;
   } else if (/^(thanks|thank\s*you|ty|thx|thnx|ok(ay)?|cool|great|awesome|done|got\s*it|sure|alright|ji|haan)\s*[!.,]*$/i.test(trimmed)) {
-    replyText = "👍";
+    replyText = "👍";
     usedFastPath = true;
   } else if (/^bye|byeee+|see\s*ya|cya|talk\s*later|gn\s*$/i.test(trimmed)) {
     replyText = "👋";
     usedFastPath = true;
   } else if (trimmed.length <= 4 && /^[a-z0-9]+$/i.test(trimmed)) {
     // Single short token (e.g. "ok", "hi", "yo") â€” already handled above usually
-    replyText = "👍";
+    replyText = "👍";
     usedFastPath = true;
   } else if (/^\[(image|video|audio|document|sticker|contact|location)\]\s*$/i.test(trimmed)) {
     // Media received â€” instant human acknowledgment, no LLM
@@ -439,7 +439,7 @@ export async function processIncomingWhatsAppMessage(
     !/\?/.test(trimmed)
   ) {
     const isMarathi = /(thik\s*aahe|thik\s*ahe|kaay|kay|koni|kuthe|kadhi|hoil|barobar|pahije|baghat|amhi|apan|tujhya|majhya)\b/i.test(lower);
-    replyText = isMarathi ? "thik aahe 👍" : "theek hai 👍";
+    replyText = isMarathi ? "thik aahe 👍" : "theek hai 👍";
     usedFastPath = true;
   }
   if (usedFastPath) {
