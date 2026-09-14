@@ -49,9 +49,13 @@ export async function POST(request: NextRequest) {
     // device suffixes (e.g. 918788606608.0:64) that break exact compares.
     const origin = message.origin ?? "lead";
     const ownerPhone = (process.env.OWNER_WHATSAPP_NUMBER ?? "").replace(/\D/g, "");
+    // Server-resolved sender phone (LID→PN mapping) wins when present —
+    // a reply to "<lid>@s.whatsapp.net" would vanish.
+    const serverPhone = String((message as any)?.senderPhone ?? "").replace(/\D/g, "");
     // JID formats vary: "919876543210.0:64@s.whatsapp.net" carries device
     // suffixes before the @ — strip @, then :device, then .device parts.
-    const inboundPhone = String(message.remoteJid).split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
+    const jidPhone = String(message.remoteJid).split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
+    const inboundPhone = serverPhone.length >= 10 ? serverPhone : jidPhone;
     // Server-declared own number (most reliable — straight from the socket).
     const serverOwn = String(body?.ownPhone ?? "").replace(/\D/g, "");
     const matchLast10 = (a: string, b: string) =>
@@ -140,7 +144,8 @@ export async function POST(request: NextRequest) {
         try {
           const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
           const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
-          const senderDigits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+          // Prefer the resolved phone JID — @lid remotes can't receive sends.
+          const senderDigits = inboundPhone.replace(/\D/g, "");
           const trimmed = (message.text || "").trim();
           const lower = trimmed.toLowerCase();
           let reply: string;
@@ -152,7 +157,10 @@ export async function POST(request: NextRequest) {
           } else {
             reply = await handlePersonalChat({ supabase, userId, messageText: trimmed, isSticky: true });
           }
-          const replyJid = /@lid$/i.test(jid) ? `${senderDigits}@s.whatsapp.net` : jid;
+          // Resolved phone JID preferred — raw @lid remotes can't receive sends.
+          const replyJid = senderDigits.length >= 10
+            ? `${senderDigits}@s.whatsapp.net`
+            : message.remoteJid;
           await sendViaBaileys({ userId, jid: replyJid, message: reply, slot: "personal" });
           return NextResponse.json({ processed: true, route: "personal_slot_assistant", replySent: true });
         } catch (err: any) {
@@ -271,8 +279,8 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        const replyJid = /@lid$/i.test(String(message.remoteJid))
-          ? `${senderDigits}@s.whatsapp.net`
+        const replyJid = inboundPhone.length >= 10
+          ? `${inboundPhone}@s.whatsapp.net`
           : message.remoteJid;
 
         await sendViaBaileys({ userId, jid: replyJid, message: reply, slot });

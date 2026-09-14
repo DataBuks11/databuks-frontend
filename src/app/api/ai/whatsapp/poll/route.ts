@@ -20,12 +20,14 @@ function adminClient() {
 async function handle(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const fallbackKey = process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  const baileysKey = process.env.BAILEYS_API_KEY || "";
   const auth = request.headers.get("authorization") ?? "";
   const apiKey = request.headers.get("x-api-key") ?? "";
   const authorized =
     (cronSecret && auth === `Bearer ${cronSecret}`) ||
     apiKey === fallbackKey ||
-    auth === `Bearer ${fallbackKey}`;
+    auth === `Bearer ${fallbackKey}` ||
+    (baileysKey !== "" && (apiKey === baileysKey || auth === `Bearer ${baileysKey}`));
   if (!authorized) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

@@ -29,12 +29,13 @@ function adminClient() {
 function authorized(request: NextRequest): boolean {
   const expectedKey =
     process.env.CRON_SECRET || process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
+  const baileysKey = process.env.BAILEYS_API_KEY || "";
   const providedKey =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization")?.startsWith("Bearer ")
       ? request.headers.get("authorization")?.slice(7)
       : null);
-  return providedKey === expectedKey;
+  return providedKey === expectedKey || (baileysKey !== "" && providedKey === baileysKey);
 }
 
 export async function GET(request: NextRequest) {

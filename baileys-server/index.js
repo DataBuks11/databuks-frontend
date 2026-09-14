@@ -413,6 +413,24 @@ function setupMessageHandler(socket, userId) {
         raw: JSON.stringify(msg.message || {}),
         origin: isSelfChat || isLidSelfChat ? "self" : isOwnerDevice ? "owner_device" : "lead",
       };
+      // LID → phone resolution: WhatsApp increasingly addresses senders by
+      // @lid. A reply sent to "<lid>@s.whatsapp.net" vanishes, so resolve
+      // the real phone number here (best-effort, never blocks).
+      try {
+        const rj = String(msg.key.remoteJid ?? "");
+        if (rj.endsWith("@lid")) {
+          const lid = rj.split("@")[0];
+          const pn = await socket.signalRepository?.lidMapping?.getPNForLID?.(lid);
+          const digits = String(pn ?? "").split("@")[0].replace(/\D/g, "");
+          if (digits.length >= 10) {
+            parsedMsg.senderPhone = digits;
+            console.log(`[LID] ${lid} → ${digits.slice(-10)}`);
+          }
+        } else if (rj.endsWith("@s.whatsapp.net")) {
+          const digits = rj.split("@")[0].replace(/\D/g, "");
+          if (digits.length >= 10) parsedMsg.senderPhone = digits;
+        }
+      } catch { /* mapping unavailable — webhook falls back to JID parsing */ }
 
       console.log(
         `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] ownLid=${ownLid || "none"} remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
