@@ -120,11 +120,9 @@ export async function pollOwnerWhatsAppCommands(
     }
 
     try {
-      // Reply to the owner's real phone JID — @lid remotes can't receive
-      // outbound sends via Baileys, so replies to LID rows would vanish.
-      const replyJid = /@lid$/i.test(String(row.remote_jid))
-        ? `${ownPhone}@s.whatsapp.net`
-        : row.remote_jid;
+      // Reply on the row's own JID (@lid included — verified live that
+      // @lid sends deliver; fabricating a phone JID loses the reply).
+      const replyJid = row.remote_jid;
       const reply = await handleOwnerWhatsAppCommand(supabase, {
         userId: row.user_id,
         text,
