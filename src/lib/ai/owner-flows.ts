@@ -394,7 +394,6 @@ async function sendOwnerText(
 }
 
 const JOB_STALE_MS = 6 * 3600 * 1000;
-const POSTS_PER_RUN = 3;
 
 /**
  * Background worker for queued heavy jobs (called by the /poll bridge every
@@ -457,49 +456,64 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
 
 async function runQueuedPostsBatch(supabase: SupabaseClient, userId: string, data: Record<string, any>) {
   const count = Math.min(Math.max(parseInt(data.count ?? "0", 10) || 0, 1), 15);
-  const done = Math.max(parseInt(data.done ?? "0", 10) || 0, 0);
+  let done = Math.max(parseInt(data.done ?? "0", 10) || 0, 0);
   const briefs: string[] = Array.isArray(data.briefs) ? data.briefs : [];
-  const remaining = count - done;
-  if (remaining <= 0) {
+  if (done >= count) {
     await resetSession(supabase, userId);
     return;
   }
-  const batch = Math.min(POSTS_PER_RUN, remaining);
   const { generateDailyPostsForUser } = await import("@/lib/ai/content/daily-generator");
   const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
 
-  const result = await generateDailyPostsForUser(supabase, userId, {
-    maxPosts: batch,
-    overrideTopics: briefs.length > 0 ? briefs.slice(done, done + batch) : undefined,
-  });
-
   const baseUrl = process.env.BAILEYS_SERVER_URL;
-  if (baseUrl && result.posts.length > 0) {
-    const jid = data.replyJid ?? (await resolveUserJid(supabase, userId));
-    if (jid) {
-      await pushDailyPostsToWhatsApp(
-        baseUrl,
-        process.env.BAILEYS_API_KEY || "dev-key",
-        userId,
-        jid,
-        result.posts,
-        data.slot === "business" ? "business" : "personal"
-      );
+  const pushJid = data.replyJid ?? (await resolveUserJid(supabase, userId));
+  const pushSlot = data.slot === "business" ? "business" : "personal";
+  // Time-boxed per-post loop: each post saved + pushed + counted immediately,
+  // so a serverless kill mid-run resumes EXACTLY (no duplicates, no loss).
+  // Budget ~30s so the whole poll run stays under Hobby's 60s cap.
+  const deadline = Date.now() + 30000;
+  let madeThisRun = 0;
+  while (done < count && Date.now() < deadline) {
+    const result = await generateDailyPostsForUser(supabase, userId, {
+      maxPosts: 1,
+      startIndex: done,
+      overrideTopics: briefs.length > 0 ? briefs.slice(done, done + 1) : undefined,
+    });
+    if (result.count === 0) break; // generator stuck (context? topics?) — retry next run
+    done += result.count;
+    madeThisRun += result.count;
+    if (baseUrl && pushJid && result.posts.length > 0) {
+      try {
+        await pushDailyPostsToWhatsApp(
+          baseUrl,
+          process.env.BAILEYS_API_KEY || "dev-key",
+          userId,
+          pushJid,
+          result.posts,
+          pushSlot
+        );
+      } catch (err: any) {
+        console.warn(`[owner-flow] batch push failed: ${err?.message}`);
+      }
     }
+    await setSession(supabase, userId, "posts_queued", { ...data, done });
   }
 
-  const newDone = done + result.count;
-  if (newDone >= count || result.count === 0) {
+  if (done >= count) {
     await resetSession(supabase, userId);
     await sendOwnerText(
       supabase, userId, data,
-      result.count === 0 && newDone < count
-        ? `posts adhoore reh gaye (${newDone}/${count} ready). business context check karke "10 post banao" dobara bolo.`
-        : `sab ${count} post ready ✓ review ke liye upar bhej diye — yes/no/edit reply kar.`
+      `sab ${count} post ready ✓ review ke liye upar bhej diye — yes/no/edit reply kar.`
     );
+  } else if (madeThisRun === 0) {
+    // Nothing moved this run (generator erroring?) — don't spin forever.
+    await sendOwnerText(
+      supabase, userId, data,
+      `posts atak gaye (${done}/${count} ready). business context check karke dobara bolo.`
+    );
+    await resetSession(supabase, userId);
   } else {
-    await setSession(supabase, userId, "posts_queued", { ...data, done: newDone });
-    await sendOwnerText(supabase, userId, data, `${newDone}/${count} post ready, baaki bana raha hoon...`);
+    await sendOwnerText(supabase, userId, data, `${done}/${count} post ready, baaki bana raha hoon...`);
   }
 }
 

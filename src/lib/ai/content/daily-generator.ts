@@ -65,7 +65,7 @@ interface ProfilePrefs {
 export async function generateDailyPostsForUser(
   supabase: any,
   userId: string,
-  options: { maxPosts?: number; overrideTopics?: string[] } = {}
+  options: { maxPosts?: number; overrideTopics?: string[]; startIndex?: number } = {}
 ): Promise<DailyPostResult> {
   const result: DailyPostResult = {
     userId,
@@ -133,8 +133,10 @@ export async function generateDailyPostsForUser(
     return result;
   }
 
-  // 4. Generate each post (sequentially for now; parallel later if needed)
-  for (let i = 0; i < count; i++) {
+  // 4. Generate each post (sequentially for now; parallel later if needed).
+  // startIndex lets a killed worker resume mid-job without duplicates.
+  const startAt = Math.max(options.startIndex ?? 0, 0);
+  for (let i = startAt; i < startAt + count; i++) {
     const seedTopic = topicPool[i % topicPool.length];
     const variant = ["post", "story", "post", "reel"][i % 4];
     try {
