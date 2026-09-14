@@ -76,9 +76,36 @@ export async function POST(request: NextRequest) {
       (matchLast10(inboundPhone, serverOwn) ||
         lidMatch(inboundPhone, serverOwnLid) ||
         (slot === "personal" && matchLast10(inboundPhone, ownerPhone)));
-    const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone || isSelfNumber;
 
     const supabase = adminClient();
+
+    // Owner's own numbers (BOTH slots + profile + env): a message from any
+    // of them is an owner command on ANY slot — never stranger/lead traffic.
+    // E.g. owner's business phone texting the personal number for "10 post".
+    let isOwnerNumber = false;
+    try {
+      const ownerSet = new Set<string>();
+      if (ownerPhone.length >= 10) ownerSet.add(ownerPhone);
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("phone")
+        .eq("id", userId)
+        .maybeSingle();
+      const pd = String((prof as any)?.phone ?? "").replace(/\D/g, "");
+      if (pd.length >= 10) ownerSet.add(pd);
+      const { data: sessRows } = await supabase
+        .from("whatsapp_sessions")
+        .select("auth_state")
+        .eq("user_id", userId);
+      for (const r of (sessRows ?? []) as any[]) {
+        const sp = String(r?.auth_state?.phone ?? "").replace(/\D/g, "");
+        if (sp.length >= 10) ownerSet.add(sp);
+      }
+      isOwnerNumber = [...ownerSet].some((p) => matchLast10(inboundPhone, p));
+    } catch {
+      isOwnerNumber = false;
+    }
+    const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone || isSelfNumber || isOwnerNumber;
 
     if (isOwnerCommand) {
       const dedupKey = `${userId}:${message.messageId}`;
