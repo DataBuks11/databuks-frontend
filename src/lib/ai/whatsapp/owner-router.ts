@@ -122,6 +122,39 @@ export async function routeOwnerMessage(
   }
 
   const { handleOwnerWhatsAppCommand } = await import("@/lib/ai/owner-assistant");
-  await handleOwnerWhatsAppCommand(supabase, { userId, text: txt, replyJid });
+  // Timeout guard: free-tier LLM can take 60s+ and Vercel kills the function
+  // → user gets SILENCE. Race the command against 45s; on timeout send an
+  // instant ack so the owner always gets something. (If the real reply
+  // finishes in the remaining window it may also arrive — noisy but rare,
+  // far better than silence.)
+  const timeoutMs = 45000;
+  let timedOut = false;
+  try {
+    await Promise.race([
+      handleOwnerWhatsAppCommand(supabase, { userId, text: txt, replyJid }),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          timedOut = true;
+          reject(new Error("owner-command-timeout"));
+        }, timeoutMs)
+      ),
+    ]);
+  } catch (err: any) {
+    if (timedOut || /timeout/i.test(err?.message ?? "")) {
+      console.error(`[owner-router] command timed out after ${timeoutMs}ms, sending ack`);
+      try {
+        await sendViaBaileys({
+          userId,
+          jid: replyJid,
+          slot: "personal",
+          message: "haan bolo, sun raha hoon 👍 thoda elaborate jawab bana raha tha, time lag gaya — zara detail me batao kya chahiye? (leads / posts / meetings / help)",
+        });
+      } catch (sendErr: any) {
+        console.error(`[owner-router] ack send failed: ${sendErr?.message}`);
+      }
+    } else {
+      console.error(`[owner-router] owner command failed: ${err?.message}`);
+    }
+  }
   return { handled: true };
 }
