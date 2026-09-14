@@ -184,13 +184,31 @@ export async function POST(request: NextRequest) {
           } else if (/^(ok|theek hai|hmm|haan|sure|chalo|done|cool|alright)\b/i.test(lower)) {
             reply = "👍";
           } else {
-            reply = await handlePersonalChat({ supabase, userId, messageText: trimmed, isSticky: true });
+            // Timeout guard: slow free-tier LLM must never equal silence.
+            // 40s race, instant casual ack on stall.
+            try {
+              reply = await Promise.race([
+                handlePersonalChat({ supabase, userId, messageText: trimmed, isSticky: true }),
+                new Promise<string>((_, reject) =>
+                  setTimeout(() => reject(new Error("personal-chat-timeout")), 40000)
+                ),
+              ]);
+            } catch {
+              reply = "haan bolo, sun raha hoon 👍 thoda detail me batao kya baat hai?";
+            }
           }
           // Reply to the sender's ACTUAL JID (often @lid). Rewriting @lid to
           // "<lid>@s.whatsapp.net" sends into the void — verified live that
           // direct @lid sends DO deliver.
           const replyJid = message.remoteJid;
           await sendViaBaileys({ userId, jid: replyJid, message: reply, slot: "personal" });
+          try {
+            await supabase
+              .from("whatsapp_messages")
+              .update({ processed: true })
+              .eq("user_id", userId)
+              .eq("message_id", message.messageId);
+          } catch {}
           return NextResponse.json({ processed: true, route: "personal_slot_assistant", replySent: true });
         } catch (err: any) {
           console.error(`[API:ai/whatsapp/webhook] personal slot reply failed: ${err?.message}`);
