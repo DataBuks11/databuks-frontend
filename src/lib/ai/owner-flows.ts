@@ -424,8 +424,33 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
         await resetSession(supabase, userId);
         continue;
       }
+      // Claim check: concurrent poll runs (bridge 2-min + manual + cron)
+      // must not process the same job twice. Stamp a worker token; proceed
+      // only if our stamp won the race.
+      const token = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`;
+      try {
+        await supabase
+          .from("assistant_session")
+          .update({ data: { ...data, worker: token }, updated_at: new Date().toISOString() })
+          .eq("user_id", userId)
+          .eq("state", row.state);
+        // Jitter so overlapping workers don't both read-then-stamp past
+        // each other — loser sees the winner's token and backs off.
+        await new Promise((r) => setTimeout(r, 400 + Math.floor(Math.random() * 900)));
+        const { data: check } = await supabase
+          .from("assistant_session")
+          .select("data, state")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (!check || (check as any).state !== row.state || (check as any).data?.worker !== token) {
+          continue; // another worker claimed it — skip quietly
+        }
+      } catch {
+        continue;
+      }
+      const jobData = { ...data, worker: token };
       if (row.state === "posts_queued") {
-        await runQueuedPostsBatch(supabase, userId, data);
+        await runQueuedPostsBatch(supabase, userId, jobData);
         out.processed += 1;
       } else if (row.state === "generating_posts") {
         // Abandoned inline run (webhook killed mid-generation): adopt it as
@@ -444,7 +469,7 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
           out.processed += 1;
         }
       } else if (row.state === "outreach_queued") {
-        await runQueuedOutreach(supabase, userId, data);
+        await runQueuedOutreach(supabase, userId, jobData);
         out.processed += 1;
       }
     } catch (err: any) {
