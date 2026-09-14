@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
         await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-          body: JSON.stringify({ userId: user.id, jid, message: msg }),
+          body: JSON.stringify({ userId: user.id, slot: "personal", jid, message: msg }),
         });
       } catch (err: any) {
         console.error(`[API:ai/discovery/handoff] owner notification failed: ${err?.message}`);

@@ -47,6 +47,8 @@ export async function pollOwnerWhatsAppCommands(
   // number) are owner commands. fromMe messages directed at other people
   // are the user's normal outbound chats — the assistant must NEVER reply
   // to those (it was replying to the user's leads!).
+  // Dual slots: the command channel is the PERSONAL session, so read the
+  // personal slot's phone (fallback: legacy single row).
   const phoneCache = new Map<string, string>();
   const getOwnPhone = async (userId: string): Promise<string> => {
     if (phoneCache.has(userId)) return phoneCache.get(userId)!;
@@ -56,8 +58,17 @@ export async function pollOwnerWhatsAppCommands(
         .from("whatsapp_sessions")
         .select("auth_state")
         .eq("user_id", userId)
+        .eq("slot", "personal")
         .maybeSingle();
       phone = String(sess?.auth_state?.phone ?? "").replace(/\D/g, "");
+      if (!phone) {
+        const { data: legacy } = await supabase
+          .from("whatsapp_sessions")
+          .select("auth_state")
+          .eq("user_id", userId)
+          .maybeSingle();
+        phone = String(legacy?.auth_state?.phone ?? "").replace(/\D/g, "");
+      }
     } catch {}
     phoneCache.set(userId, phone);
     return phone;

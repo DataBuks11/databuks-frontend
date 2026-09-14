@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
             const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-              body: JSON.stringify({ userId: user.id, jid, message: replyText }),
+              body: JSON.stringify({ userId: user.id, slot: "personal", jid, message: replyText }),
             });
             if (!res.ok) {
               const t = await res.text().catch(() => "");

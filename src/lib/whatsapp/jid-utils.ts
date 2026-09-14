@@ -39,20 +39,30 @@ export async function resolveUserJid(
   return phoneToJid(process.env.OWNER_WHATSAPP_NUMBER);
 }
 
+export type WhatsAppSlot = "business" | "personal";
+
+export function slotScope(userId: string, slot: WhatsAppSlot = "business"): string {
+  if (/^(biz|business|personal)__/.test(userId)) return userId;
+  return slot === "personal" ? `personal__${userId}` : `biz__${userId}`;
+}
+
 export async function sendViaBaileys(input: {
   userId: string;
   jid: string;
   message: string;
+  slot?: WhatsAppSlot;
 }): Promise<void> {
   const baseUrl = process.env.BAILEYS_SERVER_URL;
   if (!baseUrl) throw new Error("BAILEYS_SERVER_URL not configured");
+  const { slot, ...rest } = input;
+  const scope = slotScope(rest.userId, slot ?? "business");
   const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": process.env.BAILEYS_API_KEY || "dev-key",
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...rest, userId: scope, slot: slot ?? "business" }),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => "");

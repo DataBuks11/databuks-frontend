@@ -127,12 +127,14 @@ DO $$ BEGIN CREATE POLICY "Users can manage own settings" ON public.workspace_se
 -- 7. WHATSAPP SESSIONS TABLE
 CREATE TABLE IF NOT EXISTS public.whatsapp_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  slot TEXT NOT NULL DEFAULT 'business',
   auth_state JSONB NOT NULL,
   connected BOOLEAN DEFAULT false,
   phone_number TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, slot)
 );
 ALTER TABLE public.whatsapp_sessions ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN CREATE POLICY "Users can view own whatsapp session" ON public.whatsapp_sessions FOR SELECT USING (auth.uid() = user_id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;

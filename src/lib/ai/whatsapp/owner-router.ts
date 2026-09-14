@@ -60,7 +60,7 @@ export async function routeOwnerMessage(
     const approval = await handleApprovalReply(supabase, userId, txt);
     if (approval.status !== "not-approval") {
       if (approval.status === "no-pending") {
-        await sendViaBaileys({ userId, jid: replyJid, message: "koi pending post nahi hai abhi." });
+        await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: "koi pending post nahi hai abhi." });
         return { handled: true };
       }
       const ack =
@@ -71,12 +71,12 @@ export async function routeOwnerMessage(
             : approval.status === "edited"
               ? "edit saved. naya version bhej raha hoon."
               : `scheduled ✓ ${(approval as any).topic ?? ""} schedule ho gaya.`;
-      await sendViaBaileys({ userId, jid: replyJid, message: ack });
+      await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: ack });
       // Replacement post for rejected drafts
       if (approval.status === "rejected") {
         const replacementMsg = await generateReplacementPost(supabase, userId, replyJid);
         if (replacementMsg) {
-          await sendViaBaileys({ userId, jid: replyJid, message: replacementMsg });
+          await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: replacementMsg });
         }
       }
       return { handled: true };
@@ -89,7 +89,7 @@ export async function routeOwnerMessage(
     const { handleFlowMessage } = await import("@/lib/ai/owner-flows");
     const flowResult = await handleFlowMessage(supabase, userId, txt);
     if (flowResult) {
-      await sendViaBaileys({ userId, jid: replyJid, message: flowResult.text });
+      await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: flowResult.text });
       return { handled: true };
     }
   } catch (err: any) {
@@ -111,9 +111,9 @@ export async function routeOwnerMessage(
         messageText: txt,
         isSticky: wasPersonal && !isPersonal === false,
       });
-      await sendViaBaileys({ userId, jid: replyJid, message: reply });
+      await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: reply });
       if (businessTriggers.test(lower)) {
-        await sendViaBaileys({ userId, jid: replyJid, message: "ok business mode on. ab data-aware replies dunga." });
+        await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: "ok business mode on. ab data-aware replies dunga." });
       }
     } catch (err: any) {
       console.error(`[owner-router] personal chat failed: ${err?.message}`);

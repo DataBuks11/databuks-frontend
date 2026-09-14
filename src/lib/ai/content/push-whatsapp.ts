@@ -66,7 +66,7 @@ export async function pushDailyPostsToWhatsApp(
       const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-        body: JSON.stringify({ userId, jid, message: body }),
+        body: JSON.stringify({ userId, slot: "personal", jid, message: body }),
       });
       if (!res.ok) {
         const t = await res.text().catch(() => "");

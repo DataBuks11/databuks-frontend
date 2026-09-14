@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_messages (
   raw_data JSONB,
   processed BOOLEAN DEFAULT false,
   ai_response TEXT,
+  slot TEXT NOT NULL DEFAULT 'business',
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -20,6 +21,7 @@ CREATE INDEX IF NOT EXISTS idx_wa_messages_user_id ON public.whatsapp_messages(u
 CREATE INDEX IF NOT EXISTS idx_wa_messages_remote_jid ON public.whatsapp_messages(user_id, remote_jid);
 CREATE INDEX IF NOT EXISTS idx_wa_messages_timestamp ON public.whatsapp_messages(user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_messages_unprocessed ON public.whatsapp_messages(user_id, processed) WHERE processed = false;
+CREATE INDEX IF NOT EXISTS idx_wa_messages_user_slot ON public.whatsapp_messages(user_id, slot);
 
 -- RLS
 ALTER TABLE public.whatsapp_messages ENABLE ROW LEVEL SECURITY;

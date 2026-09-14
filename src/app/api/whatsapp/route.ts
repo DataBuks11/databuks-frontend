@@ -6,6 +6,12 @@ export const maxDuration = 30;
 const BAILEYS_URL = process.env.BAILEYS_SERVER_URL || "http://localhost:3001";
 const BAILEYS_KEY = process.env.BAILEYS_API_KEY || "dev-key";
 
+// Business slot: "biz__<uuid>". Personal assistant lives in its own
+// "personal__<uuid>" session — both numbers stay live simultaneously,
+// so connecting here NEVER touches the personal session.
+const bizScope = (userId: string) =>
+  /^(biz|business|personal)__/.test(userId) ? userId : `biz__${userId}`;
+
 async function proxyGet(path: string) {
   const res = await fetch(`${BAILEYS_URL}${path}`, {
     headers: { "x-api-key": BAILEYS_KEY },
@@ -36,31 +42,31 @@ export async function GET(request: NextRequest) {
 
   try {
     if (action === "status") {
-      const data = await proxyGet(`/status/${userId}`);
+      const data = await proxyGet(`/status/${bizScope(userId)}`);
       return NextResponse.json(data);
     }
 
     if (action === "qr") {
-      const data = await proxyGet(`/qr/${userId}`);
+      const data = await proxyGet(`/qr/${bizScope(userId)}`);
       return NextResponse.json(data);
     }
 
     if (action === "chats") {
-      const data = await proxyGet(`/chats/${userId}`);
+      const data = await proxyGet(`/chats/${bizScope(userId)}`);
       return NextResponse.json(data);
     }
 
     if (action === "messages") {
       const jid = searchParams.get("jid") || "";
       const limit = searchParams.get("limit") || "50";
-      const data = await proxyGet(`/messages/${userId}?jid=${jid}&limit=${limit}`);
+      const data = await proxyGet(`/messages/${bizScope(userId)}?jid=${jid}&limit=${limit}`);
       return NextResponse.json(data);
     }
 
     if (action === "check-number") {
       const phone = searchParams.get("phone");
       if (!phone) return NextResponse.json({ error: "phone required" }, { status: 400 });
-      const data = await proxyGet(`/check-number/${userId}/${phone}`);
+      const data = await proxyGet(`/check-number/${bizScope(userId)}/${phone}`);
       return NextResponse.json(data);
     }
 
@@ -83,26 +89,24 @@ export async function POST(request: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
     }
+    const scope = bizScope(userId);
 
     if (action === "connect") {
-      // Mutual exclusion: connecting business auto-disconnects the personal
-      // session first (one number = one active AI session).
-      try {
-        await proxyPost("/disconnect", { userId: `personal__${userId}` });
-      } catch {}
-      const data = await proxyPost("/connect", { userId, fresh: true, deviceName: "DataBuks Business" });
+      // No mutual exclusion anymore: business + personal slots are
+      // independent, both numbers stay connected simultaneously.
+      const data = await proxyPost("/connect", { userId: scope, slot: "business", fresh: true, deviceName: "DataBuks Business" });
       return NextResponse.json(data);
     }
 
     if (action === "pair") {
       const phoneNumber = (body as any)?.phoneNumber;
       if (!phoneNumber) return NextResponse.json({ error: "phoneNumber required" }, { status: 400 });
-      const data = await proxyPost("/pair", { userId, phoneNumber });
+      const data = await proxyPost("/pair", { userId: scope, slot: "business", phoneNumber });
       return NextResponse.json(data);
     }
 
     if (action === "disconnect") {
-      const data = await proxyPost("/disconnect", { userId });
+      const data = await proxyPost("/disconnect", { userId: scope, slot: "business" });
       return NextResponse.json(data);
     }
 
@@ -110,7 +114,7 @@ export async function POST(request: NextRequest) {
       if (!jid || !message) {
         return NextResponse.json({ error: "jid and message required" }, { status: 400 });
       }
-      const data = await proxyPost("/send", { userId, jid, message });
+      const data = await proxyPost("/send", { userId: scope, slot: "business", jid, message });
       return NextResponse.json(data);
     }
 
@@ -118,7 +122,7 @@ export async function POST(request: NextRequest) {
       if (!jid || !mediaUrl) {
         return NextResponse.json({ error: "jid and mediaUrl required" }, { status: 400 });
       }
-      const data = await proxyPost("/send-media", { userId, jid, mediaUrl, caption, type });
+      const data = await proxyPost("/send-media", { userId: scope, slot: "business", jid, mediaUrl, caption, type });
       return NextResponse.json(data);
     }
 

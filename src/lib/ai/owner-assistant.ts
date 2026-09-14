@@ -616,7 +616,7 @@ function defaultSend(input: { userId: string; jid: string; message: string }): P
   return fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.BAILEYS_API_KEY || "dev-key" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, slot: "personal" }),
   }).then(async (res) => {
     if (!res.ok) throw new Error(`WhatsApp send failed (${res.status})`);
   });

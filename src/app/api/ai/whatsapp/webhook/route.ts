@@ -24,8 +24,19 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => null);
-    const userId = body?.userId;
+    // Baileys sends { userId: <raw uuid>, slot, message }. Older payloads
+    // may carry an already-scoped key — normalize to raw id + slot.
+    const rawId = body?.userId;
     const message = body?.message;
+    let userId = typeof rawId === "string" ? rawId : null;
+    let slot: "business" | "personal" = body?.slot === "personal" ? "personal" : "business";
+    if (userId) {
+      const m = userId.match(/^(biz|business|personal)__(.+)$/);
+      if (m) {
+        slot = m[1] === "personal" ? "personal" : "business";
+        userId = m[2];
+      }
+    }
 
     if (!userId || !message?.remoteJid || !message?.messageId || (!message?.text && !message?.mediaUrl)) {
       return NextResponse.json({ error: "userId and message (remoteJid, messageId, text or mediaUrl) required" }, { status: 400 });
@@ -100,6 +111,39 @@ export async function POST(request: NextRequest) {
         console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
       }
       return NextResponse.json({ processed: true, route: "owner_assistant" });
+    }
+
+    // ─── PERSONAL SLOT: owner's own number ───
+    // Non-owner inbound here = personal contacts chatting on the owner's
+    // private number. Always a casual personal reply, NEVER the business
+    // lead pipeline (koi pitch nahi, koi lead capture nahi).
+    if (slot === "personal" && !isOwnerCommand && message.fromMe !== true) {
+      const jid = String(message.remoteJid ?? "");
+      if (!jid.includes("@g.us") && !jid.includes("@broadcast")) {
+        try {
+          const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+          const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
+          const senderDigits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+          const trimmed = (message.text || "").trim();
+          const lower = trimmed.toLowerCase();
+          let reply: string;
+          if (/^(hi+|hlo+|hlw+|hello+|hey+|heyy*|namaste|yo+|sup)\b/i.test(lower)) {
+            const firstName = message.pushName ? ` ${(String(message.pushName).split(" ")[0])}` : "";
+            reply = `hey${firstName}! kya haal hai?`;
+          } else if (/^(ok|theek hai|hmm|haan|sure|chalo|done|cool|alright)\b/i.test(lower)) {
+            reply = "👍";
+          } else {
+            reply = await handlePersonalChat({ supabase, userId, messageText: trimmed, isSticky: true });
+          }
+          const replyJid = /@lid$/i.test(jid) ? `${senderDigits}@s.whatsapp.net` : jid;
+          await sendViaBaileys({ userId, jid: replyJid, message: reply, slot: "personal" });
+          return NextResponse.json({ processed: true, route: "personal_slot_assistant", replySent: true });
+        } catch (err: any) {
+          console.error(`[API:ai/whatsapp/webhook] personal slot reply failed: ${err?.message}`);
+        }
+      } else {
+        return NextResponse.json({ processed: false, skippedReason: "group_or_broadcast" });
+      }
     }
 
     // ─── MULTI-TENANT ASSISTANT ───
@@ -214,7 +258,7 @@ export async function POST(request: NextRequest) {
           ? `${senderDigits}@s.whatsapp.net`
           : message.remoteJid;
 
-        await sendViaBaileys({ userId, jid: replyJid, message: reply });
+        await sendViaBaileys({ userId, jid: replyJid, message: reply, slot });
 
         try {
           await supabase.from("whatsapp_messages").insert({

@@ -86,6 +86,60 @@ function getAuthDir(userId) {
   return dir;
 }
 
+// ─── Dual slots: business + personal numbers simultaneously ───
+// In-memory/filesystem session key: "biz__<uuid>" / "personal__<uuid>".
+// Supabase writes ALWAYS use the raw UUID + slot column (user_id is UUID).
+// A bare UUID (legacy callers) means the business slot.
+const SLOT_PREFIX = { business: "biz", personal: "personal" };
+
+function normalizeKey(input, fallbackSlot) {
+  const raw = String(input ?? "");
+  const m = raw.match(/^(biz|business|personal)__(.+)$/);
+  if (m) {
+    const slot = m[1] === "biz" ? "business" : m[1];
+    return { key: `${SLOT_PREFIX[slot]}__${m[2]}`, slot, userId: m[2] };
+  }
+  const slot = fallbackSlot === "personal" ? "personal" : "business";
+  return { key: `${SLOT_PREFIX[slot]}__${raw}`, slot, userId: raw };
+}
+
+function lookupSession(input, fallbackSlot) {
+  const n = normalizeKey(input, fallbackSlot);
+  const session =
+    sessions.get(n.key) ??
+    sessions.get(n.userId) ?? // legacy raw-uuid session (pre-slot deploys)
+    sessions.get(`personal__${n.userId}`) ?? // very old personal scope
+    null;
+  return { ...n, session };
+}
+
+// Slot-aware session upsert. Requires the dual-slots migration
+// (slot column + UNIQUE(user_id, slot)); falls back to the legacy
+// single row for business if the DB predates it.
+async function upsertSessionRow(rawUserId, slot, patch) {
+  if (!supabase) return;
+  const row = { user_id: rawUserId, slot, updated_at: new Date().toISOString(), ...patch };
+  try {
+    const { error } = await supabase.from("whatsapp_sessions").upsert(row, { onConflict: "user_id,slot" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = String(err?.message ?? err ?? "");
+    if (/slot/i.test(msg) && slot === "business") {
+      try {
+        const legacy = { ...row };
+        delete legacy.slot;
+        const { error: e2 } = await supabase.from("whatsapp_sessions").upsert(legacy, { onConflict: "user_id" });
+        if (e2) throw e2;
+        return;
+      } catch (e2) {
+        console.error("[Supabase] legacy session upsert failed:", e2.message);
+        return;
+      }
+    }
+    console.error("[Supabase] session upsert failed:", msg);
+  }
+}
+
 /**
  * A restored auth_state must contain the crypto material Baileys needs for
  * the noise handshake. Partial/corrupt state (e.g. creds persisted without
@@ -116,22 +170,12 @@ function isValidRestoredCreds(authState) {
 }
 
 /** Wipe local auth dir + Supabase auth_state so the next connect starts fresh. */
-async function clearAuthState(userId) {
-  const authDir = getAuthDir(userId);
+async function clearAuthState(key) {
+  const { slot, userId } = normalizeKey(key);
+  const authDir = getAuthDir(key);
   try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
-  try {
-    if (supabase) {
-      await supabase
-        .from("whatsapp_sessions")
-        .upsert(
-          { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" }
-        );
-    }
-  } catch (err) {
-    console.error("[Auth] Supabase clear failed:", err.message);
-  }
-  sessions.delete(userId);
+  await upsertSessionRow(userId, slot, { connected: false, auth_state: {} });
+  sessions.delete(key);
 }
 
 /** Never leak raw internals (stack traces, buffer errors) to API clients. */
@@ -145,59 +189,52 @@ function safeConnectError(err) {
 }
 
 // ─── Supabase Helpers ───
-async function updateSupabaseStatus(userId, connected) {
+async function updateSupabaseStatus(key, connected) {
   if (!supabase) return;
+  const { slot, userId } = normalizeKey(key);
   try {
-    const { data: existing } = await supabase
-      .from("whatsapp_sessions")
-      .select("id")
-      .eq("user_id", userId)
-      .single();
-
-    if (existing) {
-      await supabase
-        .from("whatsapp_sessions")
-        .update({ connected, updated_at: new Date().toISOString() })
-        .eq("user_id", userId);
-    } else {
-      await supabase
-        .from("whatsapp_sessions")
-        .insert({
-          user_id: userId,
-          connected,
-          auth_state: {},
-          updated_at: new Date().toISOString(),
-        });
-    }
+    await upsertSessionRow(userId, slot, { connected });
   } catch (err) {
     console.error("[Supabase Error]", err.message);
   }
 }
 
-// Store message in Supabase
-async function storeMessage(userId, msg, preProcessed = false) {
+// Store message in Supabase (slot-tagged; legacy retry if DB predates migration)
+async function storeMessage(key, msg, preProcessed = false) {
   if (!supabase) return;
+  const { slot, userId } = normalizeKey(key);
+  const base = {
+    user_id: userId,
+    remote_jid: msg.remoteJid,
+    from_me: msg.fromMe,
+    message_id: msg.messageId,
+    message_type: msg.type,
+    message_text: msg.text,
+    timestamp: msg.timestamp,
+    push_name: msg.pushName || null,
+    raw_data: msg.raw || null,
+    processed: preProcessed,
+  };
   try {
-    await supabase.from("whatsapp_messages").insert({
-      user_id: userId,
-      remote_jid: msg.remoteJid,
-      from_me: msg.fromMe,
-      message_id: msg.messageId,
-      message_type: msg.type,
-      message_text: msg.text,
-      timestamp: msg.timestamp,
-      push_name: msg.pushName || null,
-      raw_data: msg.raw || null,
-      processed: preProcessed,
-    });
+    const { error } = await supabase.from("whatsapp_messages").insert({ ...base, slot });
+    if (error) throw error;
   } catch (err) {
-    console.error("[Store Message Error]", err.message);
+    if (/slot/i.test(String(err?.message ?? ""))) {
+      try {
+        await supabase.from("whatsapp_messages").insert(base);
+      } catch (e2) {
+        console.error("[Store Message Error]", e2.message);
+      }
+    } else {
+      console.error("[Store Message Error]", err.message);
+    }
   }
 }
 
 // Forward message to webhook (for AI agent processing)
-async function forwardToWebhook(userId, msg) {
+async function forwardToWebhook(key, msg) {
   if (!WEBHOOK_URL) { console.log("[Webhook] No WEBHOOK_URL set, skipping"); return; }
+  const { slot, userId } = normalizeKey(key);
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 55000); // 55s timeout
@@ -205,7 +242,7 @@ async function forwardToWebhook(userId, msg) {
     const resp = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-      body: JSON.stringify({ userId, message: msg }),
+      body: JSON.stringify({ userId, slot, message: msg }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -404,39 +441,46 @@ function readAuthFiles(authDir) {
   return files;
 }
 
-async function persistFullAuthState(userId, authDir, reason) {
+async function persistFullAuthState(key, authDir, reason) {
   if (!supabase) return;
+  const { slot, userId } = normalizeKey(key);
   const now = Date.now();
-  const last = lastPersistAt.get(userId) ?? 0;
+  const last = lastPersistAt.get(key) ?? 0;
   if (now - last < AUTH_PERSIST_MIN_MS) return;
-  lastPersistAt.set(userId, now);
+  lastPersistAt.set(key, now);
   try {
     const files = readAuthFiles(authDir);
     if (!files["creds.json"]) return;
-    const phone = String(sessions.get(userId)?.phoneNumber ?? "").replace(/\D/g, "");
-    await supabase.from("whatsapp_sessions").upsert(
-      {
-        user_id: userId,
-        auth_state: { files, format: "full", phone },
-        connected: true,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
-    );
-    console.log(`[Auth] Full auth state persisted for ${userId} (${Object.keys(files).length} files, phone=${phone ? "set" : "none"}, ${reason})`);
+    const phone = String(sessions.get(key)?.phoneNumber ?? "").replace(/\D/g, "");
+    await upsertSessionRow(userId, slot, {
+      auth_state: { files, format: "full", phone },
+      connected: true,
+    });
+    console.log(`[Auth] Full auth state persisted for ${key} (${Object.keys(files).length} files, phone=${phone ? "set" : "none"}, ${reason})`);
   } catch (err) {
     console.error("[Auth] Full persist failed:", err.message);
   }
 }
 
-async function restoreFullAuthState(userId, authDir) {
+async function restoreFullAuthState(key, authDir) {
   if (!supabase) return false;
+  const { slot, userId } = normalizeKey(key);
   try {
-    const { data: savedSession } = await supabase
+    let { data: savedSession } = await supabase
       .from("whatsapp_sessions")
       .select("auth_state")
       .eq("user_id", userId)
+      .eq("slot", slot)
       .maybeSingle();
+    // Legacy fallback: pre-slot single row belongs to the business slot
+    if (!savedSession && slot === "business") {
+      const legacy = await supabase
+        .from("whatsapp_sessions")
+        .select("auth_state")
+        .eq("user_id", userId)
+        .maybeSingle();
+      savedSession = legacy.data;
+    }
     const restored = savedSession?.auth_state;
 
     // 1. FULL restore: { format: "full", files: { "creds.json": ..., "keys/...": ... } }
@@ -459,8 +503,8 @@ async function restoreFullAuthState(userId, authDir) {
         console.log(`[Auth] Restored creds-only from Supabase for ${userId} (legacy)`);
         return true;
       }
-      console.warn(`[Auth] Supabase auth_state for ${userId} is corrupt/partial — ignoring, starting fresh`);
-      await clearAuthState(userId);
+      console.warn(`[Auth] Supabase auth_state for ${key} is corrupt/partial — ignoring, starting fresh`);
+      await clearAuthState(key);
       fs.mkdirSync(authDir, { recursive: true });
     }
   } catch (err) {
@@ -470,8 +514,9 @@ async function restoreFullAuthState(userId, authDir) {
 }
 
 // ─── Connect WhatsApp ───
-async function connectWhatsApp(userId, opts = {}) {
-  const existing = sessions.get(userId);
+async function connectWhatsApp(sessionKey, opts = {}) {
+  const { key, slot } = normalizeKey(sessionKey, opts.slot);
+  const existing = sessions.get(key);
   if (existing?.connected) {
     return { connected: true, message: "Already connected" };
   }
@@ -482,25 +527,25 @@ async function connectWhatsApp(userId, opts = {}) {
 
   // Per-session device label so the phone's Linked Devices screen shows
   // "DataBuks Business" vs "DataBuks Personal" instead of one generic name.
-  // Auto-restore passes no opts, so infer from the scope key as fallback.
+  // Auto-restore passes no opts, so infer from the slot as fallback.
   let deviceName = typeof opts.deviceName === "string" && opts.deviceName.trim() !== ""
     ? opts.deviceName.trim().slice(0, 32)
     : null;
   if (!deviceName) {
-    deviceName = String(userId).startsWith("personal__") ? "DataBuks Personal" : "DataBuks Business";
+    deviceName = slot === "personal" ? "DataBuks Personal" : "DataBuks Business";
   }
 
-  const authDir = getAuthDir(userId);
+  const authDir = getAuthDir(key);
 
   if (!fs.existsSync(path.join(authDir, "creds.json"))) {
-    await restoreFullAuthState(userId, authDir);
+    await restoreFullAuthState(key, authDir);
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const wrappedSaveCreds = async (creds) => {
     await saveCreds();
     // Full-state persist (throttled) — creds AND keys survive restarts
-    await persistFullAuthState(userId, authDir, "creds.update");
+    await persistFullAuthState(key, authDir, "creds.update");
   };
   const { version } = await fetchLatestBaileysVersion();
 
@@ -525,14 +570,15 @@ async function connectWhatsApp(userId, opts = {}) {
       socket,
       qrCode: null,
       connected: false,
-      userId,
+      userId: key,
+      slot,
       qrRetries: 0,
       phoneNumber: null,
     };
-    sessions.set(userId, session);
+    sessions.set(key, session);
 
     // Set up message handler for AI agents
-    setupMessageHandler(socket, userId);
+    setupMessageHandler(socket, key);
 
     socket.ev.on("connection.update", async (update) => {
       const { qr, connection, lastDisconnect } = update;
@@ -560,7 +606,7 @@ async function connectWhatsApp(userId, opts = {}) {
       }
 
       if (connection === "open") {
-        console.log(`[WhatsApp] Connected for user: ${userId}`);
+        console.log(`[WhatsApp] Connected for user: ${key}`);
         session.connected = true;
         session.qrCode = null;
 
@@ -571,10 +617,10 @@ async function connectWhatsApp(userId, opts = {}) {
           console.log(`[WhatsApp] Phone: ${session.phoneNumber}`);
         } catch {}
 
-        await updateSupabaseStatus(userId, true);
+        await updateSupabaseStatus(key, true);
         // Persist FULL auth state right after handshake — keys are fresh now
-        lastPersistAt.set(userId, 0);
-        await persistFullAuthState(userId, getAuthDir(userId), "connected");
+        lastPersistAt.set(key, 0);
+        await persistFullAuthState(key, getAuthDir(key), "connected");
 
         if (!resolved) {
           resolved = true;
@@ -586,26 +632,14 @@ async function connectWhatsApp(userId, opts = {}) {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-        console.log(`[WhatsApp] Disconnected for user: ${userId}, code: ${statusCode}, reconnect: ${shouldReconnect}`);
+        console.log(`[WhatsApp] Disconnected for user: ${key}, code: ${statusCode}, reconnect: ${shouldReconnect}`);
         session.connected = false;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          sessions.delete(userId);
-          const authDir = getAuthDir(userId);
+          sessions.delete(key);
+          const authDir = getAuthDir(key);
           try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
-          try {
-            if (supabase) {
-              await supabase
-                .from("whatsapp_sessions")
-                .upsert(
-                  { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
-                  { onConflict: "user_id" }
-                );
-            }
-          } catch (err) {
-            console.error("[Supabase] Failed to clear session on logout:", err.message);
-          }
-          await updateSupabaseStatus(userId, false);
+          await clearAuthState(key);
 
           if (!resolved) {
             resolved = true;
@@ -614,22 +648,22 @@ async function connectWhatsApp(userId, opts = {}) {
         } else if (shouldReconnect) {
           // Code 440 = session replaced on another device. Stop reconnecting
           // after 3 attempts to avoid infinite loops that block all other sessions.
-          const reconnectKey = `440:${userId}`;
+          const reconnectKey = `440:${key}`;
           if (statusCode === 440) {
             const count = (global.__reconnectCounts || (global.__reconnectCounts = {}))[reconnectKey] || 0;
             if (count >= 3) {
-              console.log(`[WhatsApp] STOPPED reconnecting for ${userId} — 440 loop detected (${count} attempts). User must re-scan QR.`);
-              sessions.delete(userId);
+              console.log(`[WhatsApp] STOPPED reconnecting for ${key} — 440 loop detected (${count} attempts). User must re-scan QR.`);
+              sessions.delete(key);
               return;
             }
             global.__reconnectCounts[reconnectKey] = count + 1;
           } else {
             // Reset counter for non-440 disconnects
-            if (global.__reconnectCounts) delete global.__reconnectCounts[`440:${userId}`];
+            if (global.__reconnectCounts) delete global.__reconnectCounts[`440:${key}`];
           }
-          console.log(`[WhatsApp] Auto-reconnecting for user: ${userId}`);
+          console.log(`[WhatsApp] Auto-reconnecting for user: ${key}`);
           setTimeout(() => {
-            connectWhatsApp(userId).catch(() => {});
+            connectWhatsApp(key).catch(() => {});
           }, 3000);
         }
 
@@ -657,7 +691,7 @@ async function connectWhatsApp(userId, opts = {}) {
 app.get("/health", (req, res) => {
   const sessionList = [];
   sessions.forEach((s, uid) => {
-    sessionList.push({ userId: uid, connected: s.connected, phone: s.phoneNumber });
+    sessionList.push({ userId: uid, slot: s.slot ?? null, connected: s.connected, phone: s.phoneNumber });
   });
   res.json({
     status: "ok",
@@ -668,30 +702,35 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Connect WhatsApp. Accepts { userId, fresh?, deviceName? }.
+// Connect WhatsApp. Accepts { userId, slot?, fresh?, deviceName? }.
+// userId may be a raw UUID (slot decides the session) or an already-scoped
+// key ("biz__<uuid>" / "personal__<uuid>"). Business + personal slots are
+// fully independent — both numbers stay live simultaneously.
 // fresh=true wipes stale auth state FIRST so the QR is always pairing-ready —
 // without this, re-linking after an unlink reuses dead creds and WhatsApp
 // rejects pairing with "couldn't link device".
 // deviceName sets the linked-device label (e.g. "DataBuks Business").
 app.post("/connect", async (req, res) => {
-  const { userId, fresh, deviceName } = req.body;
+  const { userId, slot, fresh, deviceName } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
   try {
+    const { key } = normalizeKey(userId, slot);
     if (fresh) {
-      console.log(`[Connect] fresh pairing requested for ${userId} — wiping auth state first`);
-      await clearAuthState(userId);
+      console.log(`[Connect] fresh pairing requested for ${key} — wiping auth state first`);
+      await clearAuthState(key);
     }
-    const result = await connectWhatsApp(userId, { deviceName });
+    const result = await connectWhatsApp(key, { deviceName, slot });
     res.json(result);
   } catch (err) {
     // Corrupt auth state can make Baileys crash mid-handshake with raw
     // buffer errors. Recover automatically: wipe the bad state and retry
     // once with a fresh session so a QR is generated instead of an error.
     try {
-      console.log(`[Connect] error for ${userId}, clearing auth and retrying fresh`);
-      await clearAuthState(userId);
-      const retry = await connectWhatsApp(userId);
+      const { key } = normalizeKey(userId, slot);
+      console.log(`[Connect] error for ${key}, clearing auth and retrying fresh`);
+      await clearAuthState(key);
+      const retry = await connectWhatsApp(key, { slot });
       if (retry?.error) {
         console.error("[Connect] retry also failed:", retry.error);
         return res.status(500).json({ error: safeConnectError(new Error(retry.error)) });
@@ -706,14 +745,15 @@ app.post("/connect", async (req, res) => {
 
 // Get status
 app.get("/status/:userId", (req, res) => {
-  const { userId } = req.params;
-  const session = sessions.get(userId);
+  const { key, slot, userId } = normalizeKey(req.params.userId);
+  const session = sessions.get(key) ?? sessions.get(userId) ?? null;
 
   if (session) {
     return res.json({
       connected: session.connected,
       hasQr: !!session.qrCode,
       phoneNumber: session.phoneNumber,
+      slot,
     });
   }
 
@@ -722,22 +762,23 @@ app.get("/status/:userId", (req, res) => {
       .from("whatsapp_sessions")
       .select("connected")
       .eq("user_id", userId)
-      .single()
+      .eq("slot", slot)
+      .maybeSingle()
       .then(({ data }) => {
-        res.json({ connected: data?.connected ?? false, hasQr: false, phoneNumber: null });
+        res.json({ connected: data?.connected ?? false, hasQr: false, phoneNumber: null, slot });
       })
       .catch(() => {
-        res.json({ connected: false, hasQr: false, phoneNumber: null });
+        res.json({ connected: false, hasQr: false, phoneNumber: null, slot });
       });
   } else {
-    res.json({ connected: false, hasQr: false, phoneNumber: null });
+    res.json({ connected: false, hasQr: false, phoneNumber: null, slot });
   }
 });
 
 // Get latest QR code
 app.get("/qr/:userId", (req, res) => {
-  const { userId } = req.params;
-  const session = sessions.get(userId);
+  const { key, userId } = normalizeKey(req.params.userId);
+  const session = sessions.get(key) ?? sessions.get(userId);
   if (session?.qrCode) {
     return res.json({ qrCode: session.qrCode });
   }
@@ -746,20 +787,21 @@ app.get("/qr/:userId", (req, res) => {
 
 // Disconnect
 app.post("/disconnect", async (req, res) => {
-  const { userId } = req.body;
+  const { userId, slot } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
-  const session = sessions.get(userId);
+  const { key } = normalizeKey(userId, slot);
+  const session = sessions.get(key) ?? sessions.get(String(userId));
   if (session?.socket) {
     try { session.socket.ws?.close(); } catch {}
     try { await session.socket.logout(); } catch {}
   }
-  sessions.delete(userId);
+  sessions.delete(key);
 
-  const authDir = getAuthDir(userId);
+  const authDir = getAuthDir(key);
   try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
 
-  await updateSupabaseStatus(userId, false);
+  await updateSupabaseStatus(key, false);
 
   res.json({ success: true });
 });
@@ -768,14 +810,15 @@ app.post("/disconnect", async (req, res) => {
 // Always starts a FRESH pairing session: stale/dead sockets make
 // requestPairingCode throw, which surfaces as "Failed to generate pairing code".
 app.post("/pair", async (req, res) => {
-  const { userId, phoneNumber } = req.body;
+  const { userId, phoneNumber, slot } = req.body;
   if (!userId || !phoneNumber) return res.status(400).json({ error: "userId and phoneNumber required" });
   const cleanPhone = String(phoneNumber).replace(/\D/g, "");
   if (cleanPhone.length < 10 || cleanPhone.length > 15) {
     return res.status(400).json({ error: "invalid phone number (use full international format, no +)" });
   }
 
-  const existing = sessions.get(userId);
+  const { key } = normalizeKey(userId, slot);
+  const existing = sessions.get(key);
   if (existing?.connected) {
     return res.json({ success: true, alreadyConnected: true });
   }
@@ -783,22 +826,15 @@ app.post("/pair", async (req, res) => {
   try {
     // Fresh pairing session: close old socket, wipe local + remote auth state
     if (existing?.socket) { try { existing.socket.ws?.close(); } catch {} }
-    sessions.delete(userId);
-    const authDir = getAuthDir(userId);
+    sessions.delete(key);
+    const authDir = getAuthDir(key);
     try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
-    try {
-      if (supabase) {
-        await supabase.from("whatsapp_sessions").upsert(
-          { user_id: userId, connected: false, auth_state: {}, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" }
-        );
-      }
-    } catch {}
+    await clearAuthState(key);
 
     // connectWhatsApp resolves the moment the socket is pairing-ready (QR event)
-    const result = await connectWhatsApp(userId);
+    const result = await connectWhatsApp(key, { slot });
     if (result?.error) return res.status(500).json({ error: result.error });
-    const session = sessions.get(userId);
+    const session = sessions.get(key);
     if (!session?.socket) return res.status(500).json({ error: "Connection not ready" });
 
     const pairingCode = await session.socket.requestPairingCode(cleanPhone);
@@ -809,19 +845,26 @@ app.post("/pair", async (req, res) => {
   }
 });
 
+// Resolve the right session for a send-like action. Prefers the requested
+// slot, then any live session of the same raw user (transition safety).
+function resolveSendSession(userId, slot) {
+  const n = normalizeKey(userId, slot);
+  return (
+    sessions.get(n.key) ??
+    sessions.get(n.userId) ??
+    sessions.get(`personal__${n.userId}`) ??
+    [...sessions.values()].find((s) => s.connected && (s.userId === n.key || s.userId === n.userId))
+  );
+}
+
 // Send text message
 app.post("/send", async (req, res) => {
-  const { userId, jid, message } = req.body;
+  const { userId, jid, message, slot } = req.body;
   if (!userId || !jid || !message) {
     return res.status(400).json({ error: "userId, jid, and message required" });
   }
 
-  // Session lookup with personal-scope fallback: the personal assistant
-  // session lives under `personal__<userId>`, but callers pass the raw
-  // userId. Without this fallback every personal send 400s.
-  const session = sessions.get(userId)
-    ?? sessions.get(`personal__${userId}`)
-    ?? [...sessions.values()].find((s) => s.connected && s.userId === userId);
+  const session = resolveSendSession(userId, slot);
   if (!session?.connected || !session?.socket) {
     return res.status(400).json({ error: "No active WhatsApp connection" });
   }
@@ -837,17 +880,15 @@ app.post("/send", async (req, res) => {
 
 // Typing/presence indicator (composing | paused | available)
 app.post("/presence", async (req, res) => {
-  const { userId, jid, presence } = req.body;
+  const { userId, jid, presence, slot } = req.body;
   if (!userId || !jid || !presence) {
     return res.status(400).json({ error: "userId, jid, and presence required" });
   }
   if (!["composing", "paused", "available"].includes(presence)) {
-    return res.status(400).json({ error: "presence must be composing, paused or available" });
+    return res.json({ success: false, reason: "presence must be composing, paused or available" });
   }
 
-  const session = sessions.get(userId)
-    ?? sessions.get(`personal__${userId}`)
-    ?? [...sessions.values()].find((s) => s.connected && s.userId === userId);
+  const session = resolveSendSession(userId, slot);
   if (!session?.connected || !session?.socket) {
     return res.json({ success: false, reason: "no_active_connection" });
   }
@@ -863,12 +904,12 @@ app.post("/presence", async (req, res) => {
 
 // Send media message (image, video, document)
 app.post("/send-media", async (req, res) => {
-  const { userId, jid, mediaUrl, caption, type } = req.body;
+  const { userId, jid, mediaUrl, caption, type, slot } = req.body;
   if (!userId || !jid || !mediaUrl) {
     return res.status(400).json({ error: "userId, jid, and mediaUrl required" });
   }
 
-  const session = sessions.get(userId);
+  const session = resolveSendSession(userId, slot);
   if (!session?.connected || !session?.socket) {
     return res.status(400).json({ error: "No active WhatsApp connection" });
   }
@@ -896,8 +937,7 @@ app.post("/send-media", async (req, res) => {
 
 // Get contacts/chats list
 app.get("/chats/:userId", async (req, res) => {
-  const { userId } = req.params;
-  const session = sessions.get(userId);
+  const { session } = lookupSession(req.params.userId, req.query.slot);
 
   if (!session?.connected || !session?.socket) {
     return res.status(400).json({ error: "No active WhatsApp connection" });
@@ -918,7 +958,7 @@ app.get("/chats/:userId", async (req, res) => {
 
 // Get messages from Supabase (for AI agent to read history)
 app.get("/messages/:userId", async (req, res) => {
-  const { userId } = req.params;
+  const { slot, userId } = normalizeKey(req.params.userId, req.query.slot);
   const { jid, limit = 50 } = req.query;
 
   if (!supabase) {
@@ -933,12 +973,27 @@ app.get("/messages/:userId", async (req, res) => {
       .order("timestamp", { ascending: false })
       .limit(Number(limit));
 
-    if (jid) query = query.eq("remote_jid", jid);
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    res.json({ messages: data || [] });
+    // Slot filter when the column exists (dual-slots migration); legacy
+    // DBs without it just return all rows.
+    try {
+      query = query.eq("slot", slot);
+      const { data, error } = await query;
+      if (error) throw error;
+      let rows = data || [];
+      if (jid) rows = rows.filter((m) => m.remote_jid === jid);
+      return res.json({ messages: rows });
+    } catch {
+      let query2 = supabase
+        .from("whatsapp_messages")
+        .select("*")
+        .eq("user_id", userId)
+        .order("timestamp", { ascending: false })
+        .limit(Number(limit));
+      if (jid) query2 = query2.eq("remote_jid", jid);
+      const { data, error } = await query2;
+      if (error) throw error;
+      return res.json({ messages: data || [] });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -946,8 +1001,8 @@ app.get("/messages/:userId", async (req, res) => {
 
 // Check if number exists on WhatsApp
 app.get("/check-number/:userId/:phone", async (req, res) => {
-  const { userId, phone } = req.params;
-  const session = sessions.get(userId);
+  const { session } = lookupSession(req.params.userId, req.query.slot);
+  const { phone } = req.params;
 
   if (!session?.connected || !session?.socket) {
     return res.status(400).json({ error: "No active WhatsApp connection" });
@@ -1023,8 +1078,12 @@ function scheduleReminderInternal(r) {
 }
 async function fireReminder(r) {
   try {
-    // Find any active session that can send (use the first connected one for simplicity)
-    const session = [...sessions.values()].find((s) => s?.socket);
+    // Prefer the business slot for lead follow-ups; fall back to any live session.
+    const all = [...sessions.values()].filter((s) => s?.socket);
+    const session =
+      all.find((s) => s.slot === "business") ??
+      all.find((s) => s.connected) ??
+      all[0];
     if (!session?.socket) {
       console.warn(`[Reminder] fire failed — no active WhatsApp session: id=${r.id}`);
       return;
@@ -1086,28 +1145,34 @@ app.listen(PORT, "0.0.0.0", () => {
 async function autoRestoreSessions() {
   if (!supabase) return;
   try {
-    const { data: savedSessions } = await supabase
+    const { data: savedSessions, error } = await supabase
       .from("whatsapp_sessions")
-      .select("user_id")
+      .select("user_id, slot")
       .eq("connected", true)
-      .limit(20);
+      .limit(40);
+    if (error && /slot/i.test(String(error.message ?? ""))) {
+      // Pre-migration DB: legacy single rows = business slot
+      const { data: legacy } = await supabase
+        .from("whatsapp_sessions")
+        .select("user_id")
+        .eq("connected", true)
+        .limit(40);
+      for (const row of legacy ?? []) {
+        const key = `biz__${row.user_id}`;
+        console.log(`[Auth] Auto-restoring legacy session: ${key}`);
+        connectWhatsApp(key, { deviceName: "DataBuks Business" }).catch((err) => {
+          console.error(`[Auth] Auto-restore failed for ${key}:`, err.message);
+        });
+      }
+      return;
+    }
     for (const row of savedSessions ?? []) {
-      const userId = row.user_id;
-      // Preserve the correct device label across restarts: read the owner's
-      // assistant mode so a Personal session restores as "DataBuks Personal"
-      // (not the generic Business default).
-      let deviceName;
-      try {
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("assistant_mode")
-          .eq("id", userId)
-          .maybeSingle();
-        deviceName = prof?.assistant_mode === "personal" ? "DataBuks Personal" : "DataBuks Business";
-      } catch {}
-      console.log(`[Auth] Auto-restoring session for user: ${userId} (${deviceName ?? "default"})`);
-      connectWhatsApp(userId, deviceName ? { deviceName } : {}).catch((err) => {
-        console.error(`[Auth] Auto-restore failed for ${userId}:`, err.message);
+      const slot = row.slot === "personal" ? "personal" : "business";
+      const key = `${slot === "business" ? "biz" : "personal"}__${row.user_id}`;
+      const deviceName = slot === "personal" ? "DataBuks Personal" : "DataBuks Business";
+      console.log(`[Auth] Auto-restoring session for user: ${key} (${deviceName})`);
+      connectWhatsApp(key, { deviceName }).catch((err) => {
+        console.error(`[Auth] Auto-restore failed for ${key}:`, err.message);
       });
     }
   } catch (err) {

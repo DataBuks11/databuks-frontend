@@ -27,15 +27,13 @@ function baileysBase(): string | null {
 }
 
 /**
- * NOTE (scope removal): sessions used to be namespaced as
- * `personal__<userId>`, but whatsapp_sessions.user_id is a UUID column, so
- * every DB write with a scoped key failed with 22P02 and the session could
- * never persist/restore — every Railway restart wiped it. Since one number =
- * one active session (mutual exclusion), the scope is gone: raw userId
- * everywhere, device name distinguishes Business vs Personal on the phone.
+ * NOTE (dual slots): sessions are namespaced on the Baileys server as
+ * "personal__<userId>" (business lives in "biz__<userId>"). Both numbers
+ * stay connected simultaneously — connecting personal NEVER touches the
+ * business session. Supabase writes use the raw UUID + slot column.
  */
 function personalScope(userId: string): string {
-  return userId;
+  return /^(biz|business|personal)__/.test(userId) ? userId : `personal__${userId}`;
 }
 
 function baileysHeaders() {
@@ -101,19 +99,11 @@ export async function POST(request: NextRequest) {
   try {
     if (action === "connect") {
       const baseUrl = base.replace(/\/+$/, "");
-      // Mutual exclusion: one WhatsApp number = one active AI session.
-      // Connecting personal auto-disconnects the business session first.
-      try {
-        await fetch(`${baseUrl}/disconnect`, {
-          method: "POST",
-          headers: baileysHeaders(),
-          body: JSON.stringify({ userId }),
-        }).catch(() => null);
-      } catch {}
+      // Independent slot: business session is untouched, both stay live.
       const res = await fetch(`${baseUrl}/connect`, {
         method: "POST",
         headers: baileysHeaders(),
-        body: JSON.stringify({ userId: scope, fresh: true, deviceName: "DataBuks Personal" }),
+        body: JSON.stringify({ userId: scope, slot: "personal", fresh: true, deviceName: "DataBuks Personal" }),
       });
       const data = await res.json().catch(() => ({}));
       return NextResponse.json({ ok: res.ok, qr: data?.qrCode ?? null, error: res.ok ? null : String(data?.error ?? "connect failed").slice(0, 200) });
@@ -125,17 +115,10 @@ export async function POST(request: NextRequest) {
       if (phoneNumber.length < 10 || phoneNumber.length > 15) {
         return NextResponse.json({ error: "phoneNumber required (country code + number, bina +)" }, { status: 400 });
       }
-      try {
-        await fetch(`${base.replace(/\/+$/, "")}/disconnect`, {
-          method: "POST",
-          headers: baileysHeaders(),
-          body: JSON.stringify({ userId: scope }),
-        }).catch(() => null);
-      } catch {}
       const res = await fetch(`${base.replace(/\/+$/, "")}/pair`, {
         method: "POST",
         headers: baileysHeaders(),
-        body: JSON.stringify({ userId: scope, phoneNumber }),
+        body: JSON.stringify({ userId: scope, slot: "personal", phoneNumber }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.pairingCode) {

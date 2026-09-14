@@ -1107,8 +1107,8 @@ export default function SettingsPage() {
                             )}
                           </div>
                         )}
-                        <p className="text-xs text-amber-400/80 mt-2">
-                          Note: ek time par ek hi session live rehta hai — Personal connect karne se Business wala session logout ho jayega (aur vice versa).
+                        <p className="text-xs text-emerald-400/80 mt-2">
+                          Business + Personal dono numbers ek saath live reh sakte hain — alag-alag session hai.
                         </p>
                       </div>
 

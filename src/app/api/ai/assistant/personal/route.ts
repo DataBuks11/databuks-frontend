@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
           headers: { "Content-Type": "application/json", "x-api-key": apiKey },
           body: JSON.stringify({
             userId: user.id,
+            slot: "personal",
             jid: `${ownerPhone}@s.whatsapp.net`,
             message: `hi ${(user.user_metadata?.full_name ?? "boss").split(" ")[0]}, DataBuks AI assistant yahan hai. ye test message aapke personal WhatsApp par aaya hai. reply karke dekh sakte ho.`,
           }),

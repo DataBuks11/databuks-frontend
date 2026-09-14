@@ -117,7 +117,7 @@ export async function POST(
             const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/send`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-              body: JSON.stringify({ userId: user.id, jid, message: content }),
+              body: JSON.stringify({ userId: user.id, slot: "business", jid, message: content }),
             });
             whatsappSent = res.ok;
             if (!res.ok) {

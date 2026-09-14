@@ -407,7 +407,7 @@ export async function sendDailySummaries(supabase: any): Promise<DailySummaryRes
         continue;
       }
       const message = composeDailySummary(snapshot, newToday, hot, outreach, approvals, monthly);
-      await sendViaBaileys({ userId: p.id, jid, message });
+      await sendViaBaileys({ userId: p.id, jid, message, slot: "personal" });
       results.push({ userId: p.id, phoneJid: jid, ok: true });
     } catch (err: any) {
       results.push({ userId: p.id, phoneJid: jid, ok: false, error: err?.message ?? "unknown" });
