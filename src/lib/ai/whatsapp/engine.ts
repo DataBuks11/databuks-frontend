@@ -281,7 +281,7 @@ export async function processIncomingWhatsAppMessage(
     if (looksLikeReminderRequest(input.text)) {
       const parsed = parseReminderTime(input.text, new Date());
       if (parsed) {
-        const reminderMsg = "hi! just checking in as you asked ðŸ™‚";
+        const reminderMsg = "hi! just checking in as you asked 🙂";
         const { data: r } = await supabase
           .from("reminders")
           .insert({
@@ -394,14 +394,14 @@ export async function processIncomingWhatsAppMessage(
     replyText = "hey, what's up?";
     usedFastPath = true;
   } else if (/^(thanks|thank\s*you|ty|thx|thnx|ok(ay)?|cool|great|awesome|done|got\s*it|sure|alright|ji|haan)\s*[!.,]*$/i.test(trimmed)) {
-    replyText = "ðŸ‘";
+    replyText = "👍";
     usedFastPath = true;
   } else if (/^bye|byeee+|see\s*ya|cya|talk\s*later|gn\s*$/i.test(trimmed)) {
-    replyText = "ðŸ‘‹";
+    replyText = "👋";
     usedFastPath = true;
   } else if (trimmed.length <= 4 && /^[a-z0-9]+$/i.test(trimmed)) {
     // Single short token (e.g. "ok", "hi", "yo") â€” already handled above usually
-    replyText = "ðŸ‘";
+    replyText = "👍";
     usedFastPath = true;
   } else if (/^\[(image|video|audio|document|sticker|contact|location)\]\s*$/i.test(trimmed)) {
     // Media received â€” instant human acknowledgment, no LLM
@@ -423,10 +423,10 @@ export async function processIncomingWhatsAppMessage(
     const isHinglish = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|nahi|kar|mera|bhai|yaar|mila|mile|ho)\b/i.test(trimmed);
     if (kind === "image" || kind === "video" || kind === "document" || kind === "audio") {
       replyText = isHinglish
-        ? `${ph.hi}${bizBit} â€” dekh ke bata kya karna hai?`
-        : `${ph.en}${bizBit} â€” what do you want me to do with it?`;
+        ? `${ph.hi}${bizBit} — dekh ke bata kya karna hai?`
+        : `${ph.en}${bizBit} — what do you want me to do with it?`;
     } else if (kind === "sticker") {
-      replyText = isHinglish ? "ðŸ˜‚" : "ðŸ˜‚";
+      replyText = isHinglish ? "😂" : "😂";
     } else {
       replyText = isHinglish ? `${ph.hi}${bizBit}` : `${ph.en}${bizBit}`;
     }
@@ -439,7 +439,7 @@ export async function processIncomingWhatsAppMessage(
     !/\?/.test(trimmed)
   ) {
     const isMarathi = /(thik\s*aahe|thik\s*ahe|kaay|kay|koni|kuthe|kadhi|hoil|barobar|pahije|baghat|amhi|apan|tujhya|majhya)\b/i.test(lower);
-    replyText = isMarathi ? "thik aahe ðŸ‘" : "theek hai ðŸ‘";
+    replyText = isMarathi ? "thik aahe 👍" : "theek hai 👍";
     usedFastPath = true;
   }
   if (usedFastPath) {
