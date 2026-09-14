@@ -716,11 +716,18 @@ app.get("/health", (req, res) => {
 // rejects pairing with "couldn't link device".
 // deviceName sets the linked-device label (e.g. "DataBuks Business").
 app.post("/connect", async (req, res) => {
-  const { userId, slot, fresh, deviceName } = req.body;
+  const { userId, slot, fresh, force, deviceName } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
   try {
     const { key } = normalizeKey(userId, slot);
+    // Safety: an already-LIVE session is never wiped by accident. fresh=true
+    // only wipes a dead/disconnected session. Explicit re-pair passes
+    // force:true (the dashboard "Reconnect" button).
+    const live = sessions.get(key);
+    if (live?.connected && !force) {
+      return res.json({ connected: true, message: "Already connected" });
+    }
     if (fresh) {
       console.log(`[Connect] fresh pairing requested for ${key} — wiping auth state first`);
       await clearAuthState(key);

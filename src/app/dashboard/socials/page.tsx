@@ -324,25 +324,25 @@ export default function SocialsPage() {
     return sc?.status ?? "";
   }
 
-  function handleConnect(platform: string) {
+  function handleConnect(platform: string, force = false) {
     const cfg = platformConfig[platform];
-    if (cfg.type === "baileys") { handleWhatsAppConnect(); return; }
+    if (cfg.type === "baileys") { handleWhatsAppConnect(force); return; }
     if (cfg.type === "telegram") { openTelegramModal(); return; }
     handleComposioConnect(platform);
   }
 
-  async function handleWhatsAppConnect() {
+  async function handleWhatsAppConnect(force = false) {
     setQrModalOpen(true); setQrLoading(true); setQrCode(null); setError(""); setPairingCode(null); setPairError(null);
     try {
       if (!userId) { setError("Not authenticated"); return; }
-      const attempt = async () => {
-        const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId }) });
+      const attempt = async (f: boolean) => {
+        const res = await fetch("/api/whatsapp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", userId, fresh: true, force: f }) });
         return await res.json();
       };
-      let data = await attempt();
+      let data = await attempt(force);
       if (data.error && /Logged out/i.test(data.error)) {
         TRACE("WA_CONNECT", "logged-out error, retrying once for fresh QR");
-        data = await attempt();
+        data = await attempt(true);
       }
       if (data.qrCode) { setQrCode(data.qrCode); pollQr(); }
       else if (data.error) { setError(data.error); setQrModalOpen(false); }
@@ -475,7 +475,7 @@ export default function SocialsPage() {
                         <Button variant="ghost" size="sm" className="gap-2 text-red-400 hover:text-red-300" onClick={() => { const sc = supabaseRef.current.find((c: any) => c.platform === key); handleDisconnect(key, sc?.connection_id); }}>
                           <Unlink className="w-3.5 h-3.5" />Disconnect
                         </Button>
-                        <Button variant="outline" size="sm" className="gap-2 text-xs" onClick={() => handleConnect(key)}>
+                        <Button variant="outline" size="sm" className="gap-2 text-xs" onClick={() => handleConnect(key, true)}>
                           <RefreshCw className="w-3.5 h-3.5" />Reconnect
                         </Button>
                       </div>
@@ -503,7 +503,7 @@ export default function SocialsPage() {
           <div className="flex flex-col items-center py-4">
             {qrLoading && !qrCode && <div className="flex flex-col items-center gap-3"><RefreshCw className="w-8 h-8 text-green-400 animate-spin" /><p className="text-sm text-white/50 font-light">Generating QR code...</p></div>}
             {qrCode && <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-4"><div className="p-3 bg-white rounded-2xl"><img src={qrCode} alt="QR" className="w-56 h-56" /></div><p className="text-sm text-white/50 font-light text-center">WhatsApp → Settings → Linked Devices → Link a Device</p><div className="flex items-center gap-2 text-xs text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />Waiting for scan... (QR auto-refreshes)</div></motion.div>}
-            {!qrLoading && !qrCode && <Button onClick={handleWhatsAppConnect} className="liquid-glass rounded-full gap-2"><QrCode className="w-4 h-4" />Generate QR Code</Button>}
+            {!qrLoading && !qrCode && <Button onClick={() => handleWhatsAppConnect(false)} className="liquid-glass rounded-full gap-2"><QrCode className="w-4 h-4" />Generate QR Code</Button>}
 
             <div className="w-full flex items-center gap-3 pt-2">
               <div className="h-px flex-1 bg-white/10" />

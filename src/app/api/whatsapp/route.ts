@@ -94,7 +94,15 @@ export async function POST(request: NextRequest) {
     if (action === "connect") {
       // No mutual exclusion anymore: business + personal slots are
       // independent, both numbers stay connected simultaneously.
-      const data = await proxyPost("/connect", { userId: scope, slot: "business", fresh: true, deviceName: "DataBuks Business" });
+      // force:true only comes from the explicit "Reconnect" button — without
+      // it the server refuses to wipe a live session.
+      const data = await proxyPost("/connect", {
+        userId: scope,
+        slot: "business",
+        fresh: body.fresh ?? true,
+        force: body.force ?? false,
+        deviceName: "DataBuks Business",
+      });
       return NextResponse.json(data);
     }
 
