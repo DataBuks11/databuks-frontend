@@ -52,12 +52,15 @@ export async function POST(request: NextRequest) {
     // JID formats vary: "919876543210.0:64@s.whatsapp.net" carries device
     // suffixes before the @ — strip @, then :device, then .device parts.
     const inboundPhone = String(message.remoteJid).split("@")[0].split(":")[0].split(".")[0].replace(/\D/g, "");
-    const samePhone =
-      !!ownerPhone &&
-      inboundPhone.length >= 10 &&
-      ownerPhone.length >= 10 &&
-      (inboundPhone === ownerPhone || inboundPhone.endsWith(ownerPhone.slice(-10)) || ownerPhone.endsWith(inboundPhone.slice(-10)));
-    const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone;
+    // Server-declared own number (most reliable — straight from the socket).
+    const serverOwn = String(body?.ownPhone ?? "").replace(/\D/g, "");
+    const matchLast10 = (a: string, b: string) =>
+      !!a && !!b && a.length >= 10 && b.length >= 10 &&
+      (a === b || a.endsWith(b.slice(-10)) || b.endsWith(a.slice(-10)));
+    const samePhone = matchLast10(inboundPhone, ownerPhone);
+    const isSelfNumber =
+      message.fromMe === true && (matchLast10(inboundPhone, serverOwn) || (slot === "personal" && matchLast10(inboundPhone, ownerPhone)));
+    const isOwnerCommand = origin === "self" || origin === "owner_device" || samePhone || isSelfNumber;
 
     const supabase = adminClient();
 
@@ -66,6 +69,20 @@ export async function POST(request: NextRequest) {
       if (seenOwnerMsgs.has(dedupKey)) {
         return NextResponse.json({ processed: true, route: "owner_assistant", deduplicated: true });
       }
+      // Poll-cron guard: owner-poll may have claimed this command first
+      // (it marks processed=true). Don't reply twice.
+      try {
+        const { data: existing } = await supabase
+          .from("whatsapp_messages")
+          .select("id, processed")
+          .eq("user_id", userId)
+          .eq("message_id", message.messageId)
+          .maybeSingle();
+        if (existing?.processed) {
+          seenOwnerMsgs.add(dedupKey);
+          return NextResponse.json({ processed: true, route: "owner_assistant", deduplicated: true });
+        }
+      } catch {}
       seenOwnerMsgs.add(dedupKey);
       if (seenOwnerMsgs.size > 500) {
         // keep the set bounded — drop oldest half

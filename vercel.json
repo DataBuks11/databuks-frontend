@@ -44,6 +44,10 @@
     {
       "path": "/api/cron/daily-posts",
       "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/ai/whatsapp/poll",
+      "schedule": "*/2 * * * *"
     }
   ]
 }

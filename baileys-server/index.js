@@ -232,7 +232,7 @@ async function storeMessage(key, msg, preProcessed = false) {
 }
 
 // Forward message to webhook (for AI agent processing)
-async function forwardToWebhook(key, msg) {
+async function forwardToWebhook(key, msg, ownPhone = "") {
   if (!WEBHOOK_URL) { console.log("[Webhook] No WEBHOOK_URL set, skipping"); return; }
   const { slot, userId } = normalizeKey(key);
   try {
@@ -242,7 +242,7 @@ async function forwardToWebhook(key, msg) {
     const resp = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-      body: JSON.stringify({ userId, slot, message: msg }),
+      body: JSON.stringify({ userId, slot, ownPhone, message: msg }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -389,11 +389,14 @@ function setupMessageHandler(socket, userId) {
         `[Message] ${parsedMsg.origin.toUpperCase()} | own=[${[...resolveOwnPhones()]}] ownLid=${ownLid || "none"} remote=${remotePhone} | ${parsedMsg.remoteJid} | ${messageType}: ${messageText.slice(0, 50)}`
       );
 
-      // Store in Supabase. Self-chat (owner commands) is stored unprocessed
-      // for the polling bridge. fromMe messages to OTHER people are just the
-      // user's own outbound chats — stored marked processed so the owner
+      // Store in Supabase. Self-chat (owner commands) is stored UNPROCESSED
+      // so the owner-poll bridge picks it up even if the webhook is
+      // unreachable/misconfigured. fromMe messages to OTHER people are just
+      // the user's own outbound chats — stored marked processed so the owner
       // assistant never mistakes them for commands.
-      if (!isSelfChat && !isLidSelfChat) {
+      if (isSelfChat || isLidSelfChat) {
+        await storeMessage(userId, parsedMsg, false);
+      } else {
         await storeMessage(userId, parsedMsg, fromMe ? true : false);
       }
 
@@ -403,7 +406,9 @@ function setupMessageHandler(socket, userId) {
       // are ignored there as outbound. This removes ALL detection fragility
       // from the server — JID formats vary across Baileys events/devices.
       if (!fromMe || messageText) {
-        await forwardToWebhook(userId, parsedMsg);
+        const ownPhones = [...resolveOwnPhones()];
+        const primaryOwn = ownPhones.find((p) => p && p.length >= 10) ?? "";
+        await forwardToWebhook(userId, parsedMsg, primaryOwn);
       }
     }
   });
