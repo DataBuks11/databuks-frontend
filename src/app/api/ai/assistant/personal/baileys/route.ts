@@ -98,7 +98,6 @@ export async function POST(request: NextRequest) {
   if (!base) return NextResponse.json({ error: "BAILEYS_SERVER_URL not configured" }, { status: 500 });
   if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
   const scope = personalScope(userId);
-
   try {
     if (action === "connect") {
       const baseUrl = base.replace(/\/+$/, "");
@@ -118,6 +117,31 @@ export async function POST(request: NextRequest) {
       });
       const data = await res.json().catch(() => ({}));
       return NextResponse.json({ ok: res.ok, qr: data?.qrCode ?? null, error: res.ok ? null : String(data?.error ?? "connect failed").slice(0, 200) });
+    }
+    if (action === "pair") {
+      // QR ke bina link — phone number par 8-char code. Baileys /pair khud
+      // fresh session banata hai, toota session bhi theek ho jata hai.
+      const phoneNumber = String((body as any)?.phoneNumber ?? "").replace(/\D/g, "");
+      if (phoneNumber.length < 10 || phoneNumber.length > 15) {
+        return NextResponse.json({ error: "phoneNumber required (country code + number, bina +)" }, { status: 400 });
+      }
+      try {
+        await fetch(`${base.replace(/\/+$/, "")}/disconnect`, {
+          method: "POST",
+          headers: baileysHeaders(),
+          body: JSON.stringify({ userId: scope }),
+        }).catch(() => null);
+      } catch {}
+      const res = await fetch(`${base.replace(/\/+$/, "")}/pair`, {
+        method: "POST",
+        headers: baileysHeaders(),
+        body: JSON.stringify({ userId: scope, phoneNumber }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.pairingCode) {
+        return NextResponse.json({ error: String(data?.error ?? "pairing code failed").slice(0, 200) }, { status: res.ok ? 500 : res.status });
+      }
+      return NextResponse.json({ ok: true, pairingCode: data.pairingCode });
     }
     if (action === "disconnect") {
       const res = await fetch(`${base.replace(/\/+$/, "")}/disconnect`, {

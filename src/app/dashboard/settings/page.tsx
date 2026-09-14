@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
@@ -134,10 +134,17 @@ export default function SettingsPage() {
     connecting: boolean;
     qr: string | null;
     qrError: string | null;
+    pairingCode: string | null;
+    pairPhone: string;
+    pairLoading: boolean;
+    pairError: string | null;
     sessionStatus: "unknown" | "connected" | "disconnected";
     disconnectBusy: boolean;
     sessionBusy: boolean;
-  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "", mode: null, modeUpdating: false, connecting: false, qr: null, qrError: null, sessionStatus: "unknown", disconnectBusy: false, sessionBusy: false });
+  }>({ enabled: false, jid: null, loading: true, saving: false, testSending: false, testResult: null, phoneInput: "", mode: null, modeUpdating: false, connecting: false, qr: null, qrError: null, pairingCode: null, pairPhone: "", pairLoading: false, pairError: null, sessionStatus: "unknown", disconnectBusy: false, sessionBusy: false });
+
+  // QR polling generation — purana loop naya start hote hi ruk jata hai.
+  const qrLoopRef = useRef(0);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -249,52 +256,116 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  const startQrConnect = async () => {
-    setPersonalWA((prev) => ({ ...prev, connecting: true, qr: null, qrError: null }));
+  const startQrConnect = async (reuseLoop = false) => {
+    // WhatsApp QR har ~20s me expire hota hai — pehla QR pakad ke baithne se
+    // "Couldn't link device" aata hai. Isliye QR milne ke baad bhi polling
+    // jaari rehti hai aur latest QR screen par update hota rehta hai.
+    const myLoop = reuseLoop ? qrLoopRef.current : qrLoopRef.current + 1;
+    if (!reuseLoop) {
+      qrLoopRef.current = myLoop;
+      setPersonalWA((prev) => ({ ...prev, connecting: true, qr: null, qrError: null, pairingCode: null, pairError: null }));
+    }
     try {
       const uid = await currentUserId();
       if (!uid) {
         setPersonalWA((prev) => ({ ...prev, connecting: false, qrError: "Not signed in" }));
         return;
       }
-      // 1. Ask baileys to prepare a connection
-      await fetch("/api/ai/assistant/personal/baileys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: uid, action: "connect" }),
-      });
-      // 2. Poll for QR (up to 90s)
+      if (!reuseLoop) {
+        // 1. Ask baileys to prepare a FRESH connection (purana toota session wipe)
+        const connRes = await fetch("/api/ai/assistant/personal/baileys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: uid, action: "connect" }),
+        });
+        const connData = await connRes.json().catch(() => ({}));
+        if (!connRes.ok) {
+          setPersonalWA((prev) => ({ ...prev, connecting: false, qrError: connData?.error ?? "connect failed — dobara try karo" }));
+          return;
+        }
+        if (connData?.qr) {
+          setPersonalWA((prev) => ({ ...prev, connecting: false, qr: connData.qr, qrError: null, sessionStatus: "disconnected" }));
+        }
+      }
+      // 2. Poll for QR + status (5 min tak) — har naya QR turant dikhao
+      let lastQr: string | null = null;
       let lastError: string | null = null;
-      for (let i = 0; i < 18; i++) {
+      for (let i = 0; i < 60; i++) {
+        if (qrLoopRef.current !== myLoop) return; // naya loop / cancel
         await new Promise((r) => setTimeout(r, 5000));
+        if (qrLoopRef.current !== myLoop) return;
         try {
-          const res = await fetch(`/api/ai/assistant/personal/baileys?action=qr&userId=${uid}`);
-          const data = await res.json();
-          if (data.connected) {
-            setPersonalWA((prev) => ({ ...prev, connecting: false, sessionStatus: "connected", qr: null, qrError: null }));
+          const [qrRes, stRes] = await Promise.all([
+            fetch(`/api/ai/assistant/personal/baileys?action=qr&userId=${uid}`),
+            fetch(`/api/ai/assistant/personal/baileys?action=status&userId=${uid}`),
+          ]);
+          const qrData = await qrRes.json().catch(() => ({}));
+          const stData = await stRes.json().catch(() => ({}));
+          if (stData.connected || qrData.connected) {
+            qrLoopRef.current++; // loop khatm
+            setPersonalWA((prev) => ({ ...prev, connecting: false, sessionStatus: "connected", qr: null, qrError: null, pairingCode: null }));
             return;
           }
-          if (data.qr) {
-            setPersonalWA((prev) => ({ ...prev, connecting: false, qr: data.qr, qrError: null, sessionStatus: "disconnected" }));
-            return;
+          if (qrData.qr && qrData.qr !== lastQr && !reuseLoop) {
+            lastQr = qrData.qr;
+            setPersonalWA((prev) => ({ ...prev, connecting: false, qr: qrData.qr, qrError: null, sessionStatus: "disconnected" }));
           }
-          lastError = data.error ?? null;
+          lastError = qrData.error ?? stData.error ?? null;
         } catch {
           lastError = "baileys unreachable";
         }
       }
+      if (qrLoopRef.current !== myLoop) return;
       setPersonalWA((prev) => ({
         ...prev,
         connecting: false,
-        qr: null,
-        qrError: lastError ?? "QR timeout — try again",
+        qrError: lastError ?? "QR timeout — 'Naya QR' dabao aur turant scan karo",
       }));
     } catch (err: any) {
       setPersonalWA((prev) => ({ ...prev, connecting: false, qrError: err?.message ?? "connect failed" }));
     }
   };
 
+  const stopQrLoop = () => { qrLoopRef.current++; };
+
+  // QR fail ho to pairing code (bina camera ke link) — /pair fresh session banata hai.
+  const requestPairingCode = async () => {
+    const digits = personalWA.pairPhone.replace(/\D/g, "");
+    if (digits.length < 10) {
+      setPersonalWA((prev) => ({ ...prev, pairError: "Full international number likho (country code ke saath, bina +)" }));
+      return;
+    }
+    setPersonalWA((prev) => ({ ...prev, pairLoading: true, pairError: null, pairingCode: null }));
+    try {
+      const uid = await currentUserId();
+      if (!uid) { setPersonalWA((prev) => ({ ...prev, pairLoading: false, pairError: "Not signed in" })); return; }
+      stopQrLoop();
+      const res = await fetch("/api/ai/assistant/personal/baileys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: uid, action: "pair", phoneNumber: digits }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.pairingCode) {
+        setPersonalWA((prev) => ({ ...prev, pairLoading: false, pairError: data?.error ?? "pairing code failed" }));
+        return;
+      }
+      const raw = String(data.pairingCode).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+      setPersonalWA((prev) => ({
+        ...prev,
+        pairLoading: false,
+        pairingCode: raw.length >= 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 8)}` : raw,
+        qr: null,
+      }));
+      // Pairing ke baad status track karo
+      void startQrConnect(true);
+    } catch (err: any) {
+      setPersonalWA((prev) => ({ ...prev, pairLoading: false, pairError: err?.message ?? "pair failed" }));
+    }
+  };
+
   const handleDisconnectSession = async () => {
+    stopQrLoop();
     setPersonalWA((prev) => ({ ...prev, disconnectBusy: true }));
     try {
       const uid = await currentUserId();
@@ -953,6 +1024,14 @@ export default function SettingsPage() {
                           <div className="flex flex-col items-center gap-2 py-2">
                             <img src={personalWA.qr} alt="WhatsApp QR" className="w-56 h-56 rounded-lg bg-white p-2" />
                             <p className="text-xs text-white/40">WhatsApp → Linked Devices → Link a Device → scan</p>
+                            <p className="text-xs text-amber-400/90">QR har ~20s me badalta hai — screen wala latest QR turant scan karo, purana scan "Couldn&apos;t link device" dega</p>
+                          </div>
+                        )}
+                        {personalWA.pairingCode && (
+                          <div className="flex flex-col items-center gap-2 py-3 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                            <p className="text-xs text-white/50">Phone me WhatsApp → Linked Devices → Link a Device → <span className="text-white/80">Link with phone number instead</span> → ye code dalo:</p>
+                            <p className="text-2xl font-mono font-bold tracking-[0.2em] text-emerald-300">{personalWA.pairingCode}</p>
+                            <p className="text-xs text-white/40">Code 60s me expire hota hai — expire ho to dobara generate karo</p>
                           </div>
                         )}
                         {personalWA.connecting && (
@@ -968,12 +1047,22 @@ export default function SettingsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={startQrConnect}
+                            onClick={() => startQrConnect()}
                             disabled={personalWA.connecting || personalWA.sessionStatus === "connected"}
                           >
                             {personalWA.connecting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Wifi className="h-4 w-4 mr-2" />}
                             {personalWA.sessionStatus === "connected" ? "Paired ✓" : "Show QR"}
                           </Button>
+                          {personalWA.qr && personalWA.sessionStatus !== "connected" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => startQrConnect()}
+                              disabled={personalWA.connecting}
+                            >
+                              <RefreshCw className="h-4 w-4 mr-2" /> Naya QR
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
@@ -992,6 +1081,35 @@ export default function SettingsPage() {
                             Disconnect
                           </Button>
                         </div>
+                        {personalWA.sessionStatus !== "connected" && (
+                          <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                            <p className="text-xs text-white/50">QR scan na ho to pairing code se link karo (camera ki zaroorat nahi):</p>
+                            <div className="flex gap-2">
+                              <Input
+                                placeholder="9198XXXXXXXX (country code + number)"
+                                value={personalWA.pairPhone}
+                                onChange={(e) => setPersonalWA((prev) => ({ ...prev, pairPhone: e.target.value }))}
+                                className="flex-1"
+                              />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={requestPairingCode}
+                                disabled={personalWA.pairLoading}
+                                className="shrink-0"
+                              >
+                                {personalWA.pairLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Key className="h-4 w-4 mr-2" />}
+                                Get Code
+                              </Button>
+                            </div>
+                            {personalWA.pairError && (
+                              <p className="text-xs text-red-400">{personalWA.pairError}</p>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-xs text-amber-400/80 mt-2">
+                          Note: ek time par ek hi session live rehta hai — Personal connect karne se Business wala session logout ho jayega (aur vice versa).
+                        </p>
                       </div>
 
                       {/* Action Buttons */}
