@@ -35,7 +35,15 @@ async function handle(request: NextRequest) {
   try {
     const supabase = adminClient();
     const result = await pollOwnerWhatsAppCommands(supabase, { limit: 10 });
-    return NextResponse.json({ ok: true, ...result });
+    // Queued heavy jobs (bulk posts / outreach): chunked worker, fits limits.
+    let queued = { processed: 0, errors: [] as string[] };
+    try {
+      const { processQueuedJobs } = await import("@/lib/ai/owner-flows");
+      queued = await processQueuedJobs(supabase);
+    } catch (err: any) {
+      console.error(`[API:ai/whatsapp/poll] queued jobs failed: ${err?.message}`);
+    }
+    return NextResponse.json({ ok: true, ...result, queuedJobs: queued });
   } catch (err: any) {
     console.error(`[API:ai/whatsapp/poll] ${err?.message}`);
     return NextResponse.json({ error: "Poll failed" }, { status: 500 });

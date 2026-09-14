@@ -14,7 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveUserJid } from "@/lib/whatsapp/jid-utils";
 
-type State = "idle" | "awaiting_post_count" | "generating_posts" | "awaiting_outreach_count" | "doing_outreach";
+type State = "idle" | "awaiting_post_count" | "generating_posts" | "awaiting_outreach_count" | "doing_outreach" | "posts_queued" | "outreach_queued";
 
 interface SessionRow {
   user_id: string;
@@ -141,7 +141,8 @@ const OUTREACH_QUESTION = /\b(kitne|kitna|kitni)\s*(lead|leads|ko)\b/i;
 export async function handleFlowMessage(
   supabase: SupabaseClient,
   userId: string,
-  text: string
+  text: string,
+  opts: { replyJid?: string; slot?: "business" | "personal" } = {}
 ): Promise<{ kind: "prompt" | "action"; text: string } | null> {
   const lower = text.trim().toLowerCase();
   const session = await getSession(supabase, userId);
@@ -153,7 +154,7 @@ export async function handleFlowMessage(
       if (count !== null) {
         // Got the count — generate posts (brief bhi ho to topics me lo)
         const briefs = extractBriefTopics(text);
-        return await runPostGeneration(supabase, userId, count, session.data, briefs);
+        return await runPostGeneration(supabase, userId, count, session.data, briefs, opts);
       }
       // Not a number — remind
       return {
@@ -164,7 +165,7 @@ export async function handleFlowMessage(
     if (session.state === "awaiting_outreach_count") {
       const count = parseCount(lower);
       if (count !== null) {
-        return await runOutreach(supabase, userId, count);
+        return await runOutreach(supabase, userId, count, opts);
       }
       return {
         kind: "prompt",
@@ -183,7 +184,7 @@ export async function handleFlowMessage(
     const inline = parseCount(lower);
     if (inline !== null) {
       const briefs = extractBriefTopics(text);
-      return await runPostGeneration(supabase, userId, inline, {}, briefs);
+      return await runPostGeneration(supabase, userId, inline, {}, briefs, opts);
     }
     // No session — start the conversation
     await setSession(supabase, userId, "awaiting_post_count", {});
@@ -196,7 +197,7 @@ export async function handleFlowMessage(
   if (OUTREACH_TRIGGERS.test(lower) || OUTREACH_QUESTION.test(lower)) {
     const inline = parseCount(lower);
     if (inline !== null) {
-      return await runOutreach(supabase, userId, inline);
+      return await runOutreach(supabase, userId, inline, opts);
     }
     await setSession(supabase, userId, "awaiting_outreach_count", {});
     return {
@@ -283,15 +284,35 @@ async function runPostGeneration(
   userId: string,
   count: number,
   _sessionData: Record<string, any>,
-  briefTopics: string[] = []
+  briefTopics: string[] = [],
+  opts: { replyJid?: string; slot?: "business" | "personal" } = {}
 ): Promise<{ kind: "action"; text: string }> {
-  await setSession(supabase, userId, "generating_posts", { count });
+  const n = Math.min(Math.max(count, 1), 15);
+  // Heavy jobs (>2 posts) can't finish inside Vercel's 60s webhook window —
+  // queue them, ack instantly, worker (poll bridge, 2 min) completes in
+  // chunks and pushes each batch to WhatsApp for review.
+  if (n > 2) {
+    await setSession(supabase, userId, "posts_queued", {
+      job: "posts",
+      count: n,
+      briefs: briefTopics.slice(0, 15),
+      done: 0,
+      replyJid: opts.replyJid ?? null,
+      slot: opts.slot ?? "personal",
+      requestedAt: new Date().toISOString(),
+    });
+    return {
+      kind: "action",
+      text: `${n} post queue kar diye ✓ banaate hi ek-ek karke yahin bhejunga review ke liye (yes/no/edit reply karna). 3-5 min lag sakte hain.`,
+    };
+  }
+  await setSession(supabase, userId, "generating_posts", { count: n });
   try {
     const { generateDailyPostsForUser } = await import("@/lib/ai/content/daily-generator");
     const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
 
     const result = await generateDailyPostsForUser(supabase, userId, {
-      maxPosts: Math.min(Math.max(count, 1), 15),
+      maxPosts: n,
       overrideTopics: briefTopics.length > 0 ? briefTopics : undefined,
     });
     await resetSession(supabase, userId);
@@ -313,7 +334,8 @@ async function runPostGeneration(
           process.env.BAILEYS_API_KEY || "dev-key",
           userId,
           jid,
-          result.posts
+          result.posts,
+          opts.slot === "business" ? "business" : "personal"
         );
       }
     }
@@ -333,15 +355,32 @@ async function runPostGeneration(
 async function runOutreach(
   supabase: SupabaseClient,
   userId: string,
-  count: number
+  count: number,
+  opts: { replyJid?: string; slot?: "business" | "personal" } = {}
 ): Promise<{ kind: "action"; text: string }> {
-  await setSession(supabase, userId, "doing_outreach", { count });
+  const n = Math.min(Math.max(count, 1), 15);
+  // Outreach sends real messages + LLM calls — too slow for 60s webhook
+  // when count is large. Queue big runs, worker completes + summarizes.
+  if (n > 3) {
+    await setSession(supabase, userId, "outreach_queued", {
+      job: "outreach",
+      count: n,
+      replyJid: opts.replyJid ?? null,
+      slot: opts.slot ?? "personal",
+      requestedAt: new Date().toISOString(),
+    });
+    return {
+      kind: "action",
+      text: `${n} leads ka outreach queue kar diya ✓ complete hote hi summary bhejunga.`,
+    };
+  }
+  await setSession(supabase, userId, "doing_outreach", { count: n });
   try {
     const { runMultiChannelOutreachForUser } = await import(
       "@/lib/ai/outreach/multi-channel"
     );
     const result = await runMultiChannelOutreachForUser(supabase, userId, {
-      limit: Math.min(Math.max(count, 1), 15),
+      limit: n,
     });
     await resetSession(supabase, userId);
 
@@ -368,4 +407,133 @@ async function runOutreach(
       text: `outreach fail: ${err?.message ?? "unknown"}`,
     };
   }
+}
+
+/** Send a plain text to the owner's chat (queued-job updates, summaries). */
+async function sendOwnerText(
+  supabase: SupabaseClient,
+  userId: string,
+  data: Record<string, any>,
+  text: string
+): Promise<void> {
+  try {
+    const jid: string | null = data.replyJid ?? (await resolveUserJid(supabase, userId));
+    if (!jid) return;
+    const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+    await sendViaBaileys({
+      userId,
+      jid,
+      message: text,
+      slot: data.slot === "business" ? "business" : "personal",
+    });
+  } catch (err: any) {
+    console.warn(`[owner-flow] owner notify failed: ${err?.message}`);
+  }
+}
+
+const JOB_STALE_MS = 6 * 3600 * 1000;
+const POSTS_PER_RUN = 3;
+
+/**
+ * Background worker for queued heavy jobs (called by the /poll bridge every
+ * ~2 min). Chunked + idempotent: session.done tracks progress, each run does
+ * one small batch so it fits in serverless limits. Stale jobs (>6h) dropped.
+ */
+export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ processed: number; errors: string[] }> {
+  const out = { processed: 0, errors: [] as string[] };
+  let rows: any[] = [];
+  try {
+    const { data, error } = await supabase
+      .from("assistant_session")
+      .select("user_id, state, data, updated_at")
+      .in("state", ["posts_queued", "outreach_queued"])
+      .limit(10);
+    if (error) throw error;
+    rows = data ?? [];
+  } catch (err: any) {
+    return out; // table missing etc. — nothing to do
+  }
+
+  for (const row of rows) {
+    const userId = row.user_id;
+    const data = row.data ?? {};
+    try {
+      const age = Date.now() - new Date(data.requestedAt ?? row.updated_at).getTime();
+      if (age > JOB_STALE_MS) {
+        await resetSession(supabase, userId);
+        continue;
+      }
+      if (row.state === "posts_queued") {
+        await runQueuedPostsBatch(supabase, userId, data);
+        out.processed += 1;
+      } else if (row.state === "outreach_queued") {
+        await runQueuedOutreach(supabase, userId, data);
+        out.processed += 1;
+      }
+    } catch (err: any) {
+      out.errors.push(`${userId}: ${err?.message ?? "unknown"}`);
+    }
+  }
+  return out;
+}
+
+async function runQueuedPostsBatch(supabase: SupabaseClient, userId: string, data: Record<string, any>) {
+  const count = Math.min(Math.max(parseInt(data.count ?? "0", 10) || 0, 1), 15);
+  const done = Math.max(parseInt(data.done ?? "0", 10) || 0, 0);
+  const briefs: string[] = Array.isArray(data.briefs) ? data.briefs : [];
+  const remaining = count - done;
+  if (remaining <= 0) {
+    await resetSession(supabase, userId);
+    return;
+  }
+  const batch = Math.min(POSTS_PER_RUN, remaining);
+  const { generateDailyPostsForUser } = await import("@/lib/ai/content/daily-generator");
+  const { pushDailyPostsToWhatsApp } = await import("@/lib/ai/content/push-whatsapp");
+
+  const result = await generateDailyPostsForUser(supabase, userId, {
+    maxPosts: batch,
+    overrideTopics: briefs.length > 0 ? briefs.slice(done, done + batch) : undefined,
+  });
+
+  const baseUrl = process.env.BAILEYS_SERVER_URL;
+  if (baseUrl && result.posts.length > 0) {
+    const jid = data.replyJid ?? (await resolveUserJid(supabase, userId));
+    if (jid) {
+      await pushDailyPostsToWhatsApp(
+        baseUrl,
+        process.env.BAILEYS_API_KEY || "dev-key",
+        userId,
+        jid,
+        result.posts,
+        data.slot === "business" ? "business" : "personal"
+      );
+    }
+  }
+
+  const newDone = done + result.count;
+  if (newDone >= count || result.count === 0) {
+    await resetSession(supabase, userId);
+    await sendOwnerText(
+      supabase, userId, data,
+      result.count === 0 && newDone < count
+        ? `posts adhoore reh gaye (${newDone}/${count} ready). business context check karke "10 post banao" dobara bolo.`
+        : `sab ${count} post ready ✓ review ke liye upar bhej diye — yes/no/edit reply kar.`
+    );
+  } else {
+    await setSession(supabase, userId, "posts_queued", { ...data, done: newDone });
+    await sendOwnerText(supabase, userId, data, `${newDone}/${count} post ready, baaki bana raha hoon...`);
+  }
+}
+
+async function runQueuedOutreach(supabase: SupabaseClient, userId: string, data: Record<string, any>) {
+  const count = Math.min(Math.max(parseInt(data.count ?? "0", 10) || 0, 1), 15);
+  const { runMultiChannelOutreachForUser } = await import("@/lib/ai/outreach/multi-channel");
+  const result = await runMultiChannelOutreachForUser(supabase, userId, { limit: count });
+  await resetSession(supabase, userId);
+  await sendOwnerText(
+    supabase, userId, data,
+    result.processed === 0
+      ? `outreach complete: 0 contact ho paye, ${result.skipped} skip (no contact info).`
+      : `outreach complete ✓ ${result.processed} leads contacted, ${result.failed} fail, ${result.skipped} skip.`
+  );
 }

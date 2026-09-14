@@ -155,6 +155,7 @@ export async function POST(request: NextRequest) {
           userId,
           text: message.text,
           replyJid,
+          slot,
         });
       } catch (err: any) {
         console.error(`[API:ai/whatsapp/webhook] owner command failed: ${err?.message}`);
@@ -236,6 +237,7 @@ export async function POST(request: NextRequest) {
               userId: boundUserId,
               text: message.text,
               replyJid: boundReplyJid,
+              slot: "business",
             });
           } catch (err: any) {
             console.error(`[API:ai/whatsapp/webhook] bound assistant failed: ${err?.message}`);

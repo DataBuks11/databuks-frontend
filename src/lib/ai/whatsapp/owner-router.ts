@@ -50,7 +50,7 @@ async function generateReplacementPost(
 
 export async function routeOwnerMessage(
   supabase: SupabaseClient,
-  input: { userId: string; text: string | null | undefined; replyJid: string }
+  input: { userId: string; text: string | null | undefined; replyJid: string; slot?: "business" | "personal" }
 ): Promise<{ handled: boolean }> {
   const { userId, text, replyJid } = input;
   const txt = text ?? "";
@@ -87,9 +87,12 @@ export async function routeOwnerMessage(
 
   try {
     const { handleFlowMessage } = await import("@/lib/ai/owner-flows");
-    const flowResult = await handleFlowMessage(supabase, userId, txt);
+    const flowResult = await handleFlowMessage(supabase, userId, txt, {
+      replyJid,
+      slot: input.slot ?? "personal",
+    });
     if (flowResult) {
-      await sendViaBaileys({ userId, jid: replyJid, slot: "personal", message: flowResult.text });
+      await sendViaBaileys({ userId, jid: replyJid, slot: input.slot ?? "personal", message: flowResult.text });
       return { handled: true };
     }
   } catch (err: any) {
