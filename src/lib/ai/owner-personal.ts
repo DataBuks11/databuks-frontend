@@ -122,15 +122,32 @@ export async function handlePersonalChat(opts: PersonalChatOpts): Promise<string
         "If asked for credentials, account info, or anything you don't have, say 'share your email, I'll send it' or 'check your email'.",
         "If asked 'who are you' or 'what is your business': say 'your casual personal assistant, not a business tool'.",
         "If asked something outside your knowledge, just say you're not sure and suggest checking it out.",
-        "Keep replies short — 1-2 sentences max. Match the user's language (English / Hinglish / Hindi).",
+        "Keep replies SHORT — 1 sentence, max 25 words. Match the user's language (English / Hinglish / Hindi).",
         "Reply as JSON: { \"reply\": \"your short casual message here\" }",
       ].join("\n"),
       user: text,
       temperature: 0.6,
-      maxTokens: 400,
+      maxTokens: 150,
     });
     return String((out as any)?.reply ?? "").trim() || "hmm, kuch samjha nahi. thoda aur bata?";
   } catch (err: any) {
     return `network issue — try again. (${err?.message ?? "unknown"})`;
   }
+}
+
+/** Instant deterministic ack for media (no LLM): photo/file/voice-note etc. */
+export function mediaAck(kind: string, caption = "", hinglish = false): string {
+  const cap = caption.trim().slice(0, 80);
+  const capBit = cap ? ` ("${cap}")` : "";
+  const map: Record<string, { en: string; hi: string }> = {
+    image: { en: `got the photo${capBit} 👀 what should I do with it?`, hi: `photo mil gayi${capBit} 👀 batao iska kya karna hai?` },
+    video: { en: `got the video${capBit} 👀 what should I do with it?`, hi: `video mil gayi${capBit} 👀 batao iska kya karna hai?` },
+    audio: { en: `got the voice note${capBit} 🎧 will listen and reply in a bit — anything specific?`, hi: `voice note mil gaya${capBit} 🎧 sunke batata hoon — kuch specific chahiye?` },
+    document: { en: `got the file${capBit} 📄 what should I do with it? (summary / reply draft?)`, hi: `file mil gayi${capBit} 📄 batao iska kya karna hai? (summary / reply draft?)` },
+    sticker: { en: "nice sticker 😂", hi: "nice sticker 😂" },
+    contact: { en: `got the contact${capBit} 👤 noted — what next?`, hi: `contact mil gaya${capBit} 👤 note kar liya — aage kya karna hai?` },
+    location: { en: `got the location${capBit} 📍 noted!`, hi: `location mil gayi${capBit} 📍 note kar liya!` },
+  };
+  const m = map[kind] ?? { en: `got it${capBit} 👍 what next?`, hi: `mil gaya${capBit} 👍 aage kya karna hai?` };
+  return hinglish ? m.hi : m.en;
 }

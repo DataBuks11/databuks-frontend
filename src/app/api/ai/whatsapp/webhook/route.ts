@@ -179,13 +179,20 @@ export async function POST(request: NextRequest) {
       if (!jid.includes("@g.us") && !jid.includes("@broadcast") && !jid.includes("@newsletter")) {
         try {
           const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
-          const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
-          // Prefer the resolved phone JID — @lid remotes can't receive sends.
-          const senderDigits = inboundPhone.replace(/\D/g, "");
+          const { handlePersonalChat, mediaAck } = await import("@/lib/ai/owner-personal");
           const trimmed = (message.text || "").trim();
           const lower = trimmed.toLowerCase();
+          const msgType = String((message as any)?.type ?? "text");
+          const replyJid = message.remoteJid;
+          const isHinglish = /[\u0900-\u097F]/.test(trimmed) || /\b(kya|hai|mera|mujhe|batao|karo|kaisa|kaise|accha|thik)\b/i.test(trimmed);
           let reply: string;
-          if (/^(hi+|hlo+|hlw+|hello+|hey+|heyy*|namaste|yo+|sup)\b/i.test(lower)) {
+          let usedFallback = false;
+          // Media gets an INSTANT deterministic ack (no LLM): photo/file/
+          // voice-note with optional caption quote. Genuine + immediate.
+          if (msgType && msgType !== "text") {
+            const cap = /^\[(image|video|audio|document|sticker|contact|location)\]\s*$/i.test(trimmed) ? "" : trimmed;
+            reply = mediaAck(msgType, cap, isHinglish);
+          } else if (/^(hi+|hlo+|hlw+|hello+|hey+|heyy*|namaste|yo+|sup)\b/i.test(lower)) {
             const firstName = message.pushName ? ` ${(String(message.pushName).split(" ")[0])}` : "";
             reply = `hey${firstName}! kya haal hai?`;
           } else if (/^(ok|theek hai|hmm|haan|sure|chalo|done|cool|alright)\b/i.test(lower)) {
@@ -201,13 +208,19 @@ export async function POST(request: NextRequest) {
                 ),
               ]);
             } catch {
+              // Instant ack NOW + queue a real reply for the worker: the user
+              // gets substance minutes later instead of a dead-end ack.
+              usedFallback = true;
               reply = "haan bolo, sun raha hoon 👍 thoda detail me batao kya baat hai?";
+              try {
+                const { queuePersonalRetry } = await import("@/lib/ai/owner-flows");
+                await queuePersonalRetry(supabase, userId, replyJid, trimmed);
+              } catch {}
             }
           }
           // Reply to the sender's ACTUAL JID (often @lid). Rewriting @lid to
           // "<lid>@s.whatsapp.net" sends into the void — verified live that
           // direct @lid sends DO deliver.
-          const replyJid = message.remoteJid;
           await sendViaBaileys({ userId, jid: replyJid, message: reply, slot: "personal" });
           try {
             await supabase

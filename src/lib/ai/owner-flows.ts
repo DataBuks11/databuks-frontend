@@ -395,6 +395,85 @@ async function sendOwnerText(
 
 const JOB_STALE_MS = 6 * 3600 * 1000;
 
+/** Stash a timed-out personal reply for regeneration by the poll worker. */
+export async function queuePersonalRetry(
+  supabase: SupabaseClient,
+  userId: string,
+  jid: string,
+  text: string
+): Promise<void> {
+  try {
+    const { data: sess } = await supabase
+      .from("assistant_session")
+      .select("state, data")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const data = (sess?.data ?? {}) as Record<string, any>;
+    const list = Array.isArray(data.pending_personal) ? data.pending_personal : [];
+    const now = Date.now();
+    const fresh = list.filter((e: any) => now - new Date(e.at ?? 0).getTime() < 20 * 60 * 1000).slice(-4);
+    fresh.push({ jid, text: text.slice(0, 500), at: new Date().toISOString(), attempts: 0, slot: "personal" });
+    if (sess) {
+      await supabase
+        .from("assistant_session")
+        .update({ data: { ...data, pending_personal: fresh }, updated_at: new Date().toISOString() })
+        .eq("user_id", userId);
+    } else {
+      await supabase.from("assistant_session").insert({
+        user_id: userId,
+        state: "idle",
+        data: { pending_personal: fresh },
+        expires_at: new Date(now + 24 * 3600 * 1000).toISOString(),
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[owner-flow] queue retry failed: ${err?.message}`);
+  }
+}
+
+async function runPendingPersonalRetries(supabase: SupabaseClient): Promise<number> {
+  let done = 0;
+  let rows: any[] = [];
+  try {
+    const { data, error } = await supabase.from("assistant_session").select("user_id, data").limit(25);
+    if (error) throw error;
+    rows = (data ?? []).filter((r: any) => Array.isArray(r?.data?.pending_personal) && r.data.pending_personal.length > 0);
+  } catch {
+    return 0;
+  }
+  const { handlePersonalChat } = await import("@/lib/ai/owner-personal");
+  const { sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+  for (const row of rows) {
+    const data = row.data ?? {};
+    const pending = (data.pending_personal ?? []) as any[];
+    const kept: any[] = [];
+    for (const e of pending) {
+      const age = Date.now() - new Date(e.at ?? 0).getTime();
+      if (age > 20 * 60 * 1000 || (e.attempts ?? 0) >= 2) continue; // drop stale/retried
+      try {
+        const reply = await Promise.race([
+          handlePersonalChat({ supabase, userId: row.user_id, messageText: e.text ?? "", isSticky: true }),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error("retry-timeout")), 40000)),
+        ]);
+        await sendViaBaileys({ userId: row.user_id, jid: e.jid, message: reply, slot: "personal" });
+        done += 1;
+      } catch {
+        kept.push({ ...e, attempts: (e.attempts ?? 0) + 1 });
+      }
+    }
+    try {
+      const next = { ...data };
+      if (kept.length === 0) delete next.pending_personal;
+      else next.pending_personal = kept;
+      await supabase
+        .from("assistant_session")
+        .update({ data: next, updated_at: new Date().toISOString() })
+        .eq("user_id", row.user_id);
+    } catch {}
+  }
+  return done;
+}
+
 /**
  * Background worker for queued heavy jobs (called by the /poll bridge every
  * ~2 min). Chunked + idempotent: session.done tracks progress, each run does
@@ -407,15 +486,22 @@ export async function processQueuedJobs(supabase: SupabaseClient): Promise<{ pro
     const { data, error } = await supabase
       .from("assistant_session")
       .select("user_id, state, data, updated_at")
-      .in("state", ["posts_queued", "outreach_queued", "generating_posts"])
-      .limit(10);
+      .limit(25);
     if (error) throw error;
     rows = data ?? [];
   } catch (err: any) {
     return out; // table missing etc. — nothing to do
   }
 
+  // Personal retry queue first (cheap), then heavy job states.
+  try {
+    out.processed += await runPendingPersonalRetries(supabase);
+  } catch (err: any) {
+    out.errors.push(`personal-retries: ${err?.message ?? "unknown"}`);
+  }
+
   for (const row of rows) {
+    if (!["posts_queued", "outreach_queued", "generating_posts"].includes(row.state)) continue;
     const userId = row.user_id;
     const data = row.data ?? {};
     try {
