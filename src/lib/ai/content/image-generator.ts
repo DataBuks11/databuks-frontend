@@ -1,87 +1,140 @@
 /**
- * Free image generation via Cloudflare Workers (saurav-z/free-image-generation-api).
+ * Image generation: configured Cloudflare Worker (if reachable) with
+ * automatic fallback to Pollinations FLUX (free, keyless, photorealistic).
+ * Every post gets a real image — never a silent 1px placeholder.
  *
- * Env vars (set in Vercel once the user deploys their own Worker):
- *   IMAGE_API_URL    — e.g. https://image-gen.example.workers.dev
- *   IMAGE_API_KEY    — bearer token configured in the Worker's API_KEY env
- *
- * POST <IMAGE_API_URL> with JSON body { "prompt": "..." } returns binary image
- * (image/jpeg or image/png). We read it as a Buffer and return base64 data URL
- * for simple storage in our social_posts.image_url column. For production-grade
- * storage, the Worker should be paired with R2/S3 and return a public URL.
+ * Env vars (optional — pipeline works without them via fallback):
+ *   IMAGE_API_URL — e.g. https://image-gen.example.workers.dev
+ *   IMAGE_API_KEY — bearer token configured in the Worker's API_KEY env
  */
 
 export interface GeneratedImage {
-  url: string;       // data URL OR remote URL (depending on storage)
-  base64?: string;  // raw base64 (if data URL)
-  mimeType: string;  // image/jpeg, image/png
+  url: string; // data URL OR remote URL (depending on storage)
+  base64?: string; // raw base64 (if data URL)
+  mimeType: string; // image/jpeg, image/png
   prompt: string;
   bytes: number;
+  provider: string; // "worker" | "pollinations" | "placeholder"
 }
 
-export async function generateImage(prompt: string): Promise<GeneratedImage> {
+const FETCH_TIMEOUT_MS = 120_000;
+
+/** Strip everything that poisons image models: hashtags, mentions, emojis, URLs, CTAs. */
+export function cleanVisualText(input: string): string {
+  return (input ?? "")
+    .replace(/#[\p{L}\p{N}_]+/gu, " ")
+    .replace(/@[\p{L}\p{N}_.]+/gu, " ")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, " ")
+    .replace(/\b(DM|comment|link in bio|call now|order now|shop now|book now|swipe up|tap to|click)\b[^.!?]{0,40}/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchImageBuffer(url: string, init?: RequestInit): Promise<{ buf: Buffer; mime: string } | null> {
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) return null;
+    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (!contentType.startsWith("image/")) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 5000) return null; // error pixels / tiny junk
+    return { buf, mime: contentType };
+  } catch {
+    return null;
+  }
+}
+
+/** Pollinations FLUX — free, keyless, photorealistic. Automatic fallback. */
+async function generateViaPollinations(prompt: string, aspect: "square" | "portrait"): Promise<GeneratedImage | null> {
+  const w = aspect === "portrait" ? 768 : 1024;
+  const h = aspect === "portrait" ? 1344 : 1024;
+  const seed = Math.floor(Math.random() * 999999);
+  const url =
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+    `?model=flux&width=${w}&height=${h}&seed=${seed}&nologo=true&enhance=true&safe=true`;
+  const got = await fetchImageBuffer(url);
+  if (!got) return null;
+  const base64 = got.buf.toString("base64");
+  return {
+    url: `data:${got.mime};base64,${base64}`,
+    base64,
+    mimeType: got.mime,
+    prompt,
+    bytes: got.buf.length,
+    provider: "pollinations",
+  };
+}
+
+export async function generateImage(
+  prompt: string,
+  aspect: "square" | "portrait" = "square"
+): Promise<GeneratedImage> {
   const url = process.env.IMAGE_API_URL;
   const key = process.env.IMAGE_API_KEY;
 
-  if (!url) {
-    // No image API configured — return a graceful placeholder so the post
-    // generation flow still works (text + caption will be saved without image).
-    return placeholderImage(prompt);
-  }
-
-  const timeoutMs = 120_000;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(key ? { Authorization: `Bearer ${key}` } : {}),
-      },
-      body: JSON.stringify({ prompt }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) {
-      console.warn(`[image-generator] upstream ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      return placeholderImage(prompt);
-    }
-    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-
-    // V2 upstream returns JSON: { ok, key, url } — image already persisted to
-    // KV/R2 with a public URL. Prefer that: no base64 bloat in the DB, and the
-    // URL is directly usable by Composio for publishing.
-    if (contentType.includes("json")) {
-      const data = await res.json().catch(() => null);
-      if (data && typeof data.url === "string" && /^https?:\/\//i.test(data.url)) {
-        return {
-          url: data.url,
-          mimeType: "image/jpeg",
-          prompt,
-          bytes: Number(data.bytes ?? 0),
-        };
+  // 1. Configured worker first (best when the user hosts FLUX/SDXL).
+  if (url) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        },
+        body: JSON.stringify({ prompt }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (res.ok) {
+        const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+        // V2 upstream returns JSON: { ok, key, url } — image persisted with
+        // a public URL. Prefer that: no base64 bloat, directly publishable.
+        if (contentType.includes("json")) {
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.url === "string" && /^https?:\/\//i.test(data.url)) {
+            return {
+              url: data.url,
+              mimeType: "image/jpeg",
+              prompt,
+              bytes: Number(data.bytes ?? 0),
+              provider: "worker",
+            };
+          }
+          console.warn(`[image-generator] upstream JSON without url: ${JSON.stringify(data).slice(0, 200)}`);
+        } else {
+          // V1 upstream returns raw binary image
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (buf.length >= 5000) {
+            const mimeType = contentType || "image/jpeg";
+            const base64 = buf.toString("base64");
+            return {
+              url: `data:${mimeType};base64,${base64}`,
+              base64,
+              mimeType,
+              prompt,
+              bytes: buf.length,
+              provider: "worker",
+            };
+          }
+        }
+      } else {
+        console.warn(`[image-generator] worker ${res.status}, falling back to FLUX`);
       }
-      console.warn(`[image-generator] upstream JSON without url: ${JSON.stringify(data).slice(0, 200)}`);
-      return placeholderImage(prompt);
+    } catch (err: any) {
+      console.warn(`[image-generator] worker failed (${err?.message ?? err}), falling back to FLUX`);
     }
-
-    // V1 upstream returns raw binary image
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 200) {
-      // Some upstream errors return tiny JSON even on non-2xx; treat as failure
-      return placeholderImage(prompt);
-    }
-    const mimeType = contentType || "image/jpeg";
-    const base64 = buf.toString("base64");
-    return {
-      url: `data:${mimeType};base64,${base64}`,
-      base64,
-      mimeType,
-      prompt,
-      bytes: buf.length,
-    };
-  } catch (err: any) {
-    console.warn(`[image-generator] fetch failed: ${err?.message ?? err}`);
-    return placeholderImage(prompt);
   }
+
+  // 2. Pollinations FLUX fallback (free, keyless, photorealistic).
+  try {
+    const img = await generateViaPollinations(prompt, aspect);
+    if (img) return img;
+  } catch (err: any) {
+    console.warn(`[image-generator] pollinations failed: ${err?.message ?? err}`);
+  }
+
+  // 3. Last resort placeholder (keeps the row valid).
+  return placeholderImage(prompt);
 }
 
 function placeholderImage(prompt: string): GeneratedImage {
@@ -93,17 +146,32 @@ function placeholderImage(prompt: string): GeneratedImage {
     mimeType: "image/png",
     prompt,
     bytes: 0,
+    provider: "placeholder",
   };
 }
 
-/** Build a concise image prompt from a social post caption + topic. */
-export function buildImagePrompt(topic: string, caption: string): string {
-  const t = (topic ?? "").trim();
-  const c = (caption ?? "").trim();
-  const parts: string[] = [];
-  if (t) parts.push(t);
-  if (c) parts.push(c.slice(0, 160));
-  // Enforce authentic, raw, candid documentary photography (zero plastic AI look)
-  parts.push("raw candid documentary photograph, shot on 35mm lens fujifilm, natural ambient daylight, real skin texture with pores, authentic environment, unposed moment, realistic depth of field, no CGI, no plastic sheen, no airbrushing, no text, no watermark");
-  return parts.join(", ");
+/**
+ * Build a professional image prompt. Prefers the LLM-written visual scene
+ * (concrete, photographable) over raw topic/caption text; caption
+ * hashtags/emojis/CTAs are stripped (they poison image models with text
+ * artifacts). Photographic direction is appended in all cases.
+ */
+export function buildImagePrompt(topic: string, caption: string, visual?: string): string {
+  const firstLine = (caption ?? "").split(/[.!?\n]/)[0] ?? "";
+  const cleanedTopic =
+    cleanVisualText(`${topic ?? ""}. ${firstLine}`.trim()).slice(0, 220) || "small business growth";
+  const subject = cleanVisualText(visual ?? "").slice(0, 300) || cleanedTopic;
+  const detailRaw = cleanVisualText((caption ?? "").slice(0, 200));
+  const scene =
+    detailRaw && detailRaw.toLowerCase() !== subject.toLowerCase()
+      ? ` Scene details: ${detailRaw}.`
+      : "";
+  return (
+    `Ultra-photorealistic professional photograph: ${subject}.${scene} ` +
+    `Candid documentary style, natural ambient daylight, real environment with authentic details, ` +
+    `real human skin texture, natural colors, sharp focus, balanced composition with copy space, ` +
+    `shot on 35mm lens, shallow depth of field, high detail, 4k quality. ` +
+    `Absolutely no text, no words, no letters, no watermark, no logo, no cartoon, no illustration, ` +
+    `no CGI look, no plastic skin, no blurry faces, no distorted hands.`
+  );
 }

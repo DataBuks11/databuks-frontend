@@ -196,14 +196,19 @@ async function generateOnePost(
 
   const out: any = result.output;
 
-  // Image generation (best-effort, never blocks)
+  // Image generation (best-effort, never blocks). The LLM-written visual
+  // scene (concrete, photographable) leads; topic/caption is the fallback.
   let imageUrl: string | null = null;
   let imagePrompt: string | null = null;
   try {
-    const prompt = buildImagePrompt(topic, out.caption);
-    const img = await generateImage(prompt);
-    imageUrl = img.url;
-    imagePrompt = prompt;
+    const visual = typeof out.image_description === "string" ? out.image_description : "";
+    const prompt = buildImagePrompt(topic, out.caption, visual);
+    const aspect = contentType === "story" || contentType === "reel" ? "portrait" : "square";
+    const img = await generateImage(prompt, aspect);
+    if (img.provider !== "placeholder") {
+      imageUrl = img.url;
+      imagePrompt = prompt;
+    }
   } catch {
     // ignore — image is optional
   }

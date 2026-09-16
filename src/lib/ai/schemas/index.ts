@@ -389,6 +389,7 @@ export const socialContentDraftSchema = z
     cta: z.string().max(300).nullable(),
     hook: z.string().max(300).nullable(),
     platform_variants: z.record(z.string().max(2200)).optional(),
+    image_description: z.string().max(500).optional(),
     contains_unverified_claim: z.boolean(),
     confidence,
   })

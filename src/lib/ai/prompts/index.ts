@@ -578,6 +578,7 @@ export function buildSocialContentPrompt(ctx: TaskContext, request: { topic?: st
     "Use the business context: services, brand voice, audience, themes. Never invent facts, statistics, client counts, pricing, or guarantees.",
     "Content must sound human and specific to this business - no generic marketing filler.",
     "If the requested topic is not supported by the business context, pick the closest real theme and note it in the topic.",
+    "image_description: describe ONE concrete photographable scene for this post in a single sentence — real people doing a real thing in a real place (e.g. 'Indian shopkeeper smiling behind billing counter with laptop showing charts, bright kirana store'). Must be physically photographable: no abstract concepts, no text/posters/banners, no logos, no deities or religious figures unless the topic is explicitly religious, no festivals unless requested. Indian context where the audience is Indian.",
     "Respond ONLY with a single valid JSON object matching the requested schema. No markdown. Booleans must be JSON booleans. Confidence is 0-1.",
   ].join("\n");
 
@@ -594,6 +595,7 @@ export function buildSocialContentPrompt(ctx: TaskContext, request: { topic?: st
       cta: "string or null",
       hook: "string or null",
       platform_variants: { instagram: "string", linkedin: "string" },
+      image_description: "one concrete photographable sentence, no text/logos in scene",
       contains_unverified_claim: false,
       confidence: 0.9,
     }),
