@@ -50,9 +50,12 @@ async function generateViaPollinations(prompt: string, aspect: "square" | "portr
   const w = aspect === "portrait" ? 768 : 1024;
   const h = aspect === "portrait" ? 1344 : 1024;
   const seed = Math.floor(Math.random() * 999999);
+  // NOTE: no enhance=true — the prompt-enhancer LLM rewrites prompts and
+  // causes total subject mismatches (tunnels/tigers for business topics).
+  // Our prompts are already engineered; send them verbatim.
   const url =
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?model=flux&width=${w}&height=${h}&seed=${seed}&nologo=true&enhance=true&safe=true`;
+    `?model=flux&width=${w}&height=${h}&seed=${seed}&nologo=true&safe=true`;
   const got = await fetchImageBuffer(url);
   if (!got) return null;
   const base64 = got.buf.toString("base64");
