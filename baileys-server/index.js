@@ -785,6 +785,7 @@ async function connectWhatsApp(sessionKey, opts = {}) {
           const authDir = getAuthDir(key);
           try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {}
           await clearAuthState(key);
+          await notifySiblingSession(key, `⚠️ WhatsApp ${slotLabel(key)} session logged out — dobara QR scan karke pair karo (Dashboard → ${slotLabel(key) === "Business" ? "Social Connections" : "Settings → Personal WhatsApp"}).`);
 
           if (!resolved) {
             resolved = true;
@@ -803,6 +804,7 @@ async function connectWhatsApp(sessionKey, opts = {}) {
             if (count >= 3) {
               console.log(`[WhatsApp] STOPPED reconnecting for ${key} — 440 loop detected (${count} attempts). Fresh QR re-pair needed.`);
               sessions.delete(key);
+              await notifySiblingSession(key, `⚠️ WhatsApp ${slotLabel(key)} session baar-baar disconnect ho raha hai (440) — ruk gaya hoon taaki loop na chale. Fresh QR se dobara pair karo.`);
               return;
             }
             global.__reconnectCounts[reconnectKey] = count + 1;
@@ -999,6 +1001,40 @@ app.post("/pair", async (req, res) => {
     res.status(500).json({ error: "Failed to generate pairing code: " + String(err.message ?? "").slice(0, 100) });
   }
 });
+
+function slotLabel(key) {
+  try {
+    return normalizeKey(key).slot === "personal" ? "Personal" : "Business";
+  } catch {
+    return "WhatsApp";
+  }
+}
+
+/**
+ * Alert the owner on the SURVIVING session when one slot dies terminally
+ * (logout / 440-stop). Sends to the surviving number's self-chat so the
+ * owner actually sees it. If nothing is alive, just logs (dashboard shows it).
+ */
+async function notifySiblingSession(deadKey, text) {
+  try {
+    const { userId } = normalizeKey(deadKey);
+    const sibling = [...sessions.values()].find(
+      (s) => s?.connected && s?.socket && normalizeKey(s.userId).userId === userId && s.userId !== deadKey
+    );
+    if (!sibling) {
+      console.log(`[Notify] no live sibling session for ${deadKey} — alert skipped`);
+      return;
+    }
+    const ownJid = sibling.phoneNumber
+      ? `${String(sibling.phoneNumber).replace(/\D/g, "")}@s.whatsapp.net`
+      : null;
+    if (!ownJid) return;
+    await sibling.socket.sendMessage(ownJid, { text });
+    console.log(`[Notify] session-death alert sent via ${sibling.userId}`);
+  } catch (err) {
+    console.error(`[Notify] failed: ${err?.message ?? err}`);
+  }
+}
 
 // Resolve the right session for a send-like action. Prefers the requested
 // slot, then any live session of the same raw user (transition safety).
