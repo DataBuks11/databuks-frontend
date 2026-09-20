@@ -45,6 +45,52 @@ async function fetchImageBuffer(url: string, init?: RequestInit): Promise<{ buf:
   }
 }
 
+/** Google Gemini image generation (free tier key) — strong prompt adherence. */
+async function generateViaGemini(
+  prompt: string,
+  aspect: "square" | "portrait"
+): Promise<GeneratedImage | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${encodeURIComponent(key)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Photorealistic image, ${aspect === "portrait" ? "vertical 3:4 portrait orientation" : "square 1:1"}: ${prompt}` }] }],
+          generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      }
+    );
+    if (!res.ok) {
+      console.warn(`[image-generator] gemini ${res.status}, trying next provider`);
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const imgPart = parts.find((p: any) => p?.inlineData?.data);
+    if (!imgPart) return null;
+    const mimeType: string = imgPart.inlineData.mimeType || "image/png";
+    const base64: string = imgPart.inlineData.data;
+    const buf = Buffer.from(base64, "base64");
+    if (buf.length < 5000) return null;
+    return {
+      url: `data:${mimeType};base64,${base64}`,
+      base64,
+      mimeType,
+      prompt,
+      bytes: buf.length,
+      provider: "gemini",
+    };
+  } catch (err: any) {
+    console.warn(`[image-generator] gemini failed (${err?.message ?? err}), trying next provider`);
+    return null;
+  }
+}
+
 /** HuggingFace Inference — FLUX.1-schnell, free tier with HF_API_KEY.
  *  Real FLUX quality, no watermark. Set HF_API_KEY env to enable. */
 async function generateViaHuggingFace(
@@ -179,7 +225,15 @@ export async function generateImage(
     console.warn(`[image-generator] huggingface error: ${err?.message ?? err}`);
   }
 
-  // 3. Pollinations FLUX fallback (free, keyless). Temporary — remove once
+  // 3. Google Gemini image generation (free tier key, strong adherence).
+  try {
+    const img = await generateViaGemini(prompt, aspect);
+    if (img) return img;
+  } catch (err: any) {
+    console.warn(`[image-generator] gemini error: ${err?.message ?? err}`);
+  }
+
+  // 4. Pollinations FLUX fallback (free, keyless). Temporary — remove once
   //    a keyed provider is configured (user asked to move off pollinations).
   try {
     const img = await generateViaPollinations(prompt, aspect);
