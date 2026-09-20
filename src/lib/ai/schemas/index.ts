@@ -533,6 +533,7 @@ export const websiteAnalysisSchema = z
     brand_voice: z.array(z.string().min(1).max(300)).max(20),
     tone: z.string().max(300).nullable(),
     competitors: z.array(websiteCompetitorSchema).max(20),
+    suggested_competitors: z.array(websiteCompetitorSchema).max(10).optional(),
     confidence: confidence,
     hiring_signals: z.array(websiteSignalSchema).max(10).optional(),
     technology_signals: z.array(websiteSignalSchema).max(10).optional(),

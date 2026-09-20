@@ -341,6 +341,7 @@ function synthesizeFromFacts(
     brand_voice: brandVoice.slice(0, 10),
     tone: "Professional and authoritative",
     competitors: competitors.slice(0, 10),
+    suggested_competitors: [],
     confidence: 0.85,
   };
 }
@@ -367,12 +368,14 @@ async function analyzeWebsite(
   const chunks = chunkCorpus(pages);
   const allFacts: Record<string, any>[] = [];
 
-  // Parallel-capable chunk fact extraction with per-chunk resilience
+  // Parallel-capable chunk fact extraction with per-chunk resilience.
+  // maxAttempts 2 (not 3): free-tier LLM stalls are common; a failed chunk
+  // falls back to deterministic synthesis instead of burning minutes.
   await Promise.all(
     chunks.map(async (chunk) => {
       const factsPrompt = buildWebsiteFactsPrompt(chunk, siteType);
       try {
-        const rawFacts = await provider.completeJson({ ...factsPrompt, timeoutMs: SCAN_TIMEOUT_MS });
+        const rawFacts = await provider.completeJson({ ...factsPrompt, timeoutMs: SCAN_TIMEOUT_MS, maxAttempts: 2 });
         if (rawFacts && Array.isArray(rawFacts.facts)) {
           allFacts.push(...rawFacts.facts);
         }
@@ -397,7 +400,7 @@ async function analyzeWebsite(
   );
 
   try {
-    const rawAnalysis = await provider.completeJson({ ...synthesisPrompt, timeoutMs: 90_000 });
+    const rawAnalysis = await provider.completeJson({ ...synthesisPrompt, timeoutMs: 90_000, maxAttempts: 2 });
     const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
     if (analysisValidation.success) {
       return {
