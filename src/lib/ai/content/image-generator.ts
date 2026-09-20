@@ -45,6 +45,49 @@ async function fetchImageBuffer(url: string, init?: RequestInit): Promise<{ buf:
   }
 }
 
+/** HuggingFace Inference — FLUX.1-schnell, free tier with HF_API_KEY.
+ *  Real FLUX quality, no watermark. Set HF_API_KEY env to enable. */
+async function generateViaHuggingFace(
+  prompt: string,
+  aspect: "square" | "portrait"
+): Promise<GeneratedImage | null> {
+  const key = process.env.HF_API_KEY;
+  if (!key) return null;
+  const w = aspect === "portrait" ? 768 : 1024;
+  const h = aspect === "portrait" ? 1344 : 1024;
+  try {
+    const res = await fetch("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: { width: w, height: h, num_inference_steps: 4 },
+      }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.warn(`[image-generator] huggingface ${res.status}, trying next provider`);
+      return null;
+    }
+    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (!contentType.startsWith("image/")) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 5000) return null;
+    const base64 = buf.toString("base64");
+    return {
+      url: `data:${contentType};base64,${base64}`,
+      base64,
+      mimeType: contentType,
+      prompt,
+      bytes: buf.length,
+      provider: "huggingface",
+    };
+  } catch (err: any) {
+    console.warn(`[image-generator] huggingface failed (${err?.message ?? err}), trying next provider`);
+    return null;
+  }
+}
+
 /** Pollinations FLUX — free, keyless, photorealistic. Automatic fallback. */
 async function generateViaPollinations(prompt: string, aspect: "square" | "portrait"): Promise<GeneratedImage | null> {
   const w = aspect === "portrait" ? 768 : 1024;
@@ -128,7 +171,16 @@ export async function generateImage(
     }
   }
 
-  // 2. Pollinations FLUX fallback (free, keyless, photorealistic).
+  // 2. HuggingFace FLUX-schnell (free tier key, no watermark).
+  try {
+    const img = await generateViaHuggingFace(prompt, aspect);
+    if (img) return img;
+  } catch (err: any) {
+    console.warn(`[image-generator] huggingface error: ${err?.message ?? err}`);
+  }
+
+  // 3. Pollinations FLUX fallback (free, keyless). Temporary — remove once
+  //    a keyed provider is configured (user asked to move off pollinations).
   try {
     const img = await generateViaPollinations(prompt, aspect);
     if (img) return img;
@@ -136,7 +188,7 @@ export async function generateImage(
     console.warn(`[image-generator] pollinations failed: ${err?.message ?? err}`);
   }
 
-  // 3. Last resort placeholder (keeps the row valid).
+  // 4. Last resort placeholder (keeps the row valid).
   return placeholderImage(prompt);
 }
 
