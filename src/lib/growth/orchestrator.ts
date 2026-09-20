@@ -104,8 +104,37 @@ export interface FindLeadsResult {
   geo_counts?: Record<string, { qualified: number; needs_review: number }>;
 }
 
-const AGENCY_SIGNALS = /\b(agenc(?:y|ies)|studio|consultancy|consulting firm|digital marketing|web development|software (?:company|firm)|it (?:company|services|firm|solutions)|tech (?:company|firm|solutions)|media (?:company|agency)|solutions (?:pvt|private)|technologies)\b/i;
-const STOPWORDS = new Set("and,the,for,with,our,your,from,that,this,will,have,has,are,was,were,into,over,under,services,service,solutions,solution,company,business,agency,digital,online,best,top,leading,professional,quality,custom,services".split(","));
+const AGENCY_SIGNALS = [
+  /\bagenc(?:y|ies)\b/i,
+  /\bstudio\b/i,
+  /\bsoftware\b/i,
+  /\bweb\s?design\b/i,
+  /\bweb\s?development\b/i,
+  /\bwebsite\s?(design|development|makers|company|firm|studio|agency)\b/i,
+  /\bapp\s?development\b/i,
+  /\bmobile\s?apps?\b/i,
+  /\bdigital\s?marketing\b/i,
+  /\bseo\b/i,
+  /\btechnologies\b/i,
+  /\btechnology\b/i,
+  /\btech\s?(solutions|company|firm)\b/i,
+  /\bit\s?(solutions|services|company|firm)\b/i,
+  /\bsoft\s?tech\b/i,
+  /\bsoftware\s?(company|firm|solutions)\b/i,
+  /\bdevelopment\s?(company|firm)\b/i,
+  /\bweb\s?solutions\b/i,
+  /\bweb\s?(studio|agency|firm|company)\b/i,
+  /\becommerce\s?development\b/i,
+  /\bdevelopers?\b/i,
+  /\bmakers\b/i,
+  /\btech\b/i,
+  /\bdesign\s?(company|firm|studio|agency)\b/i,
+  // Single-token names starting with "web"/"app" + 3 (WebCreata, Appzmine…)
+  /\bweb[a-z]{3,}\b/i,
+  /\bapp[a-z]{3,}\b/i,
+  /\bcreat[a-z]*\b/i,
+];
+const STOPWORDS = new Set("and,the,for,with,our,your,from,that,this,will,have,has,are,was,were,into,over,under,services,service,solutions,solution,company,business,agency,digital,online,best,top,leading,professional,quality,custom".split(","));
 
 /** Own-service keywords from business context (significant words only). */
 function ownServiceKeywords(bcData: any): string[] {
@@ -116,8 +145,11 @@ function ownServiceKeywords(bcData: any): string[] {
   const words = new Set<string>();
   for (const n of names) {
     for (const w of String(n ?? "").toLowerCase().split(/[^a-z0-9]+/)) {
-      if (w.length > 3 && !STOPWORDS.has(w)) words.add(w);
+      if (w.length > 2 && !STOPWORDS.has(w)) words.add(w);
     }
+  }
+  return [...words];
+}
   }
   return [...words];
 }
@@ -136,12 +168,15 @@ function detectCompetitor(candidateText: string, bcData: any): string | null {
       return `excluded industry "${ex}"`;
     }
   }
-  if (!AGENCY_SIGNALS.test(text)) return null;
+  // Count distinct agency signals (not raw hits — one phrase family = 1).
+  const signalCount = AGENCY_SIGNALS.reduce((n, re) => n + (re.test(text) ? 1 : 0), 0);
+  if (signalCount === 0) return null;
   const keywords = ownServiceKeywords(bcData);
-  if (keywords.length === 0) return null;
-  const hits = keywords.filter((k) => text.includes(k));
-  if (hits.length >= 1) {
-    return `same-line agency (signals: agency-type + own services: ${hits.slice(0, 3).join(", ")})`;
+  if (keywords.length === 0) return signalCount >= 3 ? "strong agency signals (no service keywords configured)" : null;
+  // Whole-word overlap only: "website" must NOT match keyword "web".
+  const hits = keywords.filter((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
+  if (signalCount >= 2 || (signalCount >= 1 && hits.length >= 1)) {
+    return `same-line agency (${signalCount} signals${hits.length > 0 ? ` + own services: ${hits.slice(0, 3).join(", ")}` : ""})`;
   }
   return null;
 }
