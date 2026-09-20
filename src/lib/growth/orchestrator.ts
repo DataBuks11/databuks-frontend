@@ -39,8 +39,51 @@ export interface FindLeadsResult {
   enriched_count: number;
   qualified_count: number;
   needs_review_count: number;
+  competitors_filtered: number;
   errors: string[];
   geo_counts?: Record<string, { qualified: number; needs_review: number }>;
+}
+
+const AGENCY_SIGNALS = /\b(agenc(?:y|ies)|studio|consultancy|consulting firm|digital marketing|web development|software (?:company|firm)|it (?:company|services|firm|solutions)|tech (?:company|firm|solutions)|media (?:company|agency)|solutions (?:pvt|private)|technologies)\b/i;
+const STOPWORDS = new Set("and,the,for,with,our,your,from,that,this,will,have,has,are,was,were,into,over,under,services,service,solutions,solution,company,business,agency,digital,online,best,top,leading,professional,quality,custom,services".split(","));
+
+/** Own-service keywords from business context (significant words only). */
+function ownServiceKeywords(bcData: any): string[] {
+  const names: string[] = [
+    ...(Array.isArray(bcData.services) ? bcData.services.map((s: any) => (typeof s === "string" ? s : s?.name ?? "")) : []),
+    ...(Array.isArray(bcData.products) ? bcData.products.map((p: any) => (typeof p === "string" ? p : p?.name ?? "")) : []),
+  ];
+  const words = new Set<string>();
+  for (const n of names) {
+    for (const w of String(n ?? "").toLowerCase().split(/[^a-z0-9]+/)) {
+      if (w.length > 3 && !STOPWORDS.has(w)) words.add(w);
+    }
+  }
+  return [...words];
+}
+
+/**
+ * Competitor detection — answers "ye lead kaise hui?": a candidate that IS
+ * in our own line of business (agency/studio selling the same services) is
+ * a competitor, NOT a prospect. Only the CANDIDATE's own text is examined.
+ * Returns a reason or null.
+ */
+function detectCompetitor(candidateText: string, bcData: any): string | null {
+  const text = String(candidateText ?? "").toLowerCase();
+  const excluded: string[] = Array.isArray(bcData.excluded_industries) ? bcData.excluded_industries : [];
+  for (const ex of excluded) {
+    if (typeof ex === "string" && ex.length > 2 && text.includes(ex.toLowerCase())) {
+      return `excluded industry "${ex}"`;
+    }
+  }
+  if (!AGENCY_SIGNALS.test(text)) return null;
+  const keywords = ownServiceKeywords(bcData);
+  if (keywords.length === 0) return null;
+  const hits = keywords.filter((k) => text.includes(k));
+  if (hits.length >= 1) {
+    return `same-line agency (signals: agency-type + own services: ${hits.slice(0, 3).join(", ")})`;
+  }
+  return null;
 }
 
 export async function runFindLeads(
@@ -51,7 +94,7 @@ export async function runFindLeads(
   const result: FindLeadsResult = {
     run_id: "", status: "RUNNING", queries_generated: 0, raw_candidates: 0,
     canonical_businesses: 0, enriched_count: 0, qualified_count: 0,
-    needs_review_count: 0, errors: [], geo_counts: {},
+    needs_review_count: 0, competitors_filtered: 0, errors: [], geo_counts: {},
   };
 
   const maxQueries = options?.max_queries ?? 15;
@@ -192,6 +235,18 @@ export async function runFindLeads(
         ...group.all_candidates.map((c) => c.raw?.snippet ?? ""),
         typeof enrichmentData?.page_text === "string" ? enrichmentData.page_text.slice(0, 6000) : "",
       ].join(" ");
+
+      // Competitor gate: same-line agencies are NOT prospects. Skip before
+      // scoring/persist so they never enter outreach or meeting pipelines.
+      const competitorReason = detectCompetitor(
+        `${group.business_name ?? ""} ${fullText}`,
+        bcData
+      );
+      if (competitorReason) {
+        result.competitors_filtered += 1;
+        continue;
+      }
+
       const reqAnalysis = analyzeRequirement(fullText || primary.businessName);
       const urgAnalysis = analyzeUrgency(fullText, reqAnalysis.status);
 
@@ -433,6 +488,9 @@ export async function runFindLeads(
     result.enriched_count = enrichedCount;
     result.qualified_count = qualifiedCount;
     result.needs_review_count = needsReviewCount;
+    if (result.competitors_filtered > 0) {
+      console.log(`[growth] filtered ${result.competitors_filtered} same-line competitor(s) — not prospects, skipped from leads`);
+    }
 
     const hasErrors = result.errors.length > 0;
     result.status = hasErrors ? "PARTIAL" : "COMPLETED";

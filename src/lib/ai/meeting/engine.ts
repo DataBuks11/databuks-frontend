@@ -126,7 +126,46 @@ export async function bookMeeting(supabase: any, input: BookMeetingInput): Promi
     console.error(`[LIB:ai:meeting] transition after booking failed: ${error.message}`);
   }
 
+  // Owner approval ping (best-effort, never blocks the booking).
+  void notifyOwnerMeetingBooked(supabase, {
+    userId: input.userId,
+    leadName: (lead as any)?.name ?? (lead as any)?.author_name ?? null,
+    company: (lead as any)?.company ?? null,
+    scheduledAt: input.scheduledAt,
+    medium: input.medium,
+  });
+
   return { allowed: true, reason: "meeting booked", meeting, transition };
+}
+
+/**
+ * Owner approval ping: the moment a meeting is booked, WhatsApp the owner
+ * on the PERSONAL number with lead + slot + context, so THEY decide what
+ * happens next (confirm / cancel / reschedule via dashboard or reply).
+ * Best-effort — booking never fails because a notification failed.
+ */
+export async function notifyOwnerMeetingBooked(
+  supabase: any,
+  input: { userId: string; leadName?: string | null; company?: string | null; scheduledAt?: string | null; medium?: string | null }
+): Promise<void> {
+  try {
+    const { resolveUserJid, sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
+    const jid = await resolveUserJid(supabase, input.userId);
+    if (!jid) return;
+    const when = input.scheduledAt ? new Date(input.scheduledAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "slot pending";
+    await sendViaBaileys({
+      userId: input.userId,
+      jid,
+      slot: "personal",
+      message:
+        `🎯 Meeting tak laaya hoon!\n` +
+        `Lead: ${input.leadName ?? "unknown"}${input.company ? ` (${input.company})` : ""}\n` +
+        `Slot: ${when}${input.medium ? ` via ${input.medium}` : ""}\n\n` +
+        `Aage kya karna hai, tum batao — Dashboard → Meetings me confirm/cancel/reschedule karo, ya yahan "meetings" likh ke list dekho.`,
+    });
+  } catch (err: any) {
+    console.error(`[LIB:ai:meeting] owner approval ping failed: ${err?.message}`);
+  }
 }
 
 export async function listMeetings(
