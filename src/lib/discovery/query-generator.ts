@@ -354,10 +354,10 @@ function generateSoftwareGapQueries(
   scope: GeoScope = "LOCAL"
 ): DiscoveryQuery[] {
   const queries: DiscoveryQuery[] = [];
-  const softwarePhrases = ["software solution", "custom software", "erp system", "crm software"];
+  const softwarePhrases = ["software solution", "custom software", "erp system", "crm software", "billing software", "management software"];
   for (const customerType of customerTypes.slice(0, 3)) {
     for (const location of scopedLocations(locations, scope).slice(0, 2)) {
-      for (const phrase of softwarePhrases.slice(0, scope === "LOCAL" ? 2 : 2)) {
+      for (const phrase of softwarePhrases.slice(0, 3)) {
         queries.push({
           query: `${customerType} ${location} ${phrase}`,
           query_type: "SOFTWARE_GAP",
@@ -438,9 +438,11 @@ export function generateDiscoveryQueries(
     const segment = audience.segment.trim();
     if (segment) customerTypes.push(segment.toLowerCase());
     if (audience.description) {
-      // Extract business-type keywords from descriptions
+      // Extract business-type keywords from descriptions — covers retail,
+      // hospitality, healthcare, education, services and more so every
+      // relevant vertical (hotels, hospitals, ERPs buyers, etc.) gets queries.
       const businessTypes = audience.description.match(
-        /\b(hotel|hotels|restaurant|restaurants|clinic|clinics|hospital|hospitals|school|schools|college|colleges|gym|gyms|salon|salons|store|stores|shop|shops|agency|agencies|startup|startups|business|businesses|company|companies|firm|firms|enterprise|enterprises|retail|ecommerce|e-commerce)\b/gi
+        /\b(hotel|hotels|resort|resorts|banquet|banquets|cafe|cafes|bakery|bakeries|catering|restaurant|restaurants|clinic|clinics|hospital|hospitals|pharmacy|pharmacies|school|schools|college|colleges|coaching|gym|gyms|salon|salons|spa|store|stores|shop|shops|mall|malls|showroom|showrooms|agency|agencies|startup|startups|business|businesses|company|companies|firm|firms|enterprise|enterprises|retail|retailer|retailers|wholesale|wholesaler|distributor|distributors|manufacturer|manufacturers|factory|factories|warehouse|warehouses|logistics|transport|fleet|hotelier|restaurateur|builder|builders|realtor|dealership|dealers)\b/gi
       );
       if (businessTypes) {
         for (const bt of businessTypes) {
