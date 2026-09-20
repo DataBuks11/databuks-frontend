@@ -204,6 +204,11 @@ class CrawlRequest(BaseModel):
     # override this with WEBSITE_MAX_PAGES.
     max_pages: int = 500
     max_depth: int = 4
+    # Hard time budget in seconds — the crawl STOPS when it runs out and
+    # sends whatever it gathered (priority-ordered, best pages first), so
+    # ANY size site finishes in predictable time. Client sends ~100 for a
+    # ~3-minute total scan budget (crawl + analysis).
+    time_budget_s: Optional[float] = None
 
 
 async def require_key(request: Request) -> None:
@@ -469,7 +474,10 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
     scan_id = payload.scan_id
     user_id = payload.user_id
     started = time.time()
-    timeout_s = float(os.environ.get("CRAWL_TIMEOUT_S", "420"))
+    # Explicit per-request budget wins; env default keeps old behavior sane.
+    # Default 150s caps even giant sites (google.com scale) to a fast,
+    # priority-ordered pass instead of open-ended crawling.
+    timeout_s = float(payload.time_budget_s or os.environ.get("CRAWL_TIMEOUT_S", "150"))
 
     await update_scan(sb, scan_id, {"status": "SCANNING", "updated_at": now_iso()})
 
@@ -581,6 +589,12 @@ async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
 
     index = 0
     while index < len(queue) and crawled_rows < payload.max_pages and time.time() - started < timeout_s:
+        # Re-sort every batch: newly discovered links must not starve
+        # high-priority pages (pricing/services/about) under a time budget.
+        if index > 0:
+            pending = queue[index:]
+            pending.sort(key=lambda item: item.get("priority", 30), reverse=True)
+            queue[index:] = pending
         batch = queue[index : index + 3]
         index += len(batch)
         results = await asyncio.gather(*[process_item(item) for item in batch])

@@ -106,6 +106,12 @@ interface ScanResults {
     evidence_type?: string | null;
     confidence?: number | null;
   }[];
+  suggested_competitors?: {
+    name: string;
+    website_url?: string | null;
+    reason?: string | null;
+    confidence?: number | null;
+  }[];
   brand_voice?: string[];
   tone?: string | null;
   confidence?: number;
@@ -202,16 +208,33 @@ function buildView(results: ScanResults | null | undefined): WebsiteData {
       content: theme.description ?? "",
       category: "Content Theme",
     })),
-    competitors: (results.competitors ?? []).map((competitor) => ({
-      name: competitor.name,
-      url: competitor.website_url ?? (competitor.source_url ?? ""),
-      strengths: competitor.reason ? [competitor.reason] : [],
-      weaknesses: [
-        `Source: ${competitor.source_url ?? "website"}`,
-        ...(competitor.evidence_quote ? [`"${competitor.evidence_quote}"`] : []),
-        ...(typeof competitor.confidence === "number" ? [`Confidence: ${Math.round(competitor.confidence * 100)}%`] : []),
-      ],
-    })),
+    competitors: [
+      ...(results.competitors ?? []).map((competitor) => ({
+        name: competitor.name,
+        url: competitor.website_url ?? (competitor.source_url ?? ""),
+        strengths: competitor.reason ? [competitor.reason] : [],
+        weaknesses: [
+          `Source: ${competitor.source_url ?? "website"}`,
+          ...(competitor.evidence_quote ? [`"${competitor.evidence_quote}"`] : []),
+          ...(typeof competitor.confidence === "number" ? [`Confidence: ${Math.round(competitor.confidence * 100)}%`] : []),
+        ],
+        suggested: false,
+      })),
+      // AI-suggested competitors (industry knowledge, not site evidence) —
+      // shown with a Suggested badge so verified vs suggested stays honest.
+      ...((results.suggested_competitors ?? []) as {
+        name: string; website_url?: string | null; reason?: string | null; confidence?: number | null;
+      }[]).map((competitor) => ({
+        name: competitor.name,
+        url: competitor.website_url ?? "",
+        strengths: competitor.reason ? [competitor.reason] : [],
+        weaknesses: [
+          "Suggested by AI (industry inference, not found on site)",
+          ...(typeof competitor.confidence === "number" ? [`Confidence: ${Math.round(competitor.confidence * 100)}%`] : []),
+        ],
+        suggested: true,
+      })),
+    ],
     products: (results.products ?? []).map((p) => {
       const priceItem = (results.pricing ?? []).find(
         (item) =>
@@ -1110,7 +1133,14 @@ export default function WebsiteIntelligencePage() {
                           className="border-b border-white/5 transition-colors hover:bg-white/[0.02]"
                         >
                           <TableCell className="font-medium text-white">
-                            {competitor.name}
+                            <div className="flex items-center gap-2">
+                              {competitor.name}
+                              {(competitor as { suggested?: boolean }).suggested && (
+                                <Badge variant="info" className="text-[10px]">
+                                  Suggested
+                                </Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <a
@@ -1157,7 +1187,7 @@ export default function WebsiteIntelligencePage() {
               ) : (
                 <CardContent className="py-8 text-center text-sm text-white/40">
                   <Shield className="h-6 w-6 mx-auto mb-3 text-white/20" />
-                  No reliable competitor data found.
+                  No competitor data found — not on the site, and no known industry peers. Try re-scanning.
                 </CardContent>
               )}
             </Card>

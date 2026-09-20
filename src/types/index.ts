@@ -149,6 +149,7 @@ export interface WebsiteData {
     url: string;
     strengths: string[];
     weaknesses: string[];
+    suggested?: boolean;
   }[];
   products: {
     name: string;

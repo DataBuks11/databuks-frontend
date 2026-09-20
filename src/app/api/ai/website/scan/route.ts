@@ -89,6 +89,9 @@ export async function POST(request: NextRequest) {
               url: normalized,
               max_pages: Number(process.env.WEBSITE_MAX_PAGES ?? 40),
               max_depth: Number(process.env.WEBSITE_MAX_DEPTH ?? 3),
+              // ~100s crawl budget → ~3 min total scan incl. analysis,
+              // whatever the site size (priority pages first).
+              time_budget_s: Number(process.env.WEBSITE_CRAWL_BUDGET_S ?? 100),
             }),
             signal: controller.signal,
           });
