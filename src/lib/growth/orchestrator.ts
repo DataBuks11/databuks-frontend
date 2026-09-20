@@ -6,6 +6,66 @@ import { groupIntoCanonicalBusinesses } from "../discovery/identity-resolution";
 import { enrichFromWebsite } from "../discovery/enrichment";
 import { analyzeRequirement, analyzeUrgency } from "../discovery/requirement-analysis";
 
+/** Max LLM industry checks per discovery run (free-tier budget). */
+const MAX_AI_INDUSTRY_CHECKS = 12;
+
+export interface AiIndustryVerdict {
+  detected_industry: string | null;
+  relevance: number;
+  is_competitor: boolean;
+  reason: string;
+}
+
+/**
+ * AI industry relevance — the LLM (not keyword substring) decides:
+ * (1) what industry is this business actually in,
+ * (2) 0-100 relevance as a prospect for OUR business,
+ * (3) whether it's a same-line competitor (never a lead).
+ * Only called for shortlisted candidates (keeps the funnel fast + free).
+ */
+export async function classifyIndustryFit(
+  candidateName: string,
+  candidateText: string,
+  business: { name: string; industries: string[]; services: string[]; excluded: string[] }
+): Promise<AiIndustryVerdict | null> {
+  const fallback: AiIndustryVerdict = { detected_industry: null, relevance: 50, is_competitor: false, reason: "llm-unavailable" };
+  try {
+    const { getActiveProvider } = await import("../ai/providers");
+    const provider = getActiveProvider();
+    const out: any = await provider.completeJson({
+      system: [
+        "You classify whether a discovered business is a good sales prospect.",
+        "Our business sells to specific industries — decide fit from EVIDENCE, not name similarity.",
+        "is_competitor=true ONLY when the candidate sells the same services we sell (agency/studio/consultancy overlap). A hospital using software is a prospect, not a competitor. A web-design agency IS a competitor to a web agency.",
+        "relevance 0-100: would our sales team want this as a lead? Needs our services + reachable + real business = high. Same-line competitor = 0.",
+        "Respond ONLY with JSON: {\"detected_industry\": string|null, \"relevance\": 0-100, \"is_competitor\": bool, \"reason\": short string}.",
+      ].join("\n"),
+      user: [
+        `OUR BUSINESS: ${business.name || "unknown"}`,
+        `OUR INDUSTRIES: ${(business.industries || []).join(", ") || "unknown"}`,
+        `OUR SERVICES: ${(business.services || []).slice(0, 12).join(", ") || "unknown"}`,
+        `EXCLUDED: ${(business.excluded || []).join(", ") || "none"}`,
+        `CANDIDATE: ${candidateName || "unknown"}`,
+        `CANDIDATE TEXT: ${String(candidateText || "").slice(0, 1500)}`,
+      ].join("\n"),
+      temperature: 0,
+      maxTokens: 300,
+      reasoningEffort: "low",
+      timeoutMs: 30_000,
+      maxAttempts: 2,
+    });
+    if (!out || typeof out !== "object") return fallback;
+    return {
+      detected_industry: typeof out.detected_industry === "string" ? out.detected_industry : null,
+      relevance: Math.max(0, Math.min(100, Number(out.relevance ?? 50) || 0)),
+      is_competitor: out.is_competitor === true,
+      reason: String(out.reason ?? "no reason").slice(0, 300),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 /** Most-specific scope wins when a business appears under multiple scopes. */
 const SCOPE_PRIORITY: Record<GeoScope, number> = { LOCAL: 0, NEARBY: 1, DISTRICT: 2, STATE: 3, COUNTRY: 4, GLOBAL: 5 };
 
@@ -197,6 +257,17 @@ export async function runFindLeads(
     let enrichedCount = 0;
     let qualifiedCount = 0;
     let needsReviewCount = 0;
+    let aiChecksUsed = 0;
+
+    // Our business fingerprint for AI relevance checks (built once per run).
+    const strList = (v: any): string[] =>
+      Array.isArray(v) ? v.map((x: any) => (typeof x === "string" ? x : x?.name ?? x?.segment ?? "")).filter((s: any) => typeof s === "string" && s.length > 0) : [];
+    const ourBusiness = {
+      name: typeof bcData.business_name === "string" ? bcData.business_name : "",
+      industries: strList(bcData.industries),
+      services: [...strList(bcData.services), ...strList(bcData.products)],
+      excluded: strList(bcData.excluded_industries),
+    };
 
     for (const group of canonicalGroups) {
       if (enrichedCount >= maxPages) break;
@@ -297,6 +368,27 @@ export async function runFindLeads(
       const scoring = calculateFinalScore(subScores, []);
       const isQualified = scoring.quality_gate_status === "QUALIFIED" || scoring.quality_gate_status === "NEEDS_REVIEW";
       if (!isQualified) continue;
+
+      // AI industry verdict (shortlist only — max 12 LLM calls per run).
+      // Overrides keyword matching: real relevance + competitor detection.
+      let aiVerdict: AiIndustryVerdict | null = null;
+      if (aiChecksUsed < MAX_AI_INDUSTRY_CHECKS) {
+        aiChecksUsed += 1;
+        aiVerdict = await classifyIndustryFit(
+          group.business_name ?? primary.businessName ?? "",
+          fullText.slice(0, 2000),
+          ourBusiness
+        );
+        if (aiVerdict?.is_competitor) {
+          result.competitors_filtered += 1;
+          continue;
+        }
+        if (aiVerdict?.detected_industry) detectedIndustry = aiVerdict.detected_industry;
+      }
+      if (aiVerdict) {
+        (subScores as any).ai_industry_relevance = aiVerdict.relevance;
+        (subScores as any).ai_industry_reason = aiVerdict.reason;
+      }
       if (scoring.quality_gate_status === "QUALIFIED") {
         qualifiedCount += 1;
         const gc = result.geo_counts![groupScope] ?? { qualified: 0, needs_review: 0 };
@@ -374,6 +466,9 @@ export async function runFindLeads(
         match_reason: detectedIndustry
           ? `Matches target industry "${detectedIndustry}"${rating !== null ? ` with ${rating}★ Google rating` : ""}`
           : `Verified local business listing${group.business_name ? `: ${group.business_name}` : ""}`,
+        ai_industry_verdict: aiVerdict
+          ? { industry: aiVerdict.detected_industry, relevance: aiVerdict.relevance, reason: aiVerdict.reason }
+          : null,
         geo_scope: groupScope,
         geo_relevance: `${geoRelevanceBonus(groupScope)}pt region relevance (${groupScope.toLowerCase()})`,
         owner_name: enrichmentData?.owner_name ?? null,
