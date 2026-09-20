@@ -150,9 +150,6 @@ function ownServiceKeywords(bcData: any): string[] {
   }
   return [...words];
 }
-  }
-  return [...words];
-}
 
 /**
  * Competitor detection — answers "ye lead kaise hui?": a candidate that IS
