@@ -263,6 +263,36 @@ export async function runFindLeads(
       result.errors.push(`google_maps provider failed: ${err?.message ?? "unknown"}`);
     }
 
+    // --- DeepSeek LLM discovery (no Google keys needed) ---
+    // The LLM proposes real businesses per category; every suggestion is
+    // live-verified (website must fetch) before entering the pipeline.
+    try {
+      const llmMod = await import("../discovery/providers/deepseek-llm");
+      const llmProvider = new llmMod.DeepSeekDiscoveryProvider();
+      const svcNames: string[] = Array.isArray(bcData.services)
+        ? bcData.services.map((s: any) => (typeof s === "string" ? s : s?.name ?? "")).filter(Boolean)
+        : [];
+      const locs: string[] = Array.isArray(bcData.locations) && bcData.locations.length > 0
+        ? bcData.locations.map((l: any) => String(l ?? "")).filter(Boolean)
+        : [];
+      const llmResult = await llmProvider.discover(queries.slice(0, Math.min(queries.length, 10)), {
+        business: {
+          name: typeof bcData.business_name === "string" ? bcData.business_name : "",
+          industries: Array.isArray(bcData.industries) ? bcData.industries : [],
+          services: svcNames,
+        },
+        locations: locs,
+      } as any);
+      for (const c of llmResult.candidates) {
+        allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "deepseek_llm", scope: (c.raw_metadata?.scope as GeoScope) ?? "LOCAL" });
+      }
+      for (const e of llmResult.errors.slice(0, 3)) {
+        result.errors.push(`deepseek_llm [${e.query}]: ${e.error}`);
+      }
+    } catch (err: any) {
+      result.errors.push(`deepseek_llm provider failed: ${err?.message ?? "unknown"}`);
+    }
+
     // Honest run status: zero raw candidates must never read as a clean COMPLETED run.
     // result.errors carries the per-provider cause (unconfigured / denied / rate-limited).
     if (allRawCandidates.length === 0) {
