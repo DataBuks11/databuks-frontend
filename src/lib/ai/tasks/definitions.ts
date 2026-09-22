@@ -50,6 +50,8 @@ export interface TaskDefinition {
   reasoningEffort?: "low" | "medium" | "high";
   /** Per-task hard timeout (ms) — applied to the LLM HTTP call */
   timeoutMs?: number;
+  /** Per-task attempt cap — keeps latency-critical paths inside budget */
+  maxAttempts?: number;
 }
 
 export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
@@ -150,11 +152,13 @@ export const TASK_DEFINITIONS: Partial<Record<AiTaskType, TaskDefinition>> = {
     rules: [],
     buildPrompt: (ctx) => buildWhatsAppReplyPrompt(ctx),
     // Real-time chat: cap tokens + low reasoning effort for sub-10s replies.
-    // 25s timeout per attempt — Vercel Hobby plan limits the webhook to 60s
-    // total, and we do 2 attempts (provider retry). 25+0.8+25 ≈ 51s, fits.
+    // Hard budget: 15s x 2 attempts = ~31s worst case, leaving room for
+    // rules + send + funnel events inside Vercel's 60s webhook window.
+    // Misses are covered by the deterministic fallback + retry cron.
     maxTokens: 200,
     reasoningEffort: "low",
-    timeoutMs: 25_000,
+    timeoutMs: 15_000,
+    maxAttempts: 2,
     action: TASK_ACTIONS.GENERATE_WHATSAPP_REPLY,
     decisionOf: (validated) => (validated.meeting_intent === true ? "whatsapp_reply_with_meeting_intent" : "whatsapp_reply"),
   },

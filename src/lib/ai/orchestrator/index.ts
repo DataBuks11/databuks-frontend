@@ -223,6 +223,7 @@ export async function runAiTask(supabase: any, input: AiTaskInput): Promise<AiTa
       ...(definition.maxTokens ? { maxTokens: definition.maxTokens } : {}),
       ...(definition.reasoningEffort ? { reasoningEffort: definition.reasoningEffort } : {}),
       ...(definition.timeoutMs ? { timeoutMs: definition.timeoutMs } : {}),
+      ...((definition as any).maxAttempts ? { maxAttempts: (definition as any).maxAttempts } : {}),
     });
 
     const validation = validateAiOutput(definition.schema, raw);

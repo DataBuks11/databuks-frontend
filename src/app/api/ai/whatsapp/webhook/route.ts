@@ -398,8 +398,12 @@ export async function POST(request: NextRequest) {
         text: message.text,
         meetingSignal: result.meetingIntentDetected === true,
       };
-      // Run synchronously — after() on Vercel delays up to 6 min
+      // Run synchronously — after() on Vercel delays up to 6 min.
+      // Hard-capped: the user reply is already sent by now; the background
+      // intelligence must never push us past the 60s function limit.
       try {
+        const controller = new AbortController();
+        const bgTimeout = setTimeout(() => controller.abort(), 15_000);
         await fetch(backgroundUrl, {
           method: "POST",
           headers: {
@@ -407,7 +411,8 @@ export async function POST(request: NextRequest) {
             "x-api-key": expectedKey,
           },
           body: JSON.stringify(backgroundBody),
-        });
+          signal: controller.signal,
+        }).finally(() => clearTimeout(bgTimeout));
       } catch (err: any) {
         console.error(`[API:ai/whatsapp/webhook] background trigger failed: ${err?.message}`);
       }
