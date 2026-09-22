@@ -47,7 +47,13 @@ export async function GET(request: NextRequest) {
       try {
         const conn = await getConnectionById(pending.connection_id);
         CB("COMPOSIO_VERIFY", { connId: pending.connection_id, status: conn?.status, found: !!conn });
-        if (conn && (conn.status === "ACTIVE" || conn.status === "INITIATED")) {
+        // Ownership: only mark connected when Composio says this account
+        // belongs to the requesting user (getConnections ignores user_id).
+        const owned = !!conn && (conn as any).user_id !== undefined
+          ? (conn as any).user_id === userId
+          : true;
+        CB("OWNERSHIP", { owned, accountUser: (conn as any)?.user_id, requestUser: userId });
+        if (owned && conn && (conn.status === "ACTIVE" || conn.status === "INITIATED")) {
           const { error: upErr } = await supabaseAdmin
             .from("social_connections")
             .update({
@@ -74,7 +80,10 @@ export async function GET(request: NextRequest) {
           (c) =>
             (c.app_name?.toLowerCase() === platform.toLowerCase() ||
               c.integration_id?.toLowerCase() === platform.toLowerCase()) &&
-            (c.status === "ACTIVE" || c.status === "INITIATED")
+            (c.status === "ACTIVE" || c.status === "INITIATED") &&
+            // Ownership: Composio ignores user_id filters — only claim accounts
+            // bound to THIS user, never another user's live connection.
+            ((c as any).user_id === undefined || (c as any).user_id === userId)
         );
         CB("FALLBACK_ACTIVE", { found: !!active, id: active?.id, status: active?.status });
         if (active) {

@@ -163,6 +163,14 @@ export default function SocialsPage() {
       }
       const st = verifyData.connection.status;
       TRACE("VERIFY", { stage: "COMPOSIO_STATUS", status: st });
+      // Ownership: only claim connections bound to THIS user (Composio
+      // ignores user_id filters — without this, anyone auto-claims live
+      // connections belonging to other users).
+      const ownerOk =
+        verifyData.connection.user_id === undefined ||
+        verifyData.connection.user_id === uid;
+      TRACE("VERIFY", { stage: "OWNERSHIP", ownerOk, accountUser: verifyData.connection.user_id });
+      if (!ownerOk) return false;
       if (st === "ACTIVE") {
         const saveBody = { userId: uid, platform, connection_id: connId, status: "connected" };
         TRACE("PERSIST", { stage: "CALLING_POST_social_connections", body: saveBody });
