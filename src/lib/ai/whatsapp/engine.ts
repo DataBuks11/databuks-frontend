@@ -515,8 +515,8 @@ export async function processIncomingWhatsAppMessage(
     const biz = context?.business;
     const bizName = typeof biz?.business_name === "string" ? biz.business_name.trim() : "";
     const bizDesc = typeof biz?.description === "string" ? biz.description.trim() : "";
-    const asksWhatWeDo = /\b(what\s*(is|do|are)|kya\s*(hai|kar|ho|karti|krte)|tell\s*me\s*about|kaun\s*ho|who\s*are\s*you|kya\s*karta)\b/i.test(lower);
-    const asksProducts = /\b(products?|services?|service|offer|features?|kaun\s*se\s*services?|kaunsa|what\s*do\s*you\s*do|what\s*do\s*you\s*offer)\b/i.test(lower);
+    const asksWhatWeDo = /\b(what\s*(is|do|are)|kya\s*(hai|kar|ho|karti|krte|karte|banate|banoge)|tell\s*me\s*about|kaun\s*ho|who\s*are\s*you|kya\s*karta|tum\s*kya\s*karte)\b/i.test(lower);
+    const asksProducts = /\b(products?|services?|service|offer|features?|website|app|software|erp|automation|kaun\s*se\s*services?|kaunsa|kya\s*banate|banate\s*ho|banoge|karte\s*ho|what\s*do\s*you\s*do|what\s*do\s*you\s*offer)\b/i.test(lower);
     const asksPrice = /\b(price|pricing|cost|charge|kitna|kya\s*price|kharcha|kitne\s*ka|kitne\s*ki)\b/i.test(lower);
     const asksLocation = /\b(where|location|address|kahan|office|studio)\b/i.test(lower);
     const askName = /\b(your\s*name|company\s*name|firm\s*name|tumhara\s*naam|tum\s*kaun|tumhe|konsi\s*company)\b/i.test(lower);
