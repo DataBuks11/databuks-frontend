@@ -73,6 +73,7 @@ SOCIAL_HOSTS = {
 PAGE_TYPE_SIGNALS = [
     ("home", re.compile(r"^/$")),
     ("pricing", re.compile(r"pric|plan|package|cost", re.IGNORECASE)),
+    ("education", re.compile(r"program|course|admission|academic|department|placement|faculty|syllabus|curriculum", re.IGNORECASE)),
     ("service", re.compile(r"service|solution|what-we-do|offer", re.IGNORECASE)),
     ("product", re.compile(r"product|feature|platform", re.IGNORECASE)),
     ("about", re.compile(r"about|our-story|company|who-we-are|team", re.IGNORECASE)),
@@ -414,7 +415,11 @@ async def discover(sb: Any, base_url: str, max_pages: int) -> tuple[List[Dict[st
                             continue
                         if normalized not in queue:
                             queue[normalized] = {"url": normalized, "depth": 1, "priority": 20, "source": "sitemap"}
-                            if len(queue) >= max_pages:
+                            # Discovery pool stays WIDE (up to 5x budget) so the
+                            # priority sort during crawling actually has high-value
+                            # pages (programs, pricing, services) to choose from —
+                            # otherwise the first N sitemap URLs win by luck.
+                            if len(queue) >= min(max_pages * 5, 1000):
                                 break
                     except Exception:
                         continue
@@ -431,6 +436,7 @@ def page_priority(url: str) -> int:
     signals = [
         (re.compile(r"^/$"), 100),
         (re.compile(r"pric|plan|package"), 95),
+        (re.compile(r"program|course|admission|academic|department|placement|faculty|syllabus"), 92),
         (re.compile(r"service|solution"), 90),
         (re.compile(r"product|feature"), 90),
         (re.compile(r"about|company|team"), 80),

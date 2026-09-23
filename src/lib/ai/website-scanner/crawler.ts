@@ -139,6 +139,7 @@ const PATH_KEYWORDS: { pattern: RegExp; type: string; priority: number }[] = [
   { pattern: /customers|clients|testimonials|reviews/i, type: "testimonials", priority: 78 },
   { pattern: /industries/i, type: "industries", priority: 76 },
   { pattern: /contact|get-in-touch|book.*call|schedule/i, type: "contact", priority: 75 },
+  { pattern: /programs?|courses?|admissions?|academics?|departments?|placements?|faculty|syllabus|curriculum/i, type: "education", priority: 88 },
   { pattern: /faq|frequently-asked/i, type: "faq", priority: 70 },
   { pattern: /blog|articles|insights|resources/i, type: "blog", priority: 60 },
   { pattern: /careers|jobs|hiring/i, type: "careers", priority: 60 },
