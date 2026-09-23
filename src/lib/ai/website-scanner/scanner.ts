@@ -487,7 +487,7 @@ export async function runWebsiteScan(scanId: string, userId: string): Promise<vo
   }
 }
 
-export function detectSiteType(pages: { page_type: string }[]): string {
+export function detectSiteType(pages: { page_type: string; url?: string; title?: string }[]): string {
   const counts: Record<string, number> = {};
   for (const page of pages) {
     const type = page.page_type ?? "other";
@@ -496,6 +496,13 @@ export function detectSiteType(pages: { page_type: string }[]): string {
   const has = (type: string) => (counts[type] ?? 0) > 0;
   if (has("product") || has("collection") || has("category")) return "ecommerce";
   if (has("documentation") || has("reference") || has("docs")) return "documentation";
+  // Education sites rarely emit education page_types — detect from URLs/titles.
+  const eduHits = pages.filter((p) =>
+    /college|university|school|course|program|admission|syllabus|placement|faculty|semester|phd|mba|btech|b\.tech/i.test(
+      `${p.url ?? ""} ${p.title ?? ""}`
+    )
+  ).length;
+  if (eduHits >= 3 || (eduHits >= 1 && pages.length <= 12)) return "education";
   if (has("blog") || has("article") || has("news")) return "content";
   if (has("portfolio") || has("case_study") || has("work")) return "portfolio";
   if (has("pricing") || has("services") || has("solution") || has("product")) return "business";
@@ -541,7 +548,9 @@ export async function finalizeScanFromStoredPages(
     });
 
     const provider = getActiveProvider();
-    const siteType = detectSiteType(pages);
+    const siteType = detectSiteType(
+      pages.map((p: any) => ({ page_type: p.page_type, url: p.url, title: p.page_title ?? p.title ?? "" }))
+    );
 
     const socialLinks: { platform: string; url: string; source_url: string }[] = [];
     const emails: string[] = [];
