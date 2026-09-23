@@ -663,7 +663,9 @@ async def render_with_crawl4ai(url: str, crawler: Any) -> Optional[Dict[str, Any
         config = CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             wait_for="js:() => document.body && document.body.innerText.trim().length > 200",
-            page_timeout=20000,
+            # Tight render budget: JS shells either hydrate fast or never do.
+            # The global time budget (default ~80s) caps total crawl time.
+            page_timeout=15000,
         )
         result = await crawler.arun(url=url, config=config)
         if result is None or not getattr(result, "success", False):

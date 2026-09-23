@@ -364,7 +364,7 @@ async function analyzeWebsite(
   siteType: string = "business",
   extraInfo: { emails?: string[]; phones?: string[] } = {}
 ): Promise<{ analysis: Record<string, any>; mode: string; partial: boolean }> {
-  const SCAN_TIMEOUT_MS = 60_000;
+  const SCAN_TIMEOUT_MS = 45_000;
   const chunks = chunkCorpus(pages);
   const allFacts: Record<string, any>[] = [];
 
@@ -400,7 +400,7 @@ async function analyzeWebsite(
   );
 
   try {
-    const rawAnalysis = await provider.completeJson({ ...synthesisPrompt, timeoutMs: 90_000, maxAttempts: 2 });
+    const rawAnalysis = await provider.completeJson({ ...synthesisPrompt, timeoutMs: 60_000, maxAttempts: 2 });
     const analysisValidation = validateAiOutput(websiteAnalysisSchema, rawAnalysis);
     if (analysisValidation.success) {
       return {
