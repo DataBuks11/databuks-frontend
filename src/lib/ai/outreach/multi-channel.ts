@@ -1,6 +1,7 @@
 import { getActiveProvider } from "../providers";
 import { sendEmail } from "./email-adapter";
 import { isUsableEmail } from "@/lib/discovery/enrichment";
+import { checkOutreachSafety } from "./safety";
 
 /**
  * MULTI-CHANNEL OUTREACH ORCHESTRATOR
@@ -68,6 +69,80 @@ export interface MultiOutreachResult {
   userId: string;
   channels: ChannelSendResult[];
   anyOk: boolean;
+  /** Set when the safety gate (cap/interval) stopped this lead before any send */
+  safetyBlocked?: boolean;
+  safetyReason?: string | null;
+}
+
+/**
+ * CHANNEL HONESTY pre-check (spec rule):
+ * - IG/FB/LinkedIn: user's social_connections me status='connected' hona chahiye.
+ * - WhatsApp: whatsapp_sessions me connected=true hona chahiye (+ live
+ *   /status agar reachable hai to usse contradict nahi hona chahiye).
+ * - Email: address-level check sendEmail ke andar (skipped supported).
+ * Jo channel ready nahi, wo SKIP hota hai — kabhi "sent" claim nahi hota.
+ */
+export interface ChannelReadiness {
+  whatsapp: boolean;
+  instagram: boolean;
+  facebook: boolean;
+  linkedin: boolean;
+  email: boolean;
+  reasons: Record<string, string>;
+}
+
+export async function checkChannelReadiness(supabase: any, userId: string): Promise<ChannelReadiness> {
+  const reasons: Record<string, string> = {};
+  const connected = new Set<string>();
+  try {
+    const { data } = await supabase
+      .from("social_connections")
+      .select("platform")
+      .eq("user_id", userId)
+      .eq("status", "connected");
+    for (const r of (data ?? [])) connected.add(String((r as any)?.platform ?? "").toLowerCase());
+  } catch { /* fail closed per-channel below */ }
+
+  const instagram = connected.has("instagram");
+  const facebook = connected.has("facebook");
+  const linkedin = connected.has("linkedin");
+  if (!instagram) reasons.instagram = "no connected instagram account";
+  if (!facebook) reasons.facebook = "no connected facebook account";
+  if (!linkedin) reasons.linkedin = "no connected linkedin account";
+
+  // WhatsApp: DB session flag required; live /status best-effort veto.
+  let waDb = false;
+  try {
+    const { data } = await supabase
+      .from("whatsapp_sessions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("connected", true)
+      .limit(1);
+    waDb = ((data ?? []) as any[]).length > 0;
+  } catch { waDb = false; }
+  const base = process.env.BAILEYS_SERVER_URL ?? "";
+  let waLive: boolean | null = null;
+  if (base) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      const res = await fetch(`${base.replace(/\/+$/, "")}/status/${userId}`, { signal: ctl.signal });
+      clearTimeout(t);
+      const j: any = await res.json().catch(() => null);
+      waLive = j?.connected === true;
+    } catch { waLive = null; }
+  }
+  const whatsapp = waDb && !!base && waLive !== false;
+  if (!whatsapp) {
+    reasons.whatsapp = !base
+      ? "BAILEYS_SERVER_URL not configured"
+      : !waDb
+        ? "no connected whatsapp session (pair from dashboard first)"
+        : "whatsapp session reports disconnected";
+  }
+
+  return { whatsapp, instagram, facebook, linkedin, email: true, reasons };
 }
 
 interface BizContext {
@@ -165,6 +240,42 @@ async function fetchBizContext(supabase: any, userId: string): Promise<BizContex
   }
 }
 
+/**
+ * Pure evidence block for outreach grounding (exported for tests).
+ * Sirf observed facts — LLM ko inhi par claim karne ki permission hai.
+ */
+export function buildEvidenceBlock(c: Pick<MultiChannelCandidate, "detected_requirement" | "business_context_match" | "evidence">): string {
+  const lines: string[] = [];
+  const why = (c.evidence as any)?.why_this_lead ?? null;
+  const reqReason = why?.requirement_evidence?.reason ?? null;
+  if (typeof reqReason === "string" && reqReason.length > 0) {
+    lines.push(`- Requirement evidence: ${reqReason.slice(0, 200)}`);
+  }
+  const opps: any[] = Array.isArray(why?.opportunities) ? why.opportunities : [];
+  for (const o of opps.slice(0, 3)) {
+    const ev = Array.isArray(o?.evidence) ? o.evidence.slice(0, 2).join(" | ").slice(0, 220) : "";
+    lines.push(`- Opportunity ${o?.type ?? "?"} (${o?.strength ?? "?"}): ${String(o?.reason ?? "").slice(0, 160)}${ev ? ` [${ev}]` : ""}`);
+  }
+  if (c.business_context_match) lines.push(`- Industry match: ${c.business_context_match}`);
+  if (lines.length === 0) lines.push("- (thin evidence — keep the message short, do not invent specifics)");
+  return ["EVIDENCE & OPPORTUNITIES (reference ONLY facts below, never invent observations):", ...lines].join("\n");
+}
+
+/** Human fallback line per opportunity type (used when LLM opener fails) */
+function opportunityFallbackLine(type: string | null): string {
+  switch (type) {
+    case "WEBSITE_GAP": return "noticed you don't have a proper website yet — we build those for local businesses";
+    case "WHATSAPP_GAP": return "saw customers can only reach you by phone — we set up whatsapp enquiry flows";
+    case "LEAD_CAPTURE_GAP": return "noticed your site has no easy enquiry option — we fix that";
+    case "BOOKING_GAP": return "saw bookings look pretty manual — we build booking systems";
+    case "AUTOMATION_GAP": return "looks like enquiries are handled manually — we automate that";
+    case "DIGITAL_PRESENCE_GAP": return "your site looks thin on content — our redesigns bring enquiries";
+    case "FOLLOW_UP_GAP": return "didn't see a way you follow up with customers — we automate that";
+    case "CUSTOM_SOFTWARE_OPPORTUNITY": return "quotes/orders look manual — we build custom software for that";
+    default: return "we help businesses like yours with websites and online growth";
+  }
+}
+
 async function generateOpeners(
   c: MultiChannelCandidate,
   biz: BizContext | null,
@@ -183,7 +294,8 @@ async function generateOpeners(
     "  - LinkedIn: more professional, 1 short paragraph, max 400 chars",
     "  - Email: subject line + 2-3 short paragraphs, professional but human",
     "Personalize using the lead's name/handle and their actual detected requirement.",
-    "CRITICAL: write like a real human texting a stranger. NEVER output internal labels such as SERVICE_REQUIRED, POTENTIAL_INTEREST, UNKNOWN, or platform slugs like google_maps/instagram/facebook/linkedin as words in the message. If the requirement looks like a code or enum, just say 'your business' instead. No placeholders, no brackets, no ALL-CAPS codes.",
+    "Ground EVERY specific claim in the EVIDENCE & OPPORTUNITIES block. If it is thin, keep the message short and generic — never invent website visits, problems, or facts.",
+    "CRITICAL: write like a real human texting a stranger. NEVER output internal labels such as SERVICE_REQUIRED, POTENTIAL_INTEREST, UNKNOWN, WEBSITE_GAP, or platform slugs like google_maps/instagram/facebook/linkedin as words in the message. If the requirement looks like a code or enum, just say 'your business' instead. No placeholders, no brackets, no ALL-CAPS codes.",
     "Return JSON with the requested channel fields only.",
   ].join("\n");
 
@@ -200,6 +312,7 @@ async function generateOpeners(
     `Original post: ${(c.source_url ?? "").slice(0, 120)}`,
     `Detected requirement: ${c.detected_requirement ?? "(unspecified)"}`,
     `Why it matches our business: ${c.business_context_match ?? ""}`,
+    buildEvidenceBlock(c),
   ].join("\n");
 
   const wants: string[] = [];
@@ -230,16 +343,19 @@ async function generateOpeners(
     console.warn(`[outreach-orchestrator] LLM opener generation failed: ${err?.message}`);
   }
 
-  // Fallback templates if LLM didn't return — 100% human, zero placeholders.
-  // NEVER leak internal enum slugs (SERVICE_REQUIRED) or platform slugs
-  // (google_maps) into a real message; a human would never write those.
+  // Fallback templates if LLM didn't return — grounded in the detected
+  // primary opportunity when present, generic only as last resort.
+  // NEVER leak internal enum slugs (SERVICE_REQUIRED, WEBSITE_GAP) or
+  // platform slugs (google_maps) into a real message.
   const name = c.author_name ?? c.author_handle ?? "there";
   const req = humanizeRequirement(c.detected_requirement);
   const where = humanizeSource(c.source_platform);
-  if (channels.whatsapp && !out.whatsapp) out.whatsapp = `hey ${name}, ${where} — we help businesses like yours with websites and online growth at databuks. worth a quick 5 min chat?`;
-  if (channels.instagram && !out.instagram) out.instagram = `hey ${name}, ${where} — we build websites and online stuff for businesses like yours. interested?`;
-  if (channels.facebook && !out.facebook) out.facebook = `hey ${name}, ${where}. databuks does websites and growth for local businesses — would love to chat if useful`;
-  if (channels.linkedin && !out.linkedin) out.linkedin = `Hi ${name}, ${where}. At DataBuks we build websites, MVPs and automations for growing businesses. Worth a quick conversation?`;
+  const oppType = (c.evidence as any)?.why_this_lead?.primary_opportunity?.type ?? null;
+  const oppLine = opportunityFallbackLine(typeof oppType === "string" ? oppType : null);
+  if (channels.whatsapp && !out.whatsapp) out.whatsapp = `hey ${name}, ${where} — ${oppLine}. worth a quick 5 min chat?`;
+  if (channels.instagram && !out.instagram) out.instagram = `hey ${name}, ${where} — ${oppLine}. interested?`;
+  if (channels.facebook && !out.facebook) out.facebook = `hey ${name}, ${where}. databuks here — ${oppLine}, would love to chat if useful`;
+  if (channels.linkedin && !out.linkedin) out.linkedin = `Hi ${name}, ${where}. At DataBuks — ${oppLine}. Worth a quick conversation?`;
   if (channels.email) {
     if (!out.emailSubject) out.emailSubject = `quick thought re: ${req}`;
     if (!out.emailBody) out.emailBody = `hi ${name},\n\n${cap(where)} — we help businesses like yours with exactly this at databuks (websites, MVPs, AI features, automations).\n\nworth a 10 min call this week?\n\nthanks`;
@@ -390,19 +506,51 @@ export async function runMultiChannelOutreach(
   }
 
   const channelsAvail = await fetchCandidateChannels(supabase, candidate);
+  // CHANNEL HONESTY: contact available hona enough nahi — humara account
+  // us channel par connected bhi hona chahiye. Unready channels SKIP.
+  const readiness = await checkChannelReadiness(supabase, candidate.user_id);
+  const skipped: ChannelSendResult[] = [];
   const enabled = {
-    whatsapp: !!channelsAvail.whatsapp,
-    instagram: !!channelsAvail.instagram,
-    facebook: !!channelsAvail.facebook,
-    linkedin: !!channelsAvail.linkedin,
+    whatsapp: !!channelsAvail.whatsapp && readiness.whatsapp,
+    instagram: !!channelsAvail.instagram && readiness.instagram,
+    facebook: !!channelsAvail.facebook && readiness.facebook,
+    linkedin: !!channelsAvail.linkedin && readiness.linkedin,
     email: !!channelsAvail.email,
   };
+  ([
+    ["whatsapp", channelsAvail.whatsapp],
+    ["instagram", channelsAvail.instagram],
+    ["facebook", channelsAvail.facebook],
+    ["linkedin", channelsAvail.linkedin],
+  ] as const).forEach(([ch, contact]) => {
+    if (contact && !(enabled as any)[ch]) {
+      skipped.push({
+        channel: ch,
+        ok: false,
+        skipped: true,
+        error: readiness.reasons[ch] ?? "channel not ready",
+      });
+    }
+  });
+  // SAFETY GATE: daily cap + min interval (anti-ban). Fail closed.
+  const safety = await checkOutreachSafety(supabase, candidate.user_id);
+  if (!safety.allowed) {
+    return {
+      leadId: candidate.id,
+      authorName: candidate.author_name,
+      userId: candidate.user_id,
+      channels: skipped,
+      anyOk: false,
+      safetyBlocked: true,
+      safetyReason: safety.reason,
+    };
+  }
   if (!enabled.whatsapp && !enabled.instagram && !enabled.facebook && !enabled.linkedin && !enabled.email) {
     return {
       leadId: candidate.id,
       authorName: candidate.author_name,
       userId: candidate.user_id,
-      channels: [],
+      channels: skipped,
       anyOk: false,
     };
   }
@@ -468,7 +616,7 @@ export async function runMultiChannelOutreach(
     );
   }
 
-  results.push(...(await Promise.all(tasks)));
+  results.push(...skipped, ...(await Promise.all(tasks)));
   return {
     leadId: candidate.id,
     authorName: candidate.author_name,
@@ -594,7 +742,7 @@ const { data: candidates } = await supabase
   for (const c of ranked.slice(0, limit)) {
     const r = await runMultiChannelOutreach(supabase, c as MultiChannelCandidate);
     results.push(r);
-    if (r.channels.length === 0) {
+    if (r.channels.length === 0 || r.channels.every((ch) => ch.skipped)) {
       skipped += 1;
     } else if (r.anyOk) {
       processed += 1;

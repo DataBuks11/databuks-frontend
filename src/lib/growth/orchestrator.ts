@@ -5,6 +5,7 @@ import { normalizeCandidates } from "../discovery/normalization";
 import { groupIntoCanonicalBusinesses } from "../discovery/identity-resolution";
 import { enrichFromWebsite } from "../discovery/enrichment";
 import { analyzeRequirement, analyzeUrgency } from "../discovery/requirement-analysis";
+import { detectOpportunities, primaryOpportunity } from "../discovery/opportunity-detector";
 
 /** Max LLM industry checks per discovery run (free-tier budget). */
 const MAX_AI_INDUSTRY_CHECKS = 12;
@@ -411,6 +412,30 @@ export async function runFindLeads(
       relevanceScore += geoRelevanceBonus(groupScope);
       relevanceScore = Math.min(85, relevanceScore);
 
+      // Opportunity detection (deterministic, evidence-gated): DataBuks ki
+      // kaunsi service me actual scope hai. Bina evidence ke koi claim nahi.
+      const enrichedPageText = typeof enrichmentData?.page_text === "string" ? enrichmentData.page_text : "";
+      const opportunityText = `${fullText} ${enrichedPageText}`;
+      const opportunities = detectOpportunities({
+        businessName: group.business_name ?? primary.businessName ?? "",
+        categoryHint: detectedIndustry ?? "",
+        fullText: opportunityText,
+        websiteUrl: primary.websiteUrl ?? null,
+        websiteReachable: enrichmentData?.success === true,
+        pageTextLength: enrichedPageText.length,
+        hasPhone,
+        hasEmail,
+        hasWhatsAppSignal: /wa\.me|whatsapp/i.test(opportunityText),
+        hasInstagram: !!socialLinks.instagram,
+        hasFacebook: !!socialLinks.facebook,
+      });
+      const primaryOpp = primaryOpportunity(opportunities);
+      // Capped relevance bonus: clear HIGH-strength scope (e.g. no website)
+      // makes the lead genuinely more attractive. Weights untouched.
+      if (primaryOpp?.strength === "HIGH") {
+        relevanceScore = Math.min(90, relevanceScore + 5);
+      }
+
       // Sub-scores (deterministic)
       const subScores = computeSubScores({
         requirementStatus: reqAnalysis.status,
@@ -544,6 +569,15 @@ export async function runFindLeads(
           score: urgAnalysis.score,
           reason: urgAnalysis.reason,
         },
+        opportunities: opportunities.map((o) => ({
+          type: o.type,
+          strength: o.strength,
+          reason: o.reason,
+          evidence: o.evidence,
+        })),
+        primary_opportunity: primaryOpp
+          ? { type: primaryOpp.type, strength: primaryOpp.strength, reason: primaryOpp.reason, evidence: primaryOpp.evidence }
+          : null,
         score: scoring.final_score,
         confidence: scoring.confidence,
         provenance: {
