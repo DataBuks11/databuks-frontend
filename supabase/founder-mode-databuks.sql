@@ -12,6 +12,14 @@
 -- 3. auth.uid() tumhara logged-in user uthayega; row nahi
 --    hai to INSERT, hai to UPDATE (upsert — kuch delete nahi hoga)
 --
+-- AGAR ERROR AAYE: null value in column "user_id"
+-- (matlab SQL Editor me auth.uid() NULL hai) to ye karo:
+--   a. Pehle ye chalao:  SELECT id, email FROM auth.users;
+--   b. Apni email wali id copy karo
+--   c. Is file me auth.uid() ki JAGAH 'tumhari-id' likho
+--      (2 jagah hai: VALUES me aur verify SELECT me)
+--   d. Phir RUN karo
+--
 -- EFFECT (code me pehle se wired hai, kuch deploy nahi chahiye):
 -- - runFindLeads (orchestrator.ts) isi row se queries banayega:
 --   Nagpur LOCAL funnel -> NEARBY -> DISTRICT -> STATE -> COUNTRY
