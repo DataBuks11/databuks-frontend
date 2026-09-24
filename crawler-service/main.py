@@ -408,6 +408,17 @@ async def discover(sb: Any, base_url: str, max_pages: int) -> tuple[List[Dict[st
                             if normalized not in sitemap_candidates:
                                 sitemap_candidates.append(normalized)
                             continue
+                        # Cross-domain gate (sitemaps often list staging/preview
+                        # domains like *.lovable.app — crawling those wastes
+                        # budget and pollutes results with empty shells).
+                        try:
+                            if not same_registered_domain(
+                                urlparse(normalized).hostname or "",
+                                urlparse(base_url).hostname or "",
+                            ):
+                                continue
+                        except Exception:
+                            continue
                         if PDF_EXTENSION.search(urlparse(normalized).path):
                             docs.append(normalized)
                             continue

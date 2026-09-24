@@ -269,6 +269,7 @@ export default function WebsiteIntelligencePage() {
   const [scanning, setScanning] = useState(false);
   const [stopping, setStopping] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scanStartingRef = useRef(false);
 
   const view = useMemo(() => buildView(scan?.results ?? null), [scan]);
 
@@ -361,10 +362,13 @@ export default function WebsiteIntelligencePage() {
   }, [pollScan, stopPolling]);
 
   const startScan = async () => {
+    if (scanStartingRef.current) return; // double-click guard
+    scanStartingRef.current = true;
     setError(null);
     const target = url.trim();
     if (!target) {
       setError("Please enter your business website URL first.");
+      scanStartingRef.current = false;
       return;
     }
     // Cancel previous scan if one was running
@@ -387,13 +391,16 @@ export default function WebsiteIntelligencePage() {
       if (!res.ok) {
         setScanning(false);
         setError(json.error || "Failed to start website scan.");
+        scanStartingRef.current = false;
         return;
       }
       setScan({ id: json.scan_id, url: target, status: "QUEUED" });
       pollScan(json.scan_id);
+      scanStartingRef.current = false;
     } catch {
       setScanning(false);
       setError("Network error while starting the scan.");
+      scanStartingRef.current = false;
     }
   };
 
@@ -456,7 +463,7 @@ export default function WebsiteIntelligencePage() {
             size="sm"
             className="shrink-0 gap-2"
             onClick={startScan}
-            disabled={stopping}
+            disabled={stopping || (scanning && !isUrlDifferent)}
           >
             {scanning && !isUrlDifferent ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -494,7 +501,7 @@ export default function WebsiteIntelligencePage() {
                 Stop Scan
               </Button>
             ) : (
-              <Button onClick={startScan} disabled={stopping} className="gap-2 shrink-0">
+              <Button onClick={startScan} disabled={stopping || (scanning && !isUrlDifferent)} className="gap-2 shrink-0">
                 {scanning && !isUrlDifferent ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (

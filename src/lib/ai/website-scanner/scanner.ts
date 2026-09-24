@@ -521,6 +521,14 @@ export async function finalizeScanFromStoredPages(
     .maybeSingle();
   if (!scan) return;
 
+  // Never resurrect a superseded/cancelled scan: rapid re-scans mark older
+  // rows FAILED, but their crawlers still finish and call back. Finalizing
+  // them would flip dead rows to COMPLETED with half-baked results.
+  if (scan.status === "FAILED" || scan.status === "CANCELLED") {
+    console.log(`[scan] ${scanId} already ${scan.status} — finalize skipped (superseded)`);
+    return;
+  }
+
   try {
     const { data: pageRows, error: pageError } = await supabase
       .from("website_scan_pages")
@@ -530,10 +538,13 @@ export async function finalizeScanFromStoredPages(
       .order("depth", { ascending: true });
 
     if (pageError) throw new Error(pageError.message);
-    const pages = pageRows ?? [];
+    // Drop junk shells (<30 words: staging leftovers, blocked renders) from
+    // the analysis corpus — they dilute facts and waste LLM budget. Rows stay
+    // in DB for audit; only real content feeds the analysis.
+    const pages = (pageRows ?? []).filter((p: any) => (p.word_count ?? 0) >= 30);
     if (pages.length === 0) {
       await setScanStatus(supabase, scanId, "FAILED", {
-        error_message: "No page content available for analysis",
+        error_message: "No readable page content found (site may block crawlers or need JS rendering)",
         completed_at: new Date().toISOString(),
       });
       return;
