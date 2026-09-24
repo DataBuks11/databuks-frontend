@@ -4,18 +4,24 @@ import {
 } from "./base-url";
 import type { AiCompletionInput, AiProvider } from "./types";
 
-const DEFAULT_MODEL = "deepseek-v4-flash-free";
+const DEFAULT_MODEL = "deepseek-v4.1-flash-free";
 const DEFAULT_BASE_URL = "https://api.apmix.ai/v1";
 
 /**
  * Apmix gateway (OpenAI-compatible) — 4M free tokens. Used as PRIMARY
  * provider with automatic fallback to the legacy provider chain, so one
  * dead/slow endpoint can never silence the AI (critical before demos).
+ *
+ * FREE-tier model IDs (verified apmix.ai/models): "deepseek-v4.1-flash-free",
+ * "deepseek-v4-flash-free", "openai/gpt-6-luna-free". NOTE: Grok (xai/grok-4.7)
+ * is Starter-plan and above ONLY — there is no free Grok on Apmix. To use
+ * Grok on a paid plan, set APMIX_MODEL=xai/grok-4.7 in env (no code change;
+ * failover still protects if the model is unavailable).
  */
 export class ApmixProvider implements AiProvider {
   readonly id = "apmix";
   readonly model: string;
-  readonly modelVersion = "deepseek-v4-flash-free";
+  readonly modelVersion = "deepseek-v4.1-flash-free";
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
 
