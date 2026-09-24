@@ -61,6 +61,7 @@ export async function PATCH(
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // If approved, update the discovered lead stage to MEETING
+    let suggestedMeeting: Record<string, any> | null = null;
     if (action === "approve") {
       const context = handoff.context as Record<string, any> | null;
       if (context?.discovered_lead_id) {
@@ -72,6 +73,47 @@ export async function PATCH(
           })
           .eq("id", context.discovered_lead_id)
           .eq("user_id", user.id);
+      }
+      // Auto-create a SUGGESTED meeting row (no fake time — slot pending).
+      // Owner confirms time in Dashboard → Meetings; idempotent per handoff.
+      try {
+        let resolveLeadId: string | null = (handoff as any).lead_id ?? null;
+        if (!resolveLeadId && context?.discovered_lead_id) {
+          const { data: dLead } = await supabase
+            .from("discovered_leads")
+            .select("lead_id")
+            .eq("id", context.discovered_lead_id)
+            .eq("user_id", user.id)
+            .maybeSingle();
+          resolveLeadId = (dLead as any)?.lead_id ?? null;
+        }
+        if (resolveLeadId) {
+          const idemKey = `handoff-approve-${id}`;
+          const { data: existingMeeting } = await supabase
+            .from("meetings")
+            .select("*")
+            .eq("user_id", user.id)
+            .eq("idempotency_key", idemKey)
+            .maybeSingle();
+          if (existingMeeting) {
+            suggestedMeeting = existingMeeting;
+          } else {
+            const { data: created, error: createError } = await supabase
+              .from("meetings")
+              .insert({
+                user_id: user.id,
+                lead_id: resolveLeadId,
+                status: "suggested",
+                notes: `Auto-created on handoff approval (${(handoff as any).reason ?? "qualified lead"}). Confirm time with lead, then set scheduled.`,
+                idempotency_key: idemKey,
+              })
+              .select()
+              .single();
+            if (!createError) suggestedMeeting = created;
+          }
+        }
+      } catch {
+        // Meeting auto-create is best-effort — approval itself already saved.
       }
     }
 
@@ -91,7 +133,7 @@ export async function PATCH(
       }
     }
 
-    return NextResponse.json({ handoff_request: updated, action });
+    return NextResponse.json({ handoff_request: updated, action, suggested_meeting: suggestedMeeting });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

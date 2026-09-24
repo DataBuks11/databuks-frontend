@@ -101,6 +101,10 @@ export function getCapabilitiesForConnection(connection: {
         capability_status: isConnected ? "AVAILABLE" : "SUPPORTED_BUT_NOT_CONNECTED",
       };
     case "facebook":
+      // NOTE: adapter HAS FACEBOOK_SEND_MESSAGE. FB Page policy: a page can
+      // only message people who contacted it first — cold DMs fail at the
+      // platform. Failures stay honest (BLOCKED, never claimed sent), so the
+      // gate is open and the policy decides per-recipient.
       return {
         ...base,
         can_read_posts: true,
@@ -108,7 +112,7 @@ export function getCapabilitiesForConnection(connection: {
         can_read_comments: true,
         can_reply_comments: true,
         can_read_messages: false,
-        can_send_messages: false,
+        can_send_messages: true,
         can_react: false,
         can_follow: false,
         can_unfollow: false,
@@ -117,7 +121,7 @@ export function getCapabilitiesForConnection(connection: {
         can_schedule: false,
         can_search_discovery: false,
         can_read_media: false,
-        permissions: ["read_posts", "publish", "read_comments", "reply_comments"],
+        permissions: ["read_posts", "publish", "read_comments", "reply_comments", "send_messages"],
         capability_status: isConnected ? "AVAILABLE" : "SUPPORTED_BUT_NOT_CONNECTED",
       };
     case "linkedin": {

@@ -496,11 +496,21 @@ export function buildWhatsAppReplyPrompt(ctx: TaskContext): PromptTemplate {
     ? biz.services.map((s: any) => (typeof s === "string" ? s : s?.name)).filter(Boolean).slice(0, 8)
     : [];
   const toneLine = typeof biz?.tone === "string" && biz.tone.trim() !== "" ? ` Tone: ${biz.tone.trim().slice(0, 120)}.` : "";
+  // Lean memory: description + offer in one line each (capped). Full dumps
+  // stay in analysis tasks — this prompt must survive free-tier budgets.
+  const descLine = typeof biz?.description === "string" && biz.description.trim() !== ""
+    ? ` ${biz.description.trim().slice(0, 200)}`
+    : "";
+  const offerRaw = (biz as any)?.offer;
+  const offerText = typeof offerRaw === "string" ? offerRaw
+    : typeof offerRaw?.primary === "string" ? offerRaw.primary
+    : typeof offerRaw?.pitch === "string" ? offerRaw.pitch : "";
+  const offerLine = offerText.trim() !== "" ? ` Offer: ${offerText.trim().slice(0, 150)}.` : "";
   const bizLine =
     `BUSINESS: ${biz?.business_name ?? "our business"}` +
     (serviceNames.length > 0 ? ` — ${serviceNames.join(", ")}` : "") +
     (biz?.locations && biz.locations.length > 0 ? ` (${biz.locations.slice(0, 3).join(", ")})` : "") +
-    `.${toneLine}`;
+    `.${toneLine}${descLine}${offerLine}`;
   const leadName = (ctx.lead as any)?.name ?? (ctx.lead as any)?.author_name ?? "there";
   const leadLine = `LEAD: ${leadName} (stage: ${(ctx.lead as any)?.funnel_stage ?? (ctx.lead as any)?.conversation_stage ?? "new"})`;
 

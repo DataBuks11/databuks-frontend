@@ -51,13 +51,6 @@ import { Separator } from "@/components/ui/separator";
 import { websiteData } from "@/lib/data";
 import type { WebsiteData } from "@/types";
 
-const brandColors = [
-  { name: "Blue", hex: "#3b82f6" },
-  { name: "Indigo", hex: "#6366f1" },
-  { name: "Violet", hex: "#8b5cf6" },
-  { name: "Cyan", hex: "#06b6d4" },
-];
-
 const tabVariants = {
   hidden: { opacity: 0, y: 10 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
@@ -138,7 +131,7 @@ interface ScanResults {
 interface WebsiteScan {
   id: string;
   url: string;
-  status: "QUEUED" | "SCANNING" | "EXTRACTING" | "ANALYZING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  status: "QUEUED" | "SCANNING" | "EXTRACTING" | "ANALYZING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED";
   pages_crawled?: number;
   pages_discovered?: number;
   results?: ScanResults | null;
@@ -156,9 +149,10 @@ const SCAN_LABELS: Record<WebsiteScan["status"], string> = {
   COMPLETED: "Finalizing business profile...",
   PARTIAL: "Finalizing business profile...",
   FAILED: "Scan failed",
+  CANCELLED: "Scan stopped",
 };
 
-const TERMINAL_STATUSES: WebsiteScan["status"][] = ["COMPLETED", "PARTIAL", "FAILED"];
+const TERMINAL_STATUSES: WebsiteScan["status"][] = ["COMPLETED", "PARTIAL", "FAILED", "CANCELLED"];
 
 function displayUrl(url: string | null | undefined): string {
   if (!url) return "";
@@ -291,7 +285,7 @@ export default function WebsiteIntelligencePage() {
         body: JSON.stringify({ scan_id: scan?.id }),
       });
       setScan((current) =>
-        current ? { ...current, status: "FAILED", error_message: "Scan stopped by user" } : null
+        current ? { ...current, status: "CANCELLED", error_message: "Scan stopped by user" } : null
       );
     } catch {}
     setStopping(false);
@@ -405,7 +399,7 @@ export default function WebsiteIntelligencePage() {
   };
 
   const scanInProgress = scan && !TERMINAL_STATUSES.includes(scan.status);
-  const hasResults = scan && TERMINAL_STATUSES.includes(scan.status) && scan.status !== "FAILED" && scan.results;
+  const hasResults = scan && TERMINAL_STATUSES.includes(scan.status) && scan.status !== "FAILED" && scan.status !== "CANCELLED" && scan.results;
   const results = scan?.results ?? null;
   const isUrlDifferent = scan?.url && url.trim().toLowerCase() !== scan.url.toLowerCase();
 
@@ -732,28 +726,6 @@ export default function WebsiteIntelligencePage() {
                 )}
               </CardContent>
             </Card>
-
-            <Card className="glass-card">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Palette className="h-4 w-4" />
-                  Color Palette
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-4">
-                  {brandColors.map((color) => (
-                    <div key={color.name} className="flex flex-col items-center gap-2">
-                      <div
-                        className="h-10 w-10 rounded-full border-2 border-white/10"
-                        style={{ backgroundColor: color.hex }}
-                      />
-                      <span className="text-xs text-white/50">{color.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
           </motion.div>
         </TabsContent>
 
@@ -875,6 +847,7 @@ export default function WebsiteIntelligencePage() {
                   </Card>
                 </div>
 
+                {(results?.problems_solved ?? []).length > 0 && (
                 <div>
                   <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-violet-400" />
@@ -896,7 +869,9 @@ export default function WebsiteIntelligencePage() {
                     ))}
                   </div>
                 </div>
+                )}
 
+                {((results?.offers ?? []).length > 0 || (results?.pricing ?? []).length > 0) && (
                 <div>
                   <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                     <Package className="h-4 w-4 text-sky-400" />
@@ -927,7 +902,9 @@ export default function WebsiteIntelligencePage() {
                     ))}
                   </div>
                 </div>
+                )}
 
+                {(results?.business_signals ?? []).length > 0 && (
                 <div>
                   <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                     <TrendingUp className="h-4 w-4 text-emerald-400" />
@@ -946,6 +923,7 @@ export default function WebsiteIntelligencePage() {
                     ))}
                   </div>
                 </div>
+                )}
 
                 <div>
                   <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">

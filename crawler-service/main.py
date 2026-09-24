@@ -483,11 +483,50 @@ async def crawl(request: Request) -> JSONResponse:
     if not is_safe_url(base):
         return JSONResponse({"ok": False, "error": "url blocked (SSRF)"}, status_code=400)
 
-    asyncio.create_task(run_crawl(payload, sb, base))
+    task = asyncio.create_task(run_crawl(payload, sb, base))
+    CRAWL_TASKS[str(payload.scan_id)] = task
+    task.add_done_callback(lambda t: CRAWL_TASKS.pop(str(payload.scan_id), None))
     return JSONResponse({"ok": True, "queued": True})
 
 
+# Active crawl tasks by scan_id — /cancel aborts the asyncio task so a
+# user-stopped scan stops burning crawl budget (DB row is flipped by caller).
+CRAWL_TASKS: dict = {}
+
+
+@app.post("/cancel")
+async def cancel_crawl(request: Request) -> JSONResponse:
+    await require_key(request)
+    body = await request.json()
+    scan_id = body.get("scan_id")
+    if not scan_id:
+        return JSONResponse({"ok": False, "error": "scan_id required"}, status_code=400)
+    task = CRAWL_TASKS.pop(str(scan_id), None)
+    if task is None:
+        return JSONResponse({"ok": True, "cancelled": False, "reason": "no active task"})
+    task.cancel()
+    return JSONResponse({"ok": True, "cancelled": True})
+
+
 async def run_crawl(payload: CrawlRequest, sb: Any, base: str) -> None:
+    # /cancel aborts this task mid-crawl — record CANCELLED so the Next app
+    # (and finalize guard) treat it as user-stopped, not failed.
+    try:
+        await _run_crawl_inner(payload, sb, base)
+    except asyncio.CancelledError:
+        print(f"[crawl] scan {payload.scan_id} cancelled by user")
+        try:
+            await update_scan(
+                sb,
+                payload.scan_id,
+                {"status": "CANCELLED", "error_message": "Scan stopped by user",
+                 "completed_at": now_iso(), "updated_at": now_iso()},
+            )
+        except Exception:
+            pass
+
+
+async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
     scan_id = payload.scan_id
     user_id = payload.user_id
     started = time.time()

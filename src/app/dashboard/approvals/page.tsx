@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageSquare,
@@ -23,14 +23,27 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { approvals } from "@/lib/data";
-import type { Approval } from "@/types";
 import { formatDate } from "@/lib/utils";
 
+// Real handoff queue (API-backed). Social post/DM approvals live separately;
+// this page owns MEETING handoffs: approve -> stage MEETING + suggested row.
+interface QueueItem {
+  id: string;
+  type: "handoff" | "post" | "dm" | "reply" | "comment";
+  platform: string;
+  status: "pending" | "approved" | "rejected" | "deferred";
+  submittedBy: string;
+  date: string;
+  content: string;
+  urgency: "low" | "medium" | "high";
+  leadName: string;
+}
+
 const typeMeta: Record<
-  Approval["type"],
+  QueueItem["type"],
   { icon: React.ComponentType<{ className?: string }>; label: string; color: string }
 > = {
+  handoff: { icon: MessageCircle, label: "Handoff", color: "text-emerald-400" },
   post: { icon: MessageSquare, label: "Post", color: "text-sky-400" },
   dm: { icon: Send, label: "DM", color: "text-violet-400" },
   reply: { icon: Reply, label: "Reply", color: "text-amber-400" },
@@ -67,10 +80,48 @@ const filters: { key: FilterKey; label: string }[] = [
   { key: "rejected", label: "Rejected" },
 ];
 
+function mapHandoff(row: any): QueueItem {
+  const lead = row?.discovered_leads ?? null;
+  const status = String(row?.status ?? "PENDING").toLowerCase();
+  return {
+    id: String(row?.id ?? ""),
+    type: "handoff",
+    platform: "whatsapp",
+    status: (status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "deferred" ? "deferred" : "pending") as QueueItem["status"],
+    submittedBy: "AI Sales Agent",
+    date: String(row?.created_at ?? new Date().toISOString()),
+    content: String(row?.reason ?? row?.notes ?? lead?.author_name ?? "Handoff request"),
+    urgency: "medium",
+    leadName: String(lead?.author_name ?? row?.lead_id ?? "Lead"),
+  };
+}
+
 export default function ApprovalsPage() {
   const [filter, setFilter] = useState<FilterKey>("pending");
-  const [items, setItems] = useState(approvals);
+  const [items, setItems] = useState<QueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+
+  const loadQueue = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/ai/discovery/handoff?status=all", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed to load approvals");
+      const rows = Array.isArray(json?.handoff_requests) ? json.handoff_requests : [];
+      setItems(rows.map(mapHandoff));
+    } catch (err: any) {
+      setLoadError(err?.message ?? "Failed to load approvals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadQueue();
+  }, [loadQueue]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => item.status === filter);
@@ -80,29 +131,42 @@ export default function ApprovalsPage() {
     const pending = items.filter((i) => i.status === "pending").length;
     const approved = items.filter((i) => i.status === "approved").length;
     const rejected = items.filter((i) => i.status === "rejected").length;
+    const today = new Date().toISOString().slice(0, 10);
     const approvedToday = items.filter(
-      (i) => i.status === "approved" && i.date === "2025-01-22"
+      (i) => i.status === "approved" && String(i.date).slice(0, 10) === today
     ).length;
     return { pending, approved, rejected, approvedToday };
   }, [items]);
 
   const handleAction = useCallback(
-    (id: string, action: "approve" | "reject") => {
+    async (id: string, action: "approve" | "reject") => {
       setRemovingIds((prev) => new Set(prev).add(id));
-      setTimeout(() => {
+      try {
+        const res = await fetch(`/api/ai/discovery/handoff/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        if (!res.ok) throw new Error("action failed");
         setItems((prev) =>
           prev.map((item) =>
-            item.id === id ? { ...item, status: action === "approve" ? "approved" as const : "rejected" as const } : item
+            item.id === id ? { ...item, status: action === "approve" ? "approved" : "rejected" } : item
           )
         );
-        setRemovingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, 400);
+      } catch {
+        await loadQueue();
+      } finally {
+        // reveal after animation window
+        setTimeout(() => {
+          setRemovingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }, 400);
+      }
     },
-    []
+    [loadQueue]
   );
 
   return (
@@ -125,8 +189,14 @@ export default function ApprovalsPage() {
             )}
           </div>
           <p className="text-sm text-white/40">
-            Review and approve content before it goes live
+            Meeting handoffs from the AI Sales Agent — approve to create a suggested meeting
           </p>
+          <div className="flex items-center gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => void loadQueue()} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </Button>
+            {loadError && <span className="text-xs text-rose-400">{loadError}</span>}
+          </div>
         </div>
       </motion.div>
 
@@ -226,6 +296,12 @@ export default function ApprovalsPage() {
                             <span>by {item.submittedBy}</span>
                             <span className="w-1 h-1 rounded-full bg-white/20" />
                             <span>{formatDate(item.date)}</span>
+                            {"leadName" in item && (item as QueueItem).leadName && (
+                              <>
+                                <span className="w-1 h-1 rounded-full bg-white/20" />
+                                <span className="text-white/60">{(item as QueueItem).leadName}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -305,7 +381,7 @@ export default function ApprovalsPage() {
             className="flex flex-col items-center justify-center py-20 text-white/30"
           >
             <CheckCircle2 className="h-12 w-12 mb-3" />
-            <p className="text-sm">No {filter} items</p>
+            <p className="text-sm">{loading ? "Loading approvals…" : `No ${filter} items`}</p>
           </motion.div>
         )}
       </div>

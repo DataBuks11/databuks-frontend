@@ -146,13 +146,15 @@ export async function bookMeeting(supabase: any, input: BookMeetingInput): Promi
  */
 export async function notifyOwnerMeetingBooked(
   supabase: any,
-  input: { userId: string; leadName?: string | null; company?: string | null; scheduledAt?: string | null; medium?: string | null }
+  input: { userId: string; leadName?: string | null; company?: string | null; scheduledAt?: string | null; medium?: string | null; location?: string | null }
 ): Promise<void> {
   try {
     const { resolveUserJid, sendViaBaileys } = await import("@/lib/whatsapp/jid-utils");
     const jid = await resolveUserJid(supabase, input.userId);
     if (!jid) return;
     const when = input.scheduledAt ? new Date(input.scheduledAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "slot pending";
+    // location doubles as meeting-link holder (Meet/Calendly URL paste karo).
+    const where = input.location ? `\nLink/Location: ${input.location}` : "";
     await sendViaBaileys({
       userId: input.userId,
       jid,
@@ -160,7 +162,7 @@ export async function notifyOwnerMeetingBooked(
       message:
         `🎯 Meeting tak laaya hoon!\n` +
         `Lead: ${input.leadName ?? "unknown"}${input.company ? ` (${input.company})` : ""}\n` +
-        `Slot: ${when}${input.medium ? ` via ${input.medium}` : ""}\n\n` +
+        `Slot: ${when}${input.medium ? ` via ${input.medium}` : ""}${where}\n\n` +
         `Aage kya karna hai, tum batao — Dashboard → Meetings me confirm/cancel/reschedule karo, ya yahan "meetings" likh ke list dekho.`,
     });
   } catch (err: any) {

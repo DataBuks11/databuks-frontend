@@ -54,7 +54,10 @@ describe("Facebook capabilities", () => {
     expect(cap.can_read_posts).toBe(true);
     expect(cap.can_read_comments).toBe(true);
     expect(cap.can_read_messages).toBe(false);
-    expect(cap.can_send_messages).toBe(false);
+    // FB Page DM: gate open (adapter has FACEBOOK_SEND_MESSAGE); FB policy
+    // decides per-recipient, failures stay honest-skipped.
+    expect(cap.can_send_messages).toBe(true);
+    expect(cap.permissions).toContain("send_messages");
     expect(cap.capability_status).toBe("AVAILABLE");
   });
 

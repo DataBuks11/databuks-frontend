@@ -681,6 +681,13 @@ export async function processIncomingWhatsAppMessage(
 
   const sendStartedAt = Date.now();
   let sendError: string | null = null;
+  // Human pacing: a real owner reads, maybe types, then replies. Scale the
+  // pause with reply length (capped) + small jitter. Composing indicator is
+  // already on, so this just looks like thinking/typing time.
+  try {
+    const pauseMs = Math.min(1500 + replyText.length * 25 + Math.floor(Math.random() * 1500), 6000);
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
+  } catch {}
   try {
     await sendFn({ userId: input.userId, jid: input.remoteJid, message: replyText });
   } catch (error: any) {
