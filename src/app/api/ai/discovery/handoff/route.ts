@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
         lead_id: lead.lead_id,
         opportunity_id: lead.opportunity_id,
         source: "discovery",
-        status: "pending",
+        status: "PENDING",
         context: handoffContext,
         reason: `Discovery handoff: ${lead.detected_requirement ?? "Meeting intent detected"}`,
       })
