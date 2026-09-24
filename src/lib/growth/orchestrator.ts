@@ -436,6 +436,24 @@ export async function runFindLeads(
         relevanceScore = Math.min(90, relevanceScore + 5);
       }
 
+      // GEO-MISMATCH detection (scoring se pehle): query LOCAL tha par
+      // business ka address target region se bahar hai (foreign listing).
+      // Address missing ho to penalize nahi (evidence nahi = claim nahi).
+      let geoMismatch: string | null = null;
+      {
+        const locParts = String(
+          (Array.isArray(bcData.locations) && bcData.locations[0]) || ""
+        ).toLowerCase().split(",").map((s: string) => s.trim()).filter(Boolean);
+        const addr = String(addressText ?? "").toLowerCase();
+        if (addr.length > 5 && locParts.length > 0) {
+          const hit = locParts.some((p: string) => p.length > 2 && addr.includes(p));
+          if (!hit) {
+            geoMismatch = `address "${String(addressText).slice(0, 80)}" target region se bahar`;
+            relevanceScore = Math.max(0, relevanceScore - 15);
+          }
+        }
+      }
+
       // Sub-scores (deterministic)
       const subScores = computeSubScores({
         requirementStatus: reqAnalysis.status,
@@ -455,6 +473,9 @@ export async function runFindLeads(
       const scoring = calculateFinalScore(subScores, []);
       const isQualified = scoring.quality_gate_status === "QUALIFIED" || scoring.quality_gate_status === "NEEDS_REVIEW";
       if (!isQualified) continue;
+      if (geoMismatch && scoring.quality_gate_status === "QUALIFIED") {
+        scoring.quality_gate_status = "NEEDS_REVIEW";
+      }
 
       // AI industry verdict (shortlist only — max 12 LLM calls per run).
       // Overrides keyword matching: real relevance + competitor detection.
@@ -558,6 +579,7 @@ export async function runFindLeads(
           : null,
         geo_scope: groupScope,
         geo_relevance: `${geoRelevanceBonus(groupScope)}pt region relevance (${groupScope.toLowerCase()})`,
+        geo_mismatch: geoMismatch,
         owner_name: enrichmentData?.owner_name ?? null,
         requirement_evidence: {
           status: reqAnalysis.status,
