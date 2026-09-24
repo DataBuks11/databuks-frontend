@@ -138,6 +138,14 @@ def normalize_url(raw: str) -> Optional[str]:
     if not re.match(r"^[a-z][a-z0-9+.-]*://", value, re.IGNORECASE):
         value = "https://" + value
     try:
+        # Sitemaps/CMSs sometimes double-encode (%25 -> %2525 -> ...).
+        # Unquote repeatedly so B.Tech%252525202nd%25252520Sem heals.
+        from urllib.parse import unquote, quote
+        for _ in range(3):
+            narrower = unquote(value)
+            if narrower == value:
+                break
+            value = narrower
         parsed = urlparse(value)
     except Exception:
         return None
@@ -149,6 +157,10 @@ def normalize_url(raw: str) -> Optional[str]:
     path = parsed.path or "/"
     if path != "/" and path.endswith("/"):
         path = path[:-1]
+    try:
+        path = quote(unquote(path), safe="/%@!$&'()*+,;=-._~")
+    except Exception:
+        pass
     query = parsed.query
     return f"{parsed.scheme}://{host}{path}" + (f"?{query}" if query else "")
 
@@ -169,8 +181,26 @@ def classify_page(url: str, title: str, headings: List[str]) -> str:
     return "other"
 
 
-def looks_like_js_shell(text: str, html_len: int, link_count: int, heading_count: int) -> bool:
-    return len(text) < 400 and html_len < 8000 and heading_count == 0 and link_count < 8
+def looks_like_js_shell(text: str, html_len: int, link_count: int, heading_count: int, html: str = "") -> bool:
+    # Thin readable text + no structure = JS shell, REGARDLESS of raw HTML
+    # size. Angular/React shells are often 10-50KB of scripts (the old
+    # html_len < 8000 cap let big shells like raisoni.net slip through
+    # unrendered). SPA framework markers confirm it when text is thin.
+    if len(text) >= 400 or heading_count > 0:
+        return False
+    if link_count >= 8:
+        return False
+    if html:
+        low = html[:20000].lower()
+        spa_markers = (
+            "ng-version", "data-critters-container", "__next_data__", "__NEXT_DATA__",
+            'id="root"', "id='root'", 'id="app"', "id='app'", "_next/static",
+            "ng-app", "data-ng-app", "reactroot",
+        )
+        if any(m in low for m in spa_markers):
+            return True
+    # No markers but still structureless thin content — render anyway.
+    return True
 
 
 def clean_text(text: str) -> str:
@@ -247,7 +277,13 @@ async def fetch_static(url: str, timeout: float = 12.0) -> Optional[httpx.Respon
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=timeout,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; DataBuksCrawler/1.0)"},
+            # Real-browser UA: bot-style UAs get shells/blocks on JS sites
+            # (Angular/React apps) and WAFs; mimic Chrome on Windows.
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         ) as client:
             response = await client.get(url)
             if response.status_code >= 400:
@@ -557,6 +593,12 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
     crawled_rows = 0
     rendered_rows = 0
     failed_rows = 0
+    # Render budget: JS shells are common on big sites — cap count + time so
+    # ANY size site still finishes inside the global time budget (~3 min scan).
+    render_attempts = 0
+    render_failed = 0
+    MAX_RENDERS_PER_SCAN = 25
+    RENDER_TIMEOUT_S = 30
     queue = sorted(queue_items, key=lambda item: item["priority"], reverse=True)
     shared_crawler: Optional[Any] = None
 
@@ -569,7 +611,7 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
         return shared_crawler
 
     async def process_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        nonlocal crawled_rows, rendered_rows, failed_rows
+        nonlocal crawled_rows, rendered_rows, failed_rows, render_attempts, render_failed
         url = item["url"]
         if url in visited:
             return None
@@ -586,8 +628,22 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
             static_evidence = extract_static_evidence(response, url, depth)
             link_count = len(static_evidence["links"])
             heading_count = len(static_evidence["headings"])
-            if looks_like_js_shell(static_evidence["text"], static_evidence["html_len"], link_count, heading_count):
-                evidence = await render_with_crawl4ai(url, await get_shared_crawler())
+            if looks_like_js_shell(static_evidence["text"], static_evidence["html_len"], link_count, heading_count, response.text):
+                # JS shell: render it, but bounded (count + timeout + global
+                # budget reserve) so one heavy site can't blow the 3-min scan.
+                if render_attempts < MAX_RENDERS_PER_SCAN and time.time() - started < timeout_s - 10:
+                    render_attempts += 1
+                    try:
+                        evidence = await asyncio.wait_for(
+                            render_with_crawl4ai(url, await get_shared_crawler()),
+                            timeout=RENDER_TIMEOUT_S,
+                        )
+                    except Exception as exc:
+                        render_failed += 1
+                        print(f"[render] failed for {url}: {exc}")
+                        evidence = None
+                else:
+                    evidence = None
                 if evidence is None:
                     evidence = static_evidence
                     evidence["rendered"] = False
@@ -687,6 +743,7 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
             "updated_at": now_iso(),
         },
     )
+    print(f"[crawl] done: crawled={crawled_rows} rendered={rendered_rows} render_attempts={render_attempts} render_failed={render_failed} failed={failed_rows}")
 
     if crawled_rows == 0:
         await update_scan(
