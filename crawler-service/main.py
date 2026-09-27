@@ -172,6 +172,23 @@ def same_registered_domain(a: str, b: str) -> bool:
     return reg(a) == reg(b)
 
 
+def dedupe_key(url: str) -> str:
+    """Collapse near-duplicate locale/tracking variants so giant sites don't
+    flood the budget with the same page in 50 languages (/intl/am/..., ?hl=,
+    ?utm_...). Homepage + key sections still win via priority ordering."""
+    try:
+        parsed = urlparse(url)
+        path = re.sub(r"/intl/[a-z]{2}(?:-[a-z]{2,4})?/", "/", parsed.path, flags=re.IGNORECASE)
+        path = re.sub(r"/[a-z]{2}(?:-[a-z]{2,4})?/[a-z]{2}(?:-[a-z]{2,4})?/", "/", path)
+        q = "&".join(
+            p for p in parsed.query.split("&")
+            if p and not re.match(r"^(hl|gl|utm_[^=]*|gclid|fbclid|mc_cid)=", p, re.IGNORECASE)
+        )
+        return f"{parsed.scheme}://{(parsed.hostname or '').lower()}{path}" + (f"?{q}" if q else "")
+    except Exception:
+        return url
+
+
 def classify_page(url: str, title: str, headings: List[str]) -> str:
     path = urlparse(url).path or "/"
     haystack = f"{path} {title} {' '.join(headings[:6])}"
@@ -590,6 +607,7 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
     )
 
     visited: set = set()
+    seen_keys: set = set()
     crawled_rows = 0
     rendered_rows = 0
     failed_rows = 0
@@ -615,6 +633,11 @@ async def _run_crawl_inner(payload: CrawlRequest, sb: Any, base: str) -> None:
         url = item["url"]
         if url in visited:
             return None
+        # Locale/tracking variants collapse to one crawl (giant-site guard).
+        dkey = dedupe_key(url)
+        if dkey in seen_keys:
+            return None
+        seen_keys.add(dkey)
         visited.add(url)
         depth = item["depth"]
         if depth > payload.max_depth:
