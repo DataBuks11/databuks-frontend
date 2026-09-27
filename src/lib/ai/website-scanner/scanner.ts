@@ -727,9 +727,20 @@ async function syncBusinessContext(supabase: any, userId: string, results: Recor
 
   const { data: existing } = await supabase
     .from("business_context")
-    .select("id")
+    .select("id, services, target_audience")
     .eq("user_id", userId)
     .maybeSingle();
+
+  // Founder-curated services/audiences preserved rehte hain: scan-derived
+  // values sirf tab bharo jab existing khaali ho. Baaki facts hamesha fresh
+  // hote hain. Isse competitor-gate keywords kabhi wipe nahi hote.
+  if (existing) {
+    const existingServices = Array.isArray((existing as any).services) ? (existing as any).services : [];
+    const existingAudience = Array.isArray((existing as any).target_audience) ? (existing as any).target_audience : [];
+    if (existingServices.length > 0) delete updates.services;
+    if (existingAudience.length > 0) delete updates.target_audience;
+    if (Object.keys(updates).length <= 1) return false;
+  }
 
   if (existing) {
     const { error } = await supabase.from("business_context").update(updates).eq("user_id", userId);
