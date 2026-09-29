@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
+import { SHOW_TELEGRAM } from "@/lib/flags";
 
 const TRACE = (tag: string, data?: any) => {
   if (data !== undefined) console.log(`[TRACE:${tag}]`, data);
@@ -435,7 +436,9 @@ export default function SocialsPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {Object.entries(platformConfig).map(([key, config], index) => {
+        {Object.entries(platformConfig)
+          .filter(([key]) => SHOW_TELEGRAM || key !== "telegram")
+          .map(([key, config], index) => {
           const connected = isConnected(key);
           const Icon = config.icon;
           const status = getConnectionStatus(key);

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { SHOW_CONTENT_NAV } from "@/lib/flags";
 
 const navLinks = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -33,7 +34,9 @@ const navLinks = [
   { href: "/dashboard/leads", label: "Lead Engine", icon: Target },
   { href: "/dashboard/find-leads", label: "Find Leads", icon: Search },
   { href: "/dashboard/socials/discovery", label: "Lead Discovery", icon: Sparkles },
-  { href: "/dashboard/content", label: "Content", icon: FileText },
+  ...(SHOW_CONTENT_NAV
+    ? [{ href: "/dashboard/content", label: "Content", icon: FileText }]
+    : []),
   { href: "/dashboard/approvals", label: "Approvals", icon: CheckCircle },
   { href: "/dashboard/conversations", label: "Conversations", icon: MessageSquare },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },

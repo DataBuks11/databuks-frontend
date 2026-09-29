@@ -385,10 +385,6 @@ export default function LandingPage() {
                 Start Free Trial
                 <ArrowRight className="w-4 h-4" />
               </Link>
-              <button className="liquid-glass rounded-full px-6 py-3 sm:px-7 sm:py-3.5 text-sm font-medium text-white/70 hover:text-white transition-all duration-300 hover:bg-white/[0.04] inline-flex items-center gap-2">
-                <Play className="w-4 h-4" />
-                Watch Demo
-              </button>
             </motion.div>
           </div>
         </div>
