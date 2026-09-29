@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DataBuks — Interactive Launch Film</title>
+<meta property="og:title" content="DataBuks — Your AI Sales Agent. Works 24/7." />
+<meta property="og:description" content="Find leads. Start conversations. Close more deals. Meet DataBuks." />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #04060c; color: #fff; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+  #stage { position: relative; width: min(100vw, 177.78vh); aspect-ratio: 16/9; margin: 0 auto; overflow: hidden; background: #04060c; }
+  #root { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .clip { position: absolute; inset: 0; }
+  .scene { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 5% 7%; }
+  .bgimg { position: absolute; inset: -4%; background-size: cover; background-position: center; }
+  .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(4,6,12,0.55), rgba(4,6,12,0.25) 40%, rgba(4,6,12,0.78)); }
+  .hook { font-size: clamp(40px, 6.5vw, 126px); font-weight: 600; letter-spacing: -0.04em; line-height: 1.1; }
+  .hook .blue { color: #60a5fa; }
+  .hook .ch { display: inline-block; }
+  .sub { margin-top: 1.4%; font-size: clamp(16px, 2.2vw, 42px); color: rgba(255,255,255,0.65); font-weight: 300; }
+  .cta {
+    margin-top: 2.6%; font-size: clamp(16px, 2.1vw, 40px); color: #fff; background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.22); border-radius: 999px; padding: 1.2% 3.4%; font-weight: 500;
+    backdrop-filter: blur(12px); text-decoration: none; display: inline-block; cursor: pointer;
+  }
+  .cta .star { color: #93c5fd; }
+  .glass { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.12); border-radius: 22px; backdrop-filter: blur(14px); }
+  .cards6 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6%; margin-top: 3%; width: 100%; }
+  .fcard { padding: 2.2% 2%; text-align: left; opacity: 0; visibility: hidden; }
+  .fcard h3 { font-size: clamp(15px, 1.9vw, 36px); margin-bottom: 4%; }
+  .fcard p { font-size: clamp(12px, 1.55vw, 30px); color: rgba(255,255,255,0.6); line-height: 1.5; }
+  .fcard .em { font-size: clamp(20px, 2.6vw, 50px); }
+  .steps { display: flex; flex-direction: column; gap: 1.1%; margin-top: 2.6%; width: min(72%, 1100px); }
+  .step { display: flex; gap: 2.4%; align-items: center; padding: 1.4% 2.4%; text-align: left; opacity: 0; visibility: hidden; }
+  .step .n { width: 3.4em; height: 3.4em; min-width: 44px; min-height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: clamp(13px, 1.6vw, 30px); color: #93c5fd; flex-shrink: 0; }
+  .step b { font-size: clamp(14px, 1.9vw, 36px); display: block; }
+  .step span { font-size: clamp(11px, 1.5vw, 28px); color: rgba(255,255,255,0.55); }
+  .leadrow { display: flex; gap: 1.8%; margin-top: 2.6%; width: 100%; justify-content: center; }
+  .lead { padding: 1.8% 2%; border-radius: 22px; min-width: 26%; opacity: 0; visibility: hidden; }
+  .lead .biz { font-size: clamp(15px, 2vw, 38px); font-weight: 600; }
+  .lead .sc { font-size: clamp(24px, 3.6vw, 68px); color: #34d399; font-weight: 300; }
+  .lead .tag { display: inline-block; margin-top: 4%; font-size: clamp(11px, 1.5vw, 27px); color: #93c5fd; border: 1px solid rgba(147,197,253,0.45); border-radius: 999px; padding: 2% 7%; }
+  .chat { width: min(62%, 980px); display: flex; flex-direction: column; gap: 1.6%; margin-top: 2.4%; }
+  .bubble { max-width: 78%; padding: 1.6% 3%; font-size: clamp(14px, 1.9vw, 36px); border-radius: 22px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); text-align: left; opacity: 0; visibility: hidden; }
+  .bubble.left { align-self: flex-start; }
+  .bubble.right { align-self: flex-end; background: rgba(96,165,250,0.18); border-color: rgba(96,165,250,0.4); }
+  .bubble.tick { align-self: center; border-color: rgba(52,211,153,0.55); color: #34d399; font-weight: 600; }
+  .bubble .meta { display: block; text-align: right; font-size: 0.62em; color: rgba(255,255,255,0.45); margin-top: 2%; }
+  .tdots span { display: inline-block; width: 0.9em; height: 0.9em; border-radius: 50%; background: #93c5fd; margin: 0 0.35em; font-size: clamp(14px, 1.9vw, 36px); }
+  .chips { display: flex; gap: 1.4%; margin-top: 2.4%; flex-wrap: wrap; justify-content: center; }
+  .chip { font-size: clamp(13px, 1.7vw, 32px); padding: 1% 2.6%; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid rgba(147,197,253,0.4); color: #bfdbfe; font-weight: 500; opacity: 0; visibility: hidden; }
+  .launchbadge { margin-top: 2.2%; background: #fff; color: #111; border-radius: 22px; padding: 1.4% 4%; font-size: clamp(18px, 2.6vw, 50px); font-weight: 600; letter-spacing: 0.05em; opacity: 0; visibility: hidden; }
+  .launchbadge .purple { color: #5b21e6; }
+  /* chrome */
+  #ui { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2% 3%; display: flex; align-items: center; gap: 1.6%; background: linear-gradient(transparent, rgba(0,0,0,0.55)); z-index: 20; }
+  #ui button { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 999px; padding: 0.6% 1.8%; font-size: clamp(12px, 1.4vw, 26px); cursor: pointer; }
+  #ui button:hover { background: rgba(255,255,255,0.2); }
+  #chapters { display: flex; gap: 1%; flex: 1; justify-content: center; flex-wrap: wrap; }
+  #chapters button { font-size: clamp(10px, 1.2vw, 22px); opacity: 0.75; }
+  #chapters button.on { opacity: 1; border-color: #60a5fa; color: #bfdbfe; }
+  #track { position: absolute; left: 0; top: 0; right: 0; height: 6px; background: rgba(255,255,255,0.12); cursor: pointer; z-index: 21; }
+  #fill { height: 100%; width: 100%; background: #60a5fa; transform: scaleX(0); transform-origin: left center; }
+  #gate { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; gap: 2%; align-items: center; justify-content: center; background: rgba(4,6,12,0.82); backdrop-filter: blur(8px); cursor: pointer; }
+  #gate .big { font-size: clamp(30px, 5vw, 96px); font-weight: 600; }
+  #gate .small { font-size: clamp(14px, 1.8vw, 32px); color: rgba(255,255,255,0.6); }
+  #gate .play { width: clamp(60px, 7vw, 130px); height: clamp(60px, 7vw, 130px); border-radius: 50%; background: #60a5fa; display: flex; align-items: center; justify-content: center; font-size: clamp(24px, 3vw, 54px); color: #fff; }
+  .wipe { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; background: linear-gradient(100deg, #1d4ed8, #60a5fa); transform: scaleX(0); transform-origin: left center; pointer-events: none; z-index: 5; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(90px); pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="root">
+    <div class="orb" id="orb1" style="width:36%;aspect-ratio:1;background:rgba(96,165,250,0.14);top:-10%;left:-8%"></div>
+    <div class="orb" id="orb2" style="width:30%;aspect-ratio:1;background:rgba(139,92,246,0.12);bottom:-12%;right:-6%"></div>
+    <div class="wipe" id="wipe"></div>
+
+    <div id="s1" class="clip" data-start="0" data-duration="5">
+      <div class="bgimg" id="hero-bg" style="background-image:url('assets/hero.png')"></div>
+      <div class="shade"></div>
+      <div class="scene">
+        <div class="hook" id="hook1">Build Your AI <span style="color:#60a5fa">Workforce</span></div>
+        <div class="sub" id="sub1">Not Just Another Chatbot.</div>
+        <div class="sub" id="sub1b" style="font-size:0.85em;max-width:80%">AI teammates that understand your business, generate leads &amp; help you grow.</div>
+        <a class="cta" id="cta1x" href="https://databuks-frontend.vercel.app/auth/signup" target="_blank" rel="noopener">Start Free Trial →</a>
+      </div>
+    </div>
+
+    <div id="s2" class="clip" data-start="5" data-duration="5.5">
+      <div class="scene">
+        <div class="hook" id="hook2" style="font-size:0.72em">Everything You Need <span style="color:#60a5fa">to Scale</span></div>
+        <div class="cards6">
+          <div class="fcard glass" id="k1"><div class="em">🌐</div><h3>Website Intelligence</h3><p>AI learns your business from your website.</p></div>
+          <div class="fcard glass" id="k2"><div class="em">🎯</div><h3>Lead Generation</h3><p>High-intent prospects, scored &amp; qualified.</p></div>
+          <div class="fcard glass" id="k3"><div class="em">💬</div><h3>AI Conversations</h3><p>Context-aware replies. 94% response rate.</p></div>
+          <div class="fcard glass" id="k4"><div class="em">⚙️</div><h3>Workflow Automation</h3><p>Multi-step flows, triggers &amp; actions.</p></div>
+          <div class="fcard glass" id="k5"><div class="em">✅</div><h3>Human Approval</h3><p>AI drafts, you approve. Full control.</p></div>
+          <div class="fcard glass" id="k6"><div class="em">📊</div><h3>Analytics &amp; Insights</h3><p>Pipeline, conversion &amp; revenue per channel.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="s3" class="clip" data-start="10.5" data-duration="5">
+      <div class="scene">
+        <div class="hook" style="font-size:0.72em">Leads, <span style="color:#60a5fa">scored live.</span></div>
+        <div class="leadrow">
+          <div class="lead glass" id="l1"><div class="biz">Dass Jewellers</div><div class="sc"><span id="c1">0</span>/100</div><span class="tag">WHATSAPP_GAP</span></div>
+          <div class="lead glass" id="l2"><div class="biz">Londe Jewellers</div><div class="sc"><span id="c2">0</span>/100</div><span class="tag">AUTOMATION_GAP</span></div>
+          <div class="lead glass" id="l3"><div class="biz">GIVA Nagpur</div><div class="sc"><span id="c3">0</span>/100</div><span class="tag">WHATSAPP_GAP</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="s4" class="clip" data-start="15.5" data-duration="5.5">
+      <div class="scene">
+        <div class="hook" style="font-size:0.72em">AI That Talks <span style="color:#60a5fa">Like a Human.</span></div>
+        <div class="chat">
+          <div class="bubble left" id="b1">I noticed you're scaling outreach. Want more replies?<span class="meta">10:30 AM</span></div>
+          <div class="bubble tdots" id="btyping" style="align-self:flex-start"><span class="td1">●</span><span class="td2">●</span><span class="td3">●</span></div>
+          <div class="bubble right" id="b2">Yes, sounds great!<span class="meta">10:31 AM ✓✓</span></div>
+          <div class="bubble left" id="b3">Demo this week? ✓ Meeting booked<span class="meta">10:32 AM</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="s5" class="clip" data-start="21" data-duration="5">
+      <div class="scene">
+        <div class="hook" style="font-size:0.8em">How <span style="color:#60a5fa">DataBuks</span> Works</div>
+        <div class="steps">
+          <div class="step glass" id="st1"><div class="n">01</div><div><b>Connect Your Website</b><span>Link your business site in seconds.</span></div></div>
+          <div class="step glass" id="st2"><div class="n">02</div><div><b>AI Learns Your Business</b><span>Products, voice, audience, competitors.</span></div></div>
+          <div class="step glass" id="st3"><div class="n">03</div><div><b>Finds + Qualifies Leads</b><span>Evidence-scored prospects, no guessing.</span></div></div>
+          <div class="step glass" id="st4"><div class="n">04</div><div><b>You Approve → Meeting Booked</b><span>One click. Pipeline grows.</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="s6" class="clip" data-start="26" data-duration="5">
+      <div class="scene">
+        <div class="hook" style="font-size:0.8em">Built for Teams. <span style="color:#60a5fa">Launching Soon.</span></div>
+        <div class="chips">
+          <span class="chip" id="cc1">Save 10+ hrs/week</span>
+          <span class="chip" id="cc2">3x reply rates</span>
+          <span class="chip" id="cc3">More meetings</span>
+        </div>
+        <a class="cta" id="cta6" href="https://databuks.org" target="_blank" rel="noopener">Stay Tuned! 🔔 databuks.org</a>
+      </div>
+    </div>
+
+    <div id="s7" class="clip" data-start="31" data-duration="5.6">
+      <div class="scene">
+        <div class="hook" id="hook7">The Future of Sales <span style="color:#60a5fa">Starts Here.</span></div>
+        <a class="cta" id="cta7" href="https://databuks-frontend.vercel.app/auth/signup" target="_blank" rel="noopener">Start Free Trial →</a>
+      </div>
+    </div>
+
+    <audio id="bed" src="assets/bed.mp3" preload="auto"></audio>
+    <div id="track"><div id="fill"></div></div>
+    <div id="ui">
+      <button id="btn-play">⏸ Pause</button>
+      <button id="btn-replay">↺ Replay</button>
+      <div id="chapters"></div>
+    </div>
+    <div id="gate">
+      <div class="play">▶</div>
+      <div class="big">DataBuks Launch Film</div>
+      <div class="small">Tap to play with sound · 37 seconds · chapters below are clickable anytime</div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var DUR = 36.6;
+  var tl = gsap.timeline({ paused: true });
+  var audio = document.getElementById("bed");
+  var gate = document.getElementById("gate");
+  var btnPlay = document.getElementById("btn-play");
+  var chaptersEl = document.getElementById("chapters");
+  var fill = document.getElementById("fill");
+  var chapters = [
+    ["Cover", 0], ["Scale", 5], ["Leads", 10.5], ["Chat", 15.5],
+    ["Flow", 21], ["Teams", 26], ["Launch", 31]
+  ];
+  function show(sel, at, dur) {
+    tl.fromTo(sel, { autoAlpha: 0, y: 40 }, { autoAlpha: 1, y: 0, duration: dur || 0.5, ease: "expo.out" }, at);
+  }
+  function wipe(at) {
+    tl.fromTo("#wipe", { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.3, ease: "power3.in" }, at);
+    tl.to("#wipe", { scaleX: 0, transformOrigin: "right center", duration: 0.3, ease: "power3.out" }, at + 0.3);
+  }
+  function chars(sel) {
+    document.querySelectorAll(sel).forEach(function (root) {
+      (function split(node) {
+        Array.prototype.slice.call(node.childNodes).forEach(function (n) {
+          if (n.nodeType === 3) {
+            for (var i = 0; i < n.textContent.length; i++) {
+              var s = document.createElement("span"); s.className = "ch";
+              s.style.display = "inline-block";
+              s.textContent = n.textContent[i] === " " ? " " : n.textContent[i];
+              node.insertBefore(s, n);
+            }
+            node.removeChild(n);
+          } else if (n.nodeType === 1) { split(n); }
+        });
+      })(root);
+    });
+  }
+  // Ambient + progress
+  tl.fromTo("#fill", { scaleX: 0 }, { scaleX: 1, duration: DUR, ease: "none" }, 0);
+  tl.fromTo("#orb1", { x: 0, y: 0 }, { x: 120, y: 90, duration: DUR, ease: "none" }, 0);
+  // S1 hero parallax + kinetic
+  tl.fromTo("#hero-bg", { scale: 1.08 }, { scale: 1, duration: 5, ease: "none" }, 0);
+  chars("#hook1");
+  tl.fromTo("#hook1 .ch", { autoAlpha: 0, y: 60 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: "back.out(1.6)", stagger: 0.02 }, 0.4);
+  show("#sub1", 2.2, 0.45); show("#cta1x", 2.8, 0.45);
+  wipe(4.85);
+  // S2 feature cards 3D tilt cascade
+  ["#k1", "#k2", "#k3", "#k4", "#k5", "#k6"].forEach(function (sel, i) {
+    tl.fromTo(sel, { autoAlpha: 0, y: 60, rotateX: -16 }, { autoAlpha: 1, y: 0, rotateX: 0, duration: 0.55, ease: "expo.out" }, 5.3 + i * 0.45);
+  });
+  wipe(10.35);
+  // S3 counters
+  function count(id, target, at) {
+    var o = { v: 0 }; var el = document.getElementById(id);
+    tl.to(o, { v: target, duration: 1.6, ease: "power2.out",
+      onUpdate: function () { el.textContent = String(Math.round(o.v)); } }, at);
+  }
+  show("#l1", 10.7, 0.45); count("c1", 80, 10.8);
+  show("#l2", 11.4, 0.45); count("c2", 75, 11.5);
+  show("#l3", 12.1, 0.45); count("c3", 67, 12.2);
+  wipe(15.35);
+  // S4 chat
+  show("#b1", 15.6, 0.3);
+  tl.fromTo("#btyping", { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.2 }, 16.2);
+  ["#btyping .td1", "#btyping .td2", "#btyping .td3"].forEach(function (sel, i) {
+    tl.fromTo(sel, { y: 0 }, { y: -10, duration: 0.22, repeat: 3, yoyo: true, ease: "sine.inOut" }, 16.25 + i * 0.12);
+  });
+  tl.to("#btyping", { autoAlpha: 0, duration: 0.15 }, 17.1);
+  show("#b2", 17.3, 0.3); show("#b3", 18.2, 0.35);
+  wipe(20.85);
+  // S5 steps
+  ["#st1", "#st2", "#st3", "#st4"].forEach(function (sel, i) {
+    show(sel, 21.2 + i * 0.5, 0.4);
+  });
+  wipe(25.85);
+  // S6 chips + badge
+  show("#cc1", 26.2, 0.3); show("#cc2", 26.5, 0.3); show("#cc3", 26.8, 0.3);
+  tl.fromTo("#lbadge", { autoAlpha: 0, scale: 1.5 }, { autoAlpha: 1, scale: 1, duration: 0.4, ease: "power4.in" }, 27.4);
+  // S7 finale
+  chars("#hook7");
+  tl.fromTo("#hook7 .ch", { autoAlpha: 0, y: 60 }, { autoAlpha: 1, y: 0, duration: 0.35, ease: "back.out(1.6)", stagger: 0.016 }, 31.2);
+  show("#cta7", 33.6, 0.4);
+  tl.eventCallback("onUpdate", function () {
+    if (audio && !audio.paused) { try { if (Math.abs(audio.currentTime - tl.time()) > 0.35) audio.currentTime = tl.time(); } catch (e) {} }
+  });
+  // --- interactivity ---
+  function play() { tl.play(); if (audio) { try { audio.currentTime = tl.time(); audio.play(); } catch (e) {} } btnPlay.textContent = "⏸ Pause"; }
+  function pause() { tl.pause(); if (audio) audio.pause(); btnPlay.textContent = "▶ Play"; }
+  chapters.forEach(function (c, i) {
+    var b = document.createElement("button");
+    b.textContent = c[0];
+    b.onclick = function () {
+      tl.pause(); tl.seek(c[1]);
+      document.querySelectorAll("#chapters button").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on"); play();
+    };
+    chaptersEl.appendChild(b);
+  });
+  btnPlay.onclick = function () { tl.paused() ? play() : pause(); };
+  document.getElementById("btn-replay").onclick = function () { tl.pause(); tl.seek(0); play(); };
+  document.getElementById("track").onclick = function (e) {
+    var r = this.getBoundingClientRect();
+    var t = Math.min(0.999, Math.max(0, (e.clientX - r.left) / r.width)) * DUR;
+    tl.pause(); tl.seek(t); play();
+  };
+  gate.onclick = function () { gate.style.display = "none"; play(); };
+  tl.eventCallback("onComplete", function () { pause(); });
+  tl.seek(0);
+})();
+</script>
+</body>
+</html>
