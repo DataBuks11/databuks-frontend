@@ -586,6 +586,11 @@ export default function WebsiteIntelligencePage() {
                 <Badge variant="info">{Math.round(results.confidence * 100)}% confidence</Badge>
               )}
               {results?.partial && <Badge variant="warning">Partial scan</Badge>}
+              {typeof (results as any)?.context_sync_skipped === "string" && (
+                <Badge variant="outline" title={(results as any).context_sync_skipped}>
+                  Prospect scan — profile untouched
+                </Badge>
+              )}
               {typeof results?.analysis_mode === "string" && (
                 <Badge variant="purple">{results.analysis_mode}</Badge>
               )}

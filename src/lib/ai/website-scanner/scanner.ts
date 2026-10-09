@@ -613,7 +613,7 @@ export async function finalizeScanFromStoredPages(
       { emails, phones }
     );
 
-    const results = {
+    const results: Record<string, any> = {
       ...analysis,
       scanned_url: scan.url,
       pages_crawled: pages.length,
@@ -641,10 +641,43 @@ export async function finalizeScanFromStoredPages(
 
     let contextSyncError: string | null = null;
     let contextUpdated = false;
+    let contextSkipped: string | null = null;
     try {
-      contextUpdated = await syncBusinessContext(supabase, userId, results);
+      // Profile-anchored sync: apni site → context refresh; kisi aur ki
+      // site → view-only (hijack-proof). First run hamesha fill karta hai.
+      let profileWebsite: string | null = null;
+      let hasCurated = false;
+      try {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("website")
+          .eq("id", userId)
+          .maybeSingle();
+        profileWebsite = (prof as any)?.website ?? null;
+        const { data: ctx } = await supabase
+          .from("business_context")
+          .select("services")
+          .eq("user_id", userId)
+          .maybeSingle();
+        hasCurated = Array.isArray((ctx as any)?.services) && (ctx as any).services.length > 0;
+      } catch {}
+      const gate = shouldSyncContext(scan.url, profileWebsite, hasCurated);
+      if (gate.sync) {
+        contextUpdated = await syncBusinessContext(supabase, userId, results);
+      } else {
+        contextSkipped = gate.reason;
+      }
     } catch (error: any) {
       contextSyncError = error?.message ?? "unknown context sync error";
+    }
+
+    // Surface the skip reason on the scan itself so the UI can explain why
+    // the business profile was left untouched (prospect scan).
+    if (contextSkipped) {
+      results.context_sync_skipped = contextSkipped;
+    }
+    if (contextSyncError) {
+      results.context_sync_error = contextSyncError;
     }
 
     await setScanStatus(supabase, scanId, partial ? "PARTIAL" : "COMPLETED", {
@@ -662,6 +695,47 @@ export async function finalizeScanFromStoredPages(
       completed_at: new Date().toISOString(),
     });
   }
+}
+
+/**
+ * Profile-anchored sync gate (pure, tested).
+ *
+ * "Meri site" vs "kisi ki site": scan result business_context me sirf tab
+ * jata hai jab scanned domain user ki profile website se match kare, ya jab
+ * user ka context abhi bilkul khaali ho (first-run onboarding). Prospect /
+ * client sites hamesha view-only rehti hain — unka result website_scans me
+ * safe hai, par owner profile hijack nahi hota.
+ */
+export function shouldSyncContext(
+  scannedUrl: string | null | undefined,
+  profileWebsite: string | null | undefined,
+  hasCuratedContext: boolean
+): { sync: boolean; reason: string } {
+  if (!hasCuratedContext) {
+    return { sync: true, reason: "first-run: filling empty business context" };
+  }
+  const reg = (u: string | null | undefined): string | null => {
+    try {
+      if (!u) return null;
+      const s = String(u).trim();
+      const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
+      const host = new URL(withProto).hostname.toLowerCase();
+      if (!host || host === "localhost") return null;
+      const parts = host.split(".").filter(Boolean);
+      return parts.length >= 2 ? parts.slice(-2).join(".") : host;
+    } catch {
+      return null;
+    }
+  };
+  const scanned = reg(scannedUrl);
+  const owned = reg(profileWebsite);
+  if (scanned && owned && scanned === owned) {
+    return { sync: true, reason: `domain match: ${scanned} is the owner's website` };
+  }
+  if (!owned) {
+    return { sync: false, reason: "no website set in profile — scan kept view-only (set your website in Settings to auto-sync)" };
+  }
+  return { sync: false, reason: `prospect scan (${scanned ?? "unknown domain"}) — owner profile untouched` };
 }
 
 async function syncBusinessContext(supabase: any, userId: string, results: Record<string, any>): Promise<boolean> {
