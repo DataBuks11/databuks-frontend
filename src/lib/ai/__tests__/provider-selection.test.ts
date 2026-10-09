@@ -29,6 +29,19 @@ describe("provider selection", () => {
     expect(getActiveProvider().id).toBe("minimax");
   });
 
+  it("puts the explicit TOKENHARBOR_MODEL lane first (e.g. claude-haiku-5.5)", () => {
+    process.env.TOKENHARBOR_API_KEY = "test-harbor-key";
+    process.env.TOKENHARBOR_MODEL = "claude-haiku-5.5";
+    resetActiveProviderForTests();
+    const p = getActiveProvider() as any;
+    const first = p.chain ? p.chain[0] : p;
+    expect(first.id).toBe("minimax");
+    expect(first.model).toBe("claude-haiku-5.5");
+    delete process.env.TOKENHARBOR_API_KEY;
+    delete process.env.TOKENHARBOR_MODEL;
+    resetActiveProviderForTests();
+  });
+
   it("selects MiniMax even when Ox Alpha env is set (ignored)", () => {
     process.env.OX_ALPHA_API_KEY = "test-key";
     process.env.OX_ALPHA_BASE_URL = "https://openrouter.ai/api/v1";

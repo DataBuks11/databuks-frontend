@@ -17,7 +17,7 @@ const DEFAULT_BASE_URL = "https://tokenharbor.ai/v1";
 export class MiniMaxProvider implements AiProvider {
   readonly id = "minimax";
   readonly model: string;
-  readonly modelVersion = "deepseek-v4.1-flash-free";
+  readonly modelVersion: string;
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
 
@@ -33,7 +33,10 @@ export class MiniMaxProvider implements AiProvider {
         "TOKENHARBOR_API_KEY (or TOKENROUTER_API_KEY / OX_ALPHA_API_KEY / DEEPSEEK_API_KEY) is not configured (required for DeepSeek 4.1 Flash)"
       );
     }
+    // Explicit model override first (e.g. TOKENHARBOR_MODEL=claude-haiku-5.5
+    // puts Claude Haiku on this lane). Falls back to DeepSeek 4.1 Flash.
     this.model = env.MINIMAX_MODEL || env.TOKENHARBOR_MODEL || (usingDeepSeek ? (env.DEEPSEEK_MODEL || "deepseek-chat") : DEFAULT_MODEL);
+    this.modelVersion = this.model;
     // With a Token Harbor key, ALWAYS talk to Token Harbor (any other base
     // URL would reject the key). Legacy setups keep their env.
     const rawBase = usingTokenHarbor
