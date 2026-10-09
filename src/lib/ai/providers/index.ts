@@ -1,5 +1,6 @@
 import { MiniMaxProvider } from "./minimax";
 import { ApmixProvider, FailoverProvider } from "./apmix";
+import { GeminiProvider } from "./gemini";
 import type { AiProvider } from "./types";
 
 let activeProvider: AiProvider | null = null;
@@ -12,10 +13,15 @@ export function getActiveProvider(): AiProvider {
 }
 
 function createDefaultProvider(): AiProvider {
-  // Apmix (4M free tokens) is PRIMARY; legacy chain (TokenHarbor /
-  // TokenRouter / DeepSeek direct) stays as automatic fallback, so one
-  // dead endpoint never silences the AI.
+  // Fast lane first: Gemini Flash (1-4s when funded) → Apmix (4M free) →
+  // legacy TokenHarbor/DeepSeek chain. Each lane fails fast (single attempt,
+  // tight timeouts), so total latency ≈ fastest working lane, never the sum.
   const chain: AiProvider[] = [];
+  try {
+    chain.push(new GeminiProvider());
+  } catch {
+    // no GEMINI_API_KEY — free lanes only
+  }
   try {
     chain.push(new ApmixProvider());
   } catch {
@@ -24,7 +30,7 @@ function createDefaultProvider(): AiProvider {
   try {
     chain.push(new MiniMaxProvider());
   } catch {
-    // no legacy keys — Apmix only (or bust below)
+    // no legacy keys — Gemini/Apmix only (or bust below)
   }
   if (chain.length === 0) {
     // Preserve the original loud error when nothing is configured.
