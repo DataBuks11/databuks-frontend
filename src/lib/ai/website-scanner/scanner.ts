@@ -742,7 +742,14 @@ async function syncBusinessContext(supabase: any, userId: string, results: Recor
   const updates: Record<string, any> = { updated_at: new Date().toISOString() };
 
   if (typeof results.business_name === "string" && results.business_name.trim()) {
-    updates.business_name = results.business_name.trim();
+    // Sanitize LLM prompt-leak prefixes ("Business name is X", "The company X").
+    const cleanName = results.business_name
+      .trim()
+      .replace(/^(business name is|the company is called|company name:?|called)\s+/i, "")
+      .trim();
+    if (cleanName) {
+      updates.business_name = cleanName;
+    }
   }
   if (typeof results.overview === "string" && results.overview.trim()) {
     // Combine overview + tagline + value_proposition into a rich description
@@ -801,7 +808,7 @@ async function syncBusinessContext(supabase: any, userId: string, results: Recor
 
   const { data: existing } = await supabase
     .from("business_context")
-    .select("id, services, target_audience")
+    .select("id, business_name, description, services, products, target_audience, industries, locations, offer, pricing, brand_voice, tone")
     .eq("user_id", userId)
     .maybeSingle();
 
