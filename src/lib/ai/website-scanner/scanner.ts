@@ -731,14 +731,28 @@ async function syncBusinessContext(supabase: any, userId: string, results: Recor
     .eq("user_id", userId)
     .maybeSingle();
 
-  // Founder-curated services/audiences preserved rehte hain: scan-derived
-  // values sirf tab bharo jab existing khaali ho. Baaki facts hamesha fresh
-  // hote hain. Isse competitor-gate keywords kabhi wipe nahi hote.
+  // Founder-curated rows (services already set) are NEVER clobbered by a
+  // later scan: any field that already has a value keeps it; the scan only
+  // fills genuinely empty fields. This stops a prospect-site scan from
+  // hijacking the owner's business profile (name/location/audience).
   if (existing) {
-    const existingServices = Array.isArray((existing as any).services) ? (existing as any).services : [];
-    const existingAudience = Array.isArray((existing as any).target_audience) ? (existing as any).target_audience : [];
-    if (existingServices.length > 0) delete updates.services;
-    if (existingAudience.length > 0) delete updates.target_audience;
+    const cur = existing as any;
+    const has = (v: any) =>
+      Array.isArray(v) ? v.length > 0
+      : v && typeof v === "object" ? Object.keys(v).length > 0
+      : typeof v === "string" ? v.trim().length > 0 : v != null;
+    const curated = Array.isArray(cur.services) && cur.services.length > 0;
+    if (curated) {
+      for (const key of Object.keys(updates)) {
+        if (key === "updated_at") continue;
+        if (has(cur[key])) delete updates[key];
+      }
+    } else {
+      const existingServices = Array.isArray(cur.services) ? cur.services : [];
+      const existingAudience = Array.isArray(cur.target_audience) ? cur.target_audience : [];
+      if (existingServices.length > 0) delete updates.services;
+      if (existingAudience.length > 0) delete updates.target_audience;
+    }
     if (Object.keys(updates).length <= 1) return false;
   }
 

@@ -66,9 +66,10 @@ export async function POST(request: NextRequest) {
     if (crawlerServiceUrl) {
       const crawlerKey = process.env.CRAWLER_SERVICE_KEY || process.env.BAILEYS_API_KEY || "dev-key";
       // Optional deep-scan overrides (dashboard "Deep scan" mode): capped so
-      // a giant site can't run forever. Defaults = ~3 min fast scan.
-      const reqPages = Math.min(Math.max(parseInt(body.max_pages ?? "", 10) || 0, 0), 2000) || Number(process.env.WEBSITE_MAX_PAGES ?? 40);
-      const reqBudget = Math.min(Math.max(parseInt(body.time_budget_s ?? "", 10) || 0, 0), 7200) || Number(process.env.WEBSITE_CRAWL_BUDGET_S ?? 80);
+      // a giant site can't run forever. Defaults = fast scan (~2 min):
+      // priority-ordered pages first, so SMB sites still complete fully.
+      const reqPages = Math.min(Math.max(parseInt(body.max_pages ?? "", 10) || 0, 0), 2000) || Number(process.env.WEBSITE_MAX_PAGES ?? 24);
+      const reqBudget = Math.min(Math.max(parseInt(body.time_budget_s ?? "", 10) || 0, 0), 7200) || Number(process.env.WEBSITE_CRAWL_BUDGET_S ?? 60);
       // Use AbortController to cap the crawler trigger call at 10s so this
       // function returns 202 quickly and the dashboard polling can start.
       const controller = new AbortController();

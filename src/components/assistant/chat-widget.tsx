@@ -77,7 +77,13 @@ export default function AssistantChatWidget() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: msg }),
         });
-        const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        setMessages((prev) => [...prev, { role: "assistant", text: "server busy tha — ek minute ruk ke dobara bhejo." }]);
+        return;
+      }
         if (data.confirmed === false) {
           setPreview(data.extracted ?? {});
           setMessages((prev) => [
@@ -103,11 +109,26 @@ export default function AssistantChatWidget() {
         return;
       }
 
-      const res = await fetch("/api/ai/assistant/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, sendToWhatsApp }),
-      });
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 55_000);
+      let res: Response;
+      try {
+        res = await fetch("/api/ai/assistant/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, sendToWhatsApp }),
+          signal: ctl.signal,
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          setMessages((prev) => [...prev, { role: "assistant", text: "thoda slow hai — dobara bhejo, quick commands (neeche buttons) instant reply dete hain." }]);
+        } else {
+          setMessages((prev) => [...prev, { role: "assistant", text: "Network issue — please try again." }]);
+        }
+        return;
+      } finally {
+        clearTimeout(timer);
+      }
       const data = await res.json();
       const tail = data.sentToWhatsApp ? " (sent to WhatsApp ✅)" : "";
       setMessages((prev) => [...prev, { role: "assistant", text: (data.reply ?? data.error ?? "Something went wrong, please try again.") + tail }]);

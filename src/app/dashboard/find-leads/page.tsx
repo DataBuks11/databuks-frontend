@@ -73,6 +73,27 @@ interface DiscoveryRun {
   created_at: string;
 }
 
+/**
+ * Timeout/HTML-safe JSON parse. Serverless timeouts return plain-text
+ * gateway errors — res.json() on those throws "Unexpected token 'A'...",
+ * which confused users. This surfaces what actually happened instead.
+ */
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    if (!res.ok) {
+      throw new Error(
+        res.status === 504 || res.status === 408 || res.status === 502 || res.status === 500
+          ? "Server took too long — the run may still be finishing in the background. Wait a minute and refresh."
+          : `Request failed (${res.status}): ${text.slice(0, 120)}`
+      );
+    }
+    throw new Error("Unexpected response from server — please refresh and retry.");
+  }
+}
+
 export default function FindLeadsPage() {
   const [leads, setLeads] = useState<DiscoveredLead[]>([]);
   const [latestRun, setLatestRun] = useState<DiscoveryRun | null>(null);
@@ -84,7 +105,7 @@ export default function FindLeadsPage() {
   const loadLeads = async () => {
     try {
       const res = await fetch("/api/growth/find-leads");
-      const json = await res.json();
+      const json = await safeJson(res);
       if (!res.ok) throw new Error(json.error || "Failed to load");
       setLeads(json.leads ?? []);
       setLatestRun(json.latest_run ?? null);
@@ -103,12 +124,14 @@ export default function FindLeadsPage() {
     setDiscovering(true);
     setError(null);
     try {
+      // Small defaults on purpose: the request must finish inside the
+      // hosting 60s function cap. Bigger sweeps belong to the daily cron.
       const res = await fetch("/api/growth/find-leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_queries: 24, max_pages: 150, scopes: ["LOCAL", "NEARBY", "DISTRICT", "STATE", "COUNTRY", "GLOBAL"] }),
+        body: JSON.stringify({ max_queries: 8, max_pages: 40, scopes: ["LOCAL", "NEARBY"] }),
       });
-      const json = await res.json();
+      const json = await safeJson(res);
       if (json.status === "FAILED") {
         setError(json.errors?.join("; ") || "Discovery failed");
       }

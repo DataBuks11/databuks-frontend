@@ -273,13 +273,17 @@ function detectIntent(text: string): { intent: OwnerIntent; itemNumber: number |
 async function llmIntent(text: string): Promise<OwnerIntent> {
   try {
     const provider = getActiveProvider();
+    // Tight budget: classification is one short call — fail fast to CHAT
+    // instead of stalling the reply on free-tier slowness.
     const out = await provider.completeJson({
       system:
         'You map a business owner\'s WhatsApp message to ONE command intent. Allowed: HELP, LEADS_COUNT, LEADS_LIST, RELEVANT_LEADS, BUSINESS_STATUS, MEETINGS, POSTS_STATUS, PENDING_APPROVALS, APPROVE, REJECT, MODE, CHAT. Approve/reject ONLY when they clearly confirm/deny an item. Respond {"intent":"..."} only.',
       user: text.slice(0, 300),
       temperature: 0,
-      maxTokens: 200,
+      maxTokens: 100,
       reasoningEffort: "low",
+      timeoutMs: 12_000,
+      maxAttempts: 1,
     });
     const allowed: OwnerIntent[] = ["HELP", "LEADS_COUNT", "LEADS_LIST", "RELEVANT_LEADS", "BUSINESS_STATUS", "MEETINGS", "POSTS_STATUS", "PENDING_APPROVALS", "APPROVE", "REJECT", "MODE", "CHAT"];
     const intent = String(out?.intent ?? "CHAT").toUpperCase() as OwnerIntent;
@@ -477,12 +481,13 @@ export async function handleOwnerWhatsAppCommand(
       // Trigger the multi-channel outreach orchestrator synchronously and
       // return a human-readable summary. The orchestrator is rate-limited
       // via the rule engine and 7-day cooldown per lead, so re-running is
-      // safe. We wrap the whole batch in a 3-min overall ceiling.
+      // safe. Ceiling is 50s: hosting kills the request at 60s, so we never
+      // promise more than we can return — retrying is duplicate-safe.
       try {
         const { runMultiChannelOutreachForUser } = await import(
           "./outreach/multi-channel"
         );
-        const timeoutMs = 180_000;
+        const timeoutMs = 50_000;
         const result = await Promise.race([
           runMultiChannelOutreachForUser(supabase, userId, { limit: 3 }),
           new Promise<{ processed: number; results: any[]; skipped: number; failed: number }>((_, reject) =>
@@ -511,9 +516,14 @@ export async function handleOwnerWhatsAppCommand(
           );
         }
       } catch (err: any) {
+        const timedOut = String(err?.message ?? "").includes("50000ms") || String(err?.message ?? "").includes("50s");
         reply = pick(lang,
-          `outreach failed: ${err?.message ?? "unknown"}`,
-          `outreach fail: ${err?.message ?? "unknown"}`
+          timedOut
+            ? "still working on outreach (takes a bit) — say 'outreach chalao' again in a minute, already-contacted leads get skipped so nothing duplicates."
+            : `outreach failed: ${err?.message ?? "unknown"}`,
+          timedOut
+            ? "outreach abhi chal raha hai (thoda time lagta hai) — ek minute me 'outreach chalao' dobara bolo, contacted leads skip ho jayenge, duplicate nahi hoga."
+            : `outreach fail: ${err?.message ?? "unknown"}`
         );
       }
       break;
@@ -588,6 +598,10 @@ export async function handleOwnerWhatsAppCommand(
             user: text,
             temperature: 0.6,
           maxTokens: 500,
+          // Bounded: free-tier stalls fall back to the static snapshot
+          // instead of hanging the chat past the hosting timeout.
+          timeoutMs: 25_000,
+          maxAttempts: 1,
         });
         reply = String(out?.reply ?? "").trim();
         if (!reply) throw new Error("empty reply");

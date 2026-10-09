@@ -228,71 +228,92 @@ export async function runFindLeads(
       return (q?.scope ?? "LOCAL") as GeoScope;
     };
 
-    try {
-      const gsMod = await import("../discovery/providers/google-search");
-      const gsProvider = new gsMod.GoogleSearchProvider();
-      if (gsProvider.isConfigured()) {
-        const gsResult = await gsProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
-        for (const c of gsResult.candidates) {
-          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_search", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
+    // Providers run IN PARALLEL (was sequential — 3x latency on Hobby 60s
+    // budget). Results merge in fixed order so runs stay deterministic.
+    type ProviderOut = { candidates: typeof allRawCandidates; errors: string[]; ok: boolean };
+    const runGoogleSearch = async (): Promise<ProviderOut> => {
+      const out: ProviderOut = { candidates: [], errors: [], ok: false };
+      try {
+        const gsMod = await import("../discovery/providers/google-search");
+        const gsProvider = new gsMod.GoogleSearchProvider();
+        if (gsProvider.isConfigured()) {
+          const gsResult = await gsProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
+          for (const c of gsResult.candidates) {
+            out.candidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_search", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
+          }
+          for (const e of gsResult.errors.slice(0, 3)) {
+            out.errors.push(`google_search [${e.query}]: ${e.error}`);
+          }
+          out.ok = true;
         }
-        for (const e of gsResult.errors.slice(0, 3)) {
-          result.errors.push(`google_search [${e.query}]: ${e.error}`);
-        }
-        googleSearchOk = true;
+      } catch (err: any) {
+        out.errors.push(`google_search provider failed: ${err?.message ?? "unknown"}`);
       }
-    } catch (err: any) {
-      result.errors.push(`google_search provider failed: ${err?.message ?? "unknown"}`);
-    }
-
-    try {
-      const gmMod = await import("../discovery/providers/google-maps");
-      const gmProvider = new gmMod.GoogleMapsProvider();
-      if (gmProvider.isConfigured()) {
-        const gmResult = await gmProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
-        for (const c of gmResult.candidates) {
-          allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_maps", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
+      return out;
+    };
+    const runGoogleMaps = async (): Promise<ProviderOut> => {
+      const out: ProviderOut = { candidates: [], errors: [], ok: false };
+      try {
+        const gmMod = await import("../discovery/providers/google-maps");
+        const gmProvider = new gmMod.GoogleMapsProvider();
+        if (gmProvider.isConfigured()) {
+          const gmResult = await gmProvider.discover(queries.slice(0, Math.min(queries.length, 10)));
+          for (const c of gmResult.candidates) {
+            out.candidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "google_maps", scope: (c.raw_metadata?.scope as GeoScope) ?? scopeOf(c.query) });
+          }
+          for (const e of gmResult.errors.slice(0, 3)) {
+            out.errors.push(`google_maps [${e.query}]: ${e.error}`);
+          }
+          out.ok = true;
+        } else {
+          out.errors.push("google_maps: GOOGLE_MAPS_API_KEY not configured");
         }
-        for (const e of gmResult.errors.slice(0, 3)) {
-          result.errors.push(`google_maps [${e.query}]: ${e.error}`);
-        }
-        googleMapsOk = true;
-      } else {
-        result.errors.push("google_maps: GOOGLE_MAPS_API_KEY not configured");
+      } catch (err: any) {
+        out.errors.push(`google_maps provider failed: ${err?.message ?? "unknown"}`);
       }
-    } catch (err: any) {
-      result.errors.push(`google_maps provider failed: ${err?.message ?? "unknown"}`);
-    }
-
+      return out;
+    };
     // --- DeepSeek LLM discovery (no Google keys needed) ---
     // The LLM proposes real businesses per category; every suggestion is
     // live-verified (website must fetch) before entering the pipeline.
-    try {
-      const llmMod = await import("../discovery/providers/deepseek-llm");
-      const llmProvider = new llmMod.DeepSeekDiscoveryProvider();
-      const svcNames: string[] = Array.isArray(bcData.services)
-        ? bcData.services.map((s: any) => (typeof s === "string" ? s : s?.name ?? "")).filter(Boolean)
-        : [];
-      const locs: string[] = Array.isArray(bcData.locations) && bcData.locations.length > 0
-        ? bcData.locations.map((l: any) => String(l ?? "")).filter(Boolean)
-        : [];
-      const llmResult = await llmProvider.discover(queries.slice(0, Math.min(queries.length, 10)), {
-        business: {
-          name: typeof bcData.business_name === "string" ? bcData.business_name : "",
-          industries: Array.isArray(bcData.industries) ? bcData.industries : [],
-          services: svcNames,
-        },
-        locations: locs,
-      } as any);
-      for (const c of llmResult.candidates) {
-        allRawCandidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "deepseek_llm", scope: (c.raw_metadata?.scope as GeoScope) ?? "LOCAL" });
+    const runDeepSeekLlm = async (): Promise<ProviderOut> => {
+      const out: ProviderOut = { candidates: [], errors: [], ok: false };
+      try {
+        const llmMod = await import("../discovery/providers/deepseek-llm");
+        const llmProvider = new llmMod.DeepSeekDiscoveryProvider();
+        const svcNames: string[] = Array.isArray(bcData.services)
+          ? bcData.services.map((s: any) => (typeof s === "string" ? s : s?.name ?? "")).filter(Boolean)
+          : [];
+        const locs: string[] = Array.isArray(bcData.locations) && bcData.locations.length > 0
+          ? bcData.locations.map((l: any) => String(l ?? "")).filter(Boolean)
+          : [];
+        const llmResult = await llmProvider.discover(queries.slice(0, Math.min(queries.length, 10)), {
+          business: {
+            name: typeof bcData.business_name === "string" ? bcData.business_name : "",
+            industries: Array.isArray(bcData.industries) ? bcData.industries : [],
+            services: svcNames,
+          },
+          locations: locs,
+        } as any);
+        for (const c of llmResult.candidates) {
+          out.candidates.push({ source_url: c.source_url, title: c.title, snippet: c.snippet, website_url: c.website_url, provider: "deepseek_llm", scope: (c.raw_metadata?.scope as GeoScope) ?? "LOCAL" });
+        }
+        for (const e of llmResult.errors.slice(0, 3)) {
+          out.errors.push(`deepseek_llm [${e.query}]: ${e.error}`);
+        }
+        out.ok = true;
+      } catch (err: any) {
+        out.errors.push(`deepseek_llm provider failed: ${err?.message ?? "unknown"}`);
       }
-      for (const e of llmResult.errors.slice(0, 3)) {
-        result.errors.push(`deepseek_llm [${e.query}]: ${e.error}`);
-      }
-    } catch (err: any) {
-      result.errors.push(`deepseek_llm provider failed: ${err?.message ?? "unknown"}`);
+      return out;
+    };
+    const [gsOut, gmOut, llmOut] = await Promise.all([runGoogleSearch(), runGoogleMaps(), runDeepSeekLlm()]);
+    for (const o of [gsOut, gmOut, llmOut]) {
+      allRawCandidates.push(...o.candidates);
+      result.errors.push(...o.errors);
     }
+    googleSearchOk = gsOut.ok;
+    googleMapsOk = gmOut.ok;
 
     // Honest run status: zero raw candidates must never read as a clean COMPLETED run.
     // result.errors carries the per-provider cause (unconfigured / denied / rate-limited).
@@ -332,35 +353,56 @@ export async function runFindLeads(
       excluded: strList(bcData.excluded_industries),
     };
 
+    // Phase 1 — enrich concurrently (bounded). Website fetches are the
+    // slowest step; sequential fetch = N × latency. Scoring/persist stays
+    // sequential below so ordering, budgets and caps remain exact.
+    const ENRICH_CONCURRENCY = 5;
+    const enrichOne = async (group: any) => {
+      const out = {
+        enrichmentData: {} as any,
+        hasPhone: false,
+        hasEmail: false,
+        addressText: null as string | null,
+        socialLinks: {} as Record<string, string | null>,
+      };
+      const websiteUrl: string | null = group?.primary?.websiteUrl ?? null;
+      if (websiteUrl) {
+        try {
+          const enrichment = await enrichFromWebsite(websiteUrl);
+          if (enrichment.success) {
+            out.enrichmentData = enrichment;
+            out.hasPhone = (enrichment.phones?.length ?? 0) > 0;
+            out.hasEmail = (enrichment.emails?.length ?? 0) > 0;
+            out.socialLinks = enrichment.social_links ?? {};
+            if (enrichment.address) out.addressText = enrichment.address;
+          }
+        } catch {}
+      }
+      return out;
+    };
+    for (let bi = 0; bi < canonicalGroups.length; bi += ENRICH_CONCURRENCY) {
+      const batch = canonicalGroups.slice(bi, bi + ENRICH_CONCURRENCY);
+      const enriched = await Promise.all(batch.map(enrichOne));
+      batch.forEach((g: any, k: number) => { g.__enrich = enriched[k]; });
+    }
+
     for (const group of canonicalGroups) {
       if (enrichedCount >= maxPages) break;
       const primary = group.primary;
 
-      let enrichmentData: any = {};
-      let hasPhone = false;
-      let hasEmail = false;
-      let addressText: string | null = null;
-      let socialLinks: Record<string, string | null> = {};
+      const pre = (group as any).__enrich ?? {};
+      const enrichmentData: any = pre.enrichmentData ?? {};
+      let hasPhone = !!pre.hasPhone;
+      let hasEmail = !!pre.hasEmail;
+      let addressText: string | null = pre.addressText ?? null;
+      let socialLinks: Record<string, string | null> = pre.socialLinks ?? {};
+      if (Object.keys(enrichmentData).length > 0) enrichedCount += 1;
 
       // Google Places Details provides a real phone even when the website
       // cannot be crawled — genuine contactability evidence.
       const placesPhone = group.all_candidates
         .map((c: any) => c.raw?.raw_metadata?.details_phone)
         .find((p: any) => typeof p === "string" && p.replace(/\D/g, "").length >= 8) ?? null;
-
-      if (primary.websiteUrl) {
-        try {
-          const enrichment = await enrichFromWebsite(primary.websiteUrl);
-          if (enrichment.success) {
-            enrichedCount += 1;
-            enrichmentData = enrichment;
-            hasPhone = (enrichment.phones?.length ?? 0) > 0;
-            hasEmail = (enrichment.emails?.length ?? 0) > 0;
-            socialLinks = enrichment.social_links ?? {};
-            if (!addressText && enrichment.address) addressText = enrichment.address;
-          }
-        } catch {}
-      }
       hasPhone = hasPhone || !!placesPhone;
 
       // Evidence for requirement/urgency analysis must include real website

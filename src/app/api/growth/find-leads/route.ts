@@ -60,9 +60,24 @@ export async function POST(request: NextRequest) {
     const scopes = Array.isArray(body?.scopes)
       ? body.scopes.filter((s: string) => VALID_SCOPES.includes(s))
       : [];
+    // Zombie-run cleanup: a previous run killed mid-flight (e.g. Hobby 60s
+    // function cap) stays RUNNING forever and the UI looks stuck. Retire
+    // anything older than 20 min before starting a fresh run.
+    try {
+      const cutoff = new Date(Date.now() - 20 * 60_000).toISOString();
+      await supabase
+        .from("discovery_runs")
+        .update({ status: "FAILED", completed_at: new Date().toISOString(), errors: ["superseded: previous run timed out"] })
+        .eq("user_id", user.id)
+        .eq("status", "RUNNING")
+        .lt("created_at", cutoff);
+    } catch {}
+    // NOTE: Vercel Hobby caps functions at 60s (maxDuration ignored), so
+    // defaults stay small enough to finish in-window. Bigger runs belong to
+    // the daily cron, not the dashboard button.
     const result = await runFindLeads(supabase, user.id, {
-      max_queries: Math.min(Number(body?.max_queries ?? 15), 50),
-      max_pages: Math.min(Number(body?.max_pages ?? 100), 200),
+      max_queries: Math.min(Number(body?.max_queries ?? 8), 50),
+      max_pages: Math.min(Number(body?.max_pages ?? 40), 200),
       scopes: scopes.length > 0 ? scopes : ["LOCAL", "NEARBY", "DISTRICT", "STATE", "COUNTRY", "GLOBAL"],
     });
 
