@@ -129,7 +129,7 @@ export default function FindLeadsPage() {
       const res = await fetch("/api/growth/find-leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_queries: 8, max_pages: 40, scopes: ["LOCAL", "NEARBY"] }),
+        body: JSON.stringify({ max_queries: 6, max_pages: 25, scopes: ["LOCAL", "NEARBY"] }),
       });
       const json = await safeJson(res);
       if (json.status === "FAILED") {
